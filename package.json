@@ -1,0 +1,33 @@
+{
+  "name": "home-services-backend",
+  "version": "1.0.0",
+  "description": "Backend API service for Home Services platform - MongoDB + Express",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "home-services",
+    "mongodb",
+    "express",
+    "api"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1",
+    "firebase-admin": "^13.6.0",
+    "helmet": "^7.1.0",
+    "mongodb": "^6.21.0",
+    "mongoose": "^9.1.4",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

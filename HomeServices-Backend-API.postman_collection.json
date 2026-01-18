@@ -1,0 +1,1035 @@
+{
+  "info": {
+    "name": "Home Services Backend API",
+    "description": "Complete API collection for Home Services platform backend\n\n**Base URL:** {{base_url}}\n**Authentication:** Bearer Token (Firebase Auth)\n\n**Environment Variables:**\n- `base_url`: http://localhost:3000 (local) or https://your-vercel-app.vercel.app (production)\n- `auth_token`: Firebase Auth token (set after login)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "home-services-backend"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "Check if the API server is running"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/users/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users", "me"]
+            },
+            "description": "Get current authenticated user profile"
+          },
+          "response": []
+        },
+        {
+          "name": "Create or Update User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"phone\": \"+919876543210\",\n  \"role\": \"customer\",\n  \"fcmToken\": \"your-fcm-token-here\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/users/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users", "me"]
+            },
+            "description": "Create or update current user profile (upsert)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Current User",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Doe Updated\",\n  \"email\": \"john.updated@example.com\",\n  \"phone\": \"+919876543210\",\n  \"location\": {\n    \"latitude\": 28.6139,\n    \"longitude\": 77.2090,\n    \"address\": \"New Delhi, India\",\n    \"city\": \"Delhi\",\n    \"state\": \"Delhi\",\n    \"pincode\": \"110001\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/users/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users", "me"]
+            },
+            "description": "Update current user profile"
+          },
+          "response": []
+        },
+        {
+          "name": "Update FCM Token",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fcmToken\": \"new-fcm-token-here\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/users/:userId/fcmToken",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users", ":userId", "fcmToken"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "user-id-here"
+                }
+              ]
+            },
+            "description": "Update FCM token for push notifications"
+          },
+          "response": []
+        },
+        {
+          "name": "Get User by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/users/:userId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "user-id-here"
+                }
+              ]
+            },
+            "description": "Get user by ID (limited fields for non-admin)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Users (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/users?limit=50&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Get all users (admin only)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Providers",
+      "item": [
+        {
+          "name": "Get All Providers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/providers?limit=50&offset=0&approvalStatus=approved",
+              "host": ["{{base_url}}"],
+              "path": ["api", "providers"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Number of results (default: 50)"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Pagination offset (default: 0)"
+                },
+                {
+                  "key": "approvalStatus",
+                  "value": "approved",
+                  "description": "Filter by status: pending, approved, rejected (optional for admin)"
+                },
+                {
+                  "key": "serviceType",
+                  "value": "",
+                  "description": "Filter by service type (optional)"
+                },
+                {
+                  "key": "city",
+                  "value": "",
+                  "description": "Filter by city (optional)"
+                },
+                {
+                  "key": "state",
+                  "value": "",
+                  "description": "Filter by state (optional)"
+                },
+                {
+                  "key": "isOnline",
+                  "value": "true",
+                  "description": "Filter by online status (optional)"
+                },
+                {
+                  "key": "minRating",
+                  "value": "",
+                  "description": "Minimum rating (optional)"
+                }
+              ]
+            },
+            "description": "Get all providers (public endpoint, admin sees all statuses)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Provider by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/providers/:providerId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "providers", ":providerId"],
+              "variable": [
+                {
+                  "key": "providerId",
+                  "value": "provider-id-here"
+                }
+              ]
+            },
+            "description": "Get provider by ID (public endpoint)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Provider Profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Provider Name\",\n  \"specialization\": \"Electrician\",\n  \"experience\": 5,\n  \"serviceCategories\": [\"electrician\"],\n  \"location\": {\n    \"city\": \"Mumbai\",\n    \"state\": \"Maharashtra\",\n    \"pincode\": \"400001\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/providers/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "providers", "me"]
+            },
+            "description": "Update provider profile (provider only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Provider Status",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isOnline\": true,\n  \"isAvailable\": true,\n  \"currentLocation\": {\n    \"latitude\": 28.6139,\n    \"longitude\": 77.2090\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/providers/me/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "providers", "me", "status"]
+            },
+            "description": "Update provider online/offline status (provider only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Approve/Reject Provider (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"approvalStatus\": \"approved\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/providers/:providerId/approval",
+              "host": ["{{base_url}}"],
+              "path": ["api", "providers", ":providerId", "approval"],
+              "variable": [
+                {
+                  "key": "providerId",
+                  "value": "provider-id-here"
+                }
+              ]
+            },
+            "description": "Approve or reject provider (admin only). Status: pending, approved, rejected"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Reviews",
+      "item": [
+        {
+          "name": "Get All Reviews",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/reviews?limit=50&offset=0&providerId=provider-id",
+              "host": ["{{base_url}}"],
+              "path": ["api", "reviews"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                },
+                {
+                  "key": "providerId",
+                  "value": "provider-id",
+                  "description": "Filter by provider ID (optional)"
+                },
+                {
+                  "key": "customerId",
+                  "value": "",
+                  "description": "Filter by customer ID (optional)"
+                }
+              ]
+            },
+            "description": "Get all reviews (public endpoint)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Review by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/reviews/:reviewId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "reviews", ":reviewId"],
+              "variable": [
+                {
+                  "key": "reviewId",
+                  "value": "review-id-here"
+                }
+              ]
+            },
+            "description": "Get single review by ID (public endpoint)"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Review",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jobCardId\": \"job-card-id-here\",\n  \"providerId\": \"provider-id-here\",\n  \"providerName\": \"Provider Name\",\n  \"serviceType\": \"Electrician\",\n  \"rating\": 5,\n  \"comment\": \"Great service! Very professional.\",\n  \"photos\": []\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/reviews",
+              "host": ["{{base_url}}"],
+              "path": ["api", "reviews"]
+            },
+            "description": "Create a new review (customer only). Rating: 1-5"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Review",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 4,\n  \"comment\": \"Updated review comment\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/reviews/:reviewId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "reviews", ":reviewId"],
+              "variable": [
+                {
+                  "key": "reviewId",
+                  "value": "review-id-here"
+                }
+              ]
+            },
+            "description": "Update review (customer only, must own the review)"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Review",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/reviews/:reviewId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "reviews", ":reviewId"],
+              "variable": [
+                {
+                  "key": "reviewId",
+                  "value": "review-id-here"
+                }
+              ]
+            },
+            "description": "Delete review (admin or customer who owns it)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Service Categories",
+      "item": [
+        {
+          "name": "Get All Categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/serviceCategories",
+              "host": ["{{base_url}}"],
+              "path": ["api", "serviceCategories"]
+            },
+            "description": "Get all service categories (public endpoint)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Category by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/serviceCategories/:categoryId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "serviceCategories", ":categoryId"],
+              "variable": [
+                {
+                  "key": "categoryId",
+                  "value": "category-id-here"
+                }
+              ]
+            },
+            "description": "Get single category by ID (public endpoint)"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Category (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Plumber\",\n  \"nameHindi\": \"प्लम्बर\",\n  \"description\": \"Plumbing services\",\n  \"descriptionHindi\": \"प्लम्बिंग सेवाएं\",\n  \"icon\": \"wrench\",\n  \"color\": \"#007AFF\",\n  \"enabled\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/serviceCategories",
+              "host": ["{{base_url}}"],
+              "path": ["api", "serviceCategories"]
+            },
+            "description": "Create a new service category (admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Category (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Category Name\",\n  \"enabled\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/serviceCategories/:categoryId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "serviceCategories", ":categoryId"],
+              "variable": [
+                {
+                  "key": "categoryId",
+                  "value": "category-id-here"
+                }
+              ]
+            },
+            "description": "Update service category (admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Category (Admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/serviceCategories/:categoryId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "serviceCategories", ":categoryId"],
+              "variable": [
+                {
+                  "key": "categoryId",
+                  "value": "category-id-here"
+                }
+              ]
+            },
+            "description": "Delete service category (admin only)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Customer Job Cards",
+      "item": [
+        {
+          "name": "Get My Job Cards",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/customer/jobCards?limit=50&offset=0&status=all",
+              "host": ["{{base_url}}"],
+              "path": ["api", "customer", "jobCards"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                },
+                {
+                  "key": "status",
+                  "value": "all",
+                  "description": "Filter by status: all, pending, accepted, in-progress, completed, cancelled"
+                }
+              ]
+            },
+            "description": "Get customer's job cards"
+          },
+          "response": []
+        },
+        {
+          "name": "Get My Job Card by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/customer/jobCards/:jobCardId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "customer", "jobCards", ":jobCardId"],
+              "variable": [
+                {
+                  "key": "jobCardId",
+                  "value": "job-card-id-here"
+                }
+              ]
+            },
+            "description": "Get customer's single job card by ID"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Job Card",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cancellationReason\": \"Changed my mind\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/customer/jobCards/:jobCardId/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["api", "customer", "jobCards", ":jobCardId", "cancel"],
+              "variable": [
+                {
+                  "key": "jobCardId",
+                  "value": "job-card-id-here"
+                }
+              ]
+            },
+            "description": "Cancel job card with reason (customer only)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Provider Job Cards",
+      "item": [
+        {
+          "name": "Get My Job Cards",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/provider/jobCards?limit=50&offset=0&status=all",
+              "host": ["{{base_url}}"],
+              "path": ["api", "provider", "jobCards"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                },
+                {
+                  "key": "status",
+                  "value": "all",
+                  "description": "Filter by status: all, pending, accepted, in-progress, completed, cancelled"
+                }
+              ]
+            },
+            "description": "Get provider's job cards"
+          },
+          "response": []
+        },
+        {
+          "name": "Get My Job Card by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/provider/jobCards/:jobCardId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "provider", "jobCards", ":jobCardId"],
+              "variable": [
+                {
+                  "key": "jobCardId",
+                  "value": "job-card-id-here"
+                }
+              ]
+            },
+            "description": "Get provider's single job card by ID"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Job Card",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"customer-id-here\",\n  \"customerName\": \"Customer Name\",\n  \"customerPhone\": \"+919876543210\",\n  \"customerAddress\": {\n    \"address\": \"123 Main St\",\n    \"city\": \"Mumbai\",\n    \"state\": \"Maharashtra\",\n    \"pincode\": \"400001\"\n  },\n  \"serviceType\": \"Electrician\",\n  \"problem\": \"Need to fix electrical wiring\",\n  \"status\": \"pending\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/provider/jobCards",
+              "host": ["{{base_url}}"],
+              "path": ["api", "provider", "jobCards"]
+            },
+            "description": "Create a new job card (provider only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Job Card Status",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"in-progress\",\n  \"taskPIN\": \"1234\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/provider/jobCards/:jobCardId/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "provider", "jobCards", ":jobCardId", "status"],
+              "variable": [
+                {
+                  "key": "jobCardId",
+                  "value": "job-card-id-here"
+                }
+              ]
+            },
+            "description": "Update job card status. Valid statuses: pending, accepted, in-progress, completed, cancelled"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin Job Cards",
+      "item": [
+        {
+          "name": "Get All Job Cards",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/jobCards?limit=50&offset=0&status=all",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "jobCards"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                },
+                {
+                  "key": "status",
+                  "value": "all",
+                  "description": "Filter by status (optional)"
+                },
+                {
+                  "key": "customerId",
+                  "value": "",
+                  "description": "Filter by customer ID (optional)"
+                },
+                {
+                  "key": "providerId",
+                  "value": "",
+                  "description": "Filter by provider ID (optional)"
+                }
+              ]
+            },
+            "description": "Get all job cards (admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Job Card by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/jobCards/:jobCardId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "jobCards", ":jobCardId"],
+              "variable": [
+                {
+                  "key": "jobCardId",
+                  "value": "job-card-id-here"
+                }
+              ]
+            },
+            "description": "Get single job card by ID (admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Job Card",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"completed\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/jobCards/:jobCardId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "jobCards", ":jobCardId"],
+              "variable": [
+                {
+                  "key": "jobCardId",
+                  "value": "job-card-id-here"
+                }
+              ]
+            },
+            "description": "Update job card (admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Job Card",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/jobCards/:jobCardId",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "jobCards", ":jobCardId"],
+              "variable": [
+                {
+                  "key": "jobCardId",
+                  "value": "job-card-id-here"
+                }
+              ]
+            },
+            "description": "Delete job card (admin only)"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "auth_token",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
