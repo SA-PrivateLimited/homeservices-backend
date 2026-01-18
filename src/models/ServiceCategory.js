@@ -15,14 +15,22 @@ const serviceCategorySchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
-  nameHindi: String,
   description: String,
-  descriptionHindi: String,
+  descriptionHi: String,
   icon: String,
   color: String,
-  enabled: {
+  order: Number,
+  isActive: {
     type: Boolean,
     default: true,
+  },
+  requiresVehicle: {
+    type: Boolean,
+    default: false,
+  },
+  questionnaire: {
+    type: Array,
+    default: [],
   },
   createdAt: {
     type: Date,
@@ -40,7 +48,7 @@ const serviceCategorySchema = new mongoose.Schema({
 });
 
 // Index
-serviceCategorySchema.index({enabled: 1, name: 1});
+serviceCategorySchema.index({isActive: 1, name: 1});
 
 const ServiceCategory = mongoose.model('ServiceCategory', serviceCategorySchema, 'serviceCategories');
 

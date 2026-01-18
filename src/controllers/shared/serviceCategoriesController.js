@@ -10,8 +10,8 @@ const ServiceCategory = require('../../models/ServiceCategory');
  */
 exports.getCategories = async (req, res, next) => {
   try {
-    const categories = await ServiceCategory.find({enabled: true})
-      .sort({name: 1})
+    const categories = await ServiceCategory.find({isActive: true})
+      .sort({order: 1, name: 1})
       .lean();
 
     res.json({
