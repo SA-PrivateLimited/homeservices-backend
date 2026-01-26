@@ -7,10 +7,17 @@ const ServiceCategory = require('../../models/ServiceCategory');
 
 /**
  * Get all service categories (public)
+ * Query params:
+ * - includeInactive: if 'true', returns all categories (for admin)
  */
 exports.getCategories = async (req, res, next) => {
   try {
-    const categories = await ServiceCategory.find({isActive: true})
+    const {includeInactive} = req.query;
+
+    // Build filter - only filter by isActive if not requesting inactive
+    const filter = includeInactive === 'true' ? {} : {isActive: true};
+
+    const categories = await ServiceCategory.find(filter)
       .sort({order: 1, name: 1})
       .lean();
 
@@ -61,7 +68,7 @@ exports.createCategory = async (req, res, next) => {
 
     // Generate ID if not provided
     if (!categoryData._id) {
-      categoryData._id = require('mongodb').ObjectId().toString();
+      categoryData._id = new (require('mongodb').ObjectId)().toString();
     }
 
     const category = new ServiceCategory(categoryData);

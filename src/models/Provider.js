@@ -36,6 +36,16 @@ const providerSchema = new mongoose.Schema({
     enum: ['pending', 'approved', 'rejected'],
     default: 'pending',
   },
+  rejectionReason: {
+    type: String,
+    trim: true,
+  },
+  approvedBy: {
+    type: String,
+  },
+  approvedAt: {
+    type: Date,
+  },
   verified: {
     type: Boolean,
     default: false,
@@ -71,9 +81,41 @@ const providerSchema = new mongoose.Schema({
     longitude: Number,
   },
   fcmToken: String,
+  profileImage: {
+    type: String,
+    trim: true,
+  },
   documents: {
     idProof: String,
+    addressProof: String,
     certificate: String,
+    idProofVerified: {
+      type: Boolean,
+      default: false,
+    },
+    idProofRejected: {
+      type: Boolean,
+      default: false,
+    },
+    idProofRejectionReason: String,
+    addressProofVerified: {
+      type: Boolean,
+      default: false,
+    },
+    addressProofRejected: {
+      type: Boolean,
+      default: false,
+    },
+    addressProofRejectionReason: String,
+    certificateVerified: {
+      type: Boolean,
+      default: false,
+    },
+    certificateRejected: {
+      type: Boolean,
+      default: false,
+    },
+    certificateRejectionReason: String,
   },
   photos: [String],
   createdAt: {

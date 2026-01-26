@@ -35,9 +35,13 @@ exports.getProviders = async (req, res, next) => {
     }
     // If admin and no approvalStatus filter, show all providers
 
-    // Filters
+    // Filters - check both serviceType (string) and serviceCategories (array) fields
     if (serviceType) {
-      query.serviceCategories = {$in: [serviceType]};
+      query.$or = [
+        { serviceType: serviceType },
+        { serviceCategories: { $in: [serviceType] } },
+        { specialization: serviceType }
+      ];
     }
     if (city) query['location.city'] = city;
     if (state) query['location.state'] = state;
@@ -45,6 +49,7 @@ exports.getProviders = async (req, res, next) => {
     if (minRating) query.rating = {$gte: parseFloat(minRating)};
 
     const providers = await Provider.find(query)
+      .select('+phoneNumber') // Ensure phoneNumber is included
       .limit(parseInt(limit))
       .skip(parseInt(offset))
       .lean();
@@ -61,16 +66,81 @@ exports.getProviders = async (req, res, next) => {
 
 /**
  * Get provider by ID (public)
+ * Also fetches real-time location from Firebase Realtime Database
  */
 exports.getProviderById = async (req, res, next) => {
   try {
     const {providerId} = req.params;
-    const provider = await Provider.findById(providerId);
+    // Try to find by string _id first (for Firestore-style IDs)
+    let provider = await Provider.findOne({_id: providerId});
+    
+    // If not found and the ID looks like an ObjectId, try with ObjectId conversion
+    if (!provider && require('mongoose').Types.ObjectId.isValid(providerId)) {
+      try {
+        provider = await Provider.findById(providerId);
+      } catch (objectIdError) {
+        // Continue with null
+      }
+    }
 
     if (!provider) {
       return res.status(404).json({
         success: false,
         error: 'Provider not found',
+      });
+    }
+
+    // Get provider location from Firebase Realtime Database
+    let realtimeLocation = null;
+    try {
+      const admin = require('firebase-admin');
+      if (admin.apps.length > 0) {
+        const db = admin.database();
+        const locationRef = db.ref(`providers/${providerId}/location`);
+        const snapshot = await locationRef.once('value');
+        if (snapshot.exists()) {
+          realtimeLocation = snapshot.val();
+        }
+      }
+    } catch (rtdbError) {
+      console.warn('Could not fetch provider location from Realtime Database:', rtdbError.message);
+      // Continue without location - not critical
+    }
+
+    // Merge real-time location with provider data
+    const providerData = provider.toObject ? provider.toObject() : provider;
+    if (realtimeLocation) {
+      providerData.currentLocation = {
+        latitude: realtimeLocation.latitude,
+        longitude: realtimeLocation.longitude,
+        address: realtimeLocation.address,
+        city: realtimeLocation.city,
+        state: realtimeLocation.state,
+        pincode: realtimeLocation.pincode,
+        updatedAt: realtimeLocation.updatedAt || Date.now(),
+      };
+    }
+
+    res.json({
+      success: true,
+      data: providerData,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get current provider's profile (provider only)
+ */
+exports.getMyProfile = async (req, res, next) => {
+  try {
+    const provider = await Provider.findById(req.user.uid);
+
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Provider profile not found',
       });
     }
 
@@ -119,8 +189,24 @@ exports.updateMyProfile = async (req, res, next) => {
 exports.updateMyStatus = async (req, res, next) => {
   try {
     const {isOnline, isAvailable, currentLocation} = req.body;
-    const {getCollection} = require('../../config/database');
-    const providerStatusCollection = getCollection('providerStatus');
+    
+    // Ensure database is connected before using getCollection
+    const {getCollection, connectDB} = require('../../config/database');
+    
+    // Ensure connection is established
+    try {
+      await connectDB();
+    } catch (dbError) {
+      console.warn('⚠️ Database connection check failed, continuing with Mongoose models only:', dbError.message);
+    }
+    
+    let providerStatusCollection = null;
+    try {
+      providerStatusCollection = await getCollection('providerStatus');
+    } catch (collectionError) {
+      console.warn('⚠️ Could not get providerStatus collection, skipping real-time status update:', collectionError.message);
+      // Continue without providerStatus collection - not critical
+    }
 
     const updateData = {
       updatedAt: new Date(),
@@ -144,16 +230,81 @@ exports.updateMyStatus = async (req, res, next) => {
       {new: true, upsert: true},
     );
 
-    // Update providerStatus collection (Realtime DB equivalent)
-    await providerStatusCollection.updateOne(
-      {_id: req.user.uid},
-      {$set: {...updateData, _id: req.user.uid}},
-      {upsert: true},
-    );
+    // Update providerStatus collection (Realtime DB equivalent) - only if collection is available
+    if (providerStatusCollection) {
+      try {
+        await providerStatusCollection.updateOne(
+          {_id: req.user.uid},
+          {$set: {...updateData, _id: req.user.uid}},
+          {upsert: true},
+        );
+      } catch (statusUpdateError) {
+        console.warn('⚠️ Failed to update providerStatus collection (non-critical):', statusUpdateError.message);
+        // Don't fail the request if providerStatus update fails
+      }
+    }
 
     res.json({
       success: true,
       message: 'Provider status updated successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update provider details (admin only)
+ * Allows admins to update any provider field including document verification
+ * Role is verified by requireRole('admin') middleware
+ */
+exports.updateProvider = async (req, res, next) => {
+  try {
+    const {providerId} = req.params;
+    const adminId = req.user.uid; // Admin ID from verified auth token
+    const adminRole = req.user.role; // Role verified by requireRole middleware
+
+    // Verify admin role (double-check, though middleware already ensures this)
+    if (adminRole !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Only administrators can update provider details',
+      });
+    }
+
+    const updateData = {
+      ...req.body,
+      updatedAt: new Date(),
+      updatedBy: adminId, // Track which admin made the update
+    };
+
+    // Prevent changing critical fields that should use specific endpoints
+    delete updateData._id;
+    delete updateData.createdAt;
+
+    // Allow updating documents verification status
+    // The updateData may contain documents object with verification fields
+    const provider = await Provider.findByIdAndUpdate(
+      providerId,
+      {$set: updateData},
+      {new: true, runValidators: false},
+    );
+
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Provider not found',
+        message: 'Provider not found',
+      });
+    }
+
+    console.log(`✅ Admin ${adminId} updated provider ${providerId}`);
+
+    res.json({
+      success: true,
+      data: provider,
+      message: 'Provider updated successfully',
     });
   } catch (error) {
     next(error);
@@ -166,7 +317,7 @@ exports.updateMyStatus = async (req, res, next) => {
 exports.updateProviderApproval = async (req, res, next) => {
   try {
     const {providerId} = req.params;
-    const {approvalStatus} = req.body;
+    const {approvalStatus, rejectionReason} = req.body;
 
     if (!['pending', 'approved', 'rejected'].includes(approvalStatus)) {
       return res.status(400).json({
@@ -176,14 +327,25 @@ exports.updateProviderApproval = async (req, res, next) => {
       });
     }
 
+    const updateData = {
+      approvalStatus,
+      updatedAt: new Date(),
+      approvedBy: req.user.uid,
+      approvedAt: new Date(),
+    };
+
+    // Handle rejection reason
+    if (approvalStatus === 'rejected' && rejectionReason) {
+      updateData.rejectionReason = rejectionReason;
+    } else if (approvalStatus === 'approved') {
+      // Clear rejection reason when approved
+      updateData.rejectionReason = null;
+      updateData.verified = true;
+    }
+
     const provider = await Provider.findByIdAndUpdate(
       providerId,
-      {
-        $set: {
-          approvalStatus,
-          updatedAt: new Date(),
-        },
-      },
+      {$set: updateData},
       {new: true},
     );
 

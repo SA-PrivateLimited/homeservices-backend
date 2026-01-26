@@ -16,9 +16,11 @@ const usersRoutes = require('./routes/users'); // Shared
 
 // Customer app routes
 const customerJobCardsRoutes = require('./routes/customer/jobCards');
+const customerServiceRequestsRoutes = require('./routes/customer/serviceRequests');
 
 // Provider app routes
 const providerJobCardsRoutes = require('./routes/provider/jobCards');
+const providerServiceRequestsRoutes = require('./routes/provider/serviceRequests');
 
 // Admin app routes
 const adminJobCardsRoutes = require('./routes/admin/jobCards');
@@ -27,6 +29,7 @@ const adminJobCardsRoutes = require('./routes/admin/jobCards');
 const providersRoutes = require('./routes/shared/providers');
 const reviewsRoutes = require('./routes/shared/reviews');
 const serviceCategoriesRoutes = require('./routes/shared/serviceCategories');
+const contactRecommendationsRoutes = require('./routes/shared/contactRecommendations');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -62,12 +65,15 @@ app.use('/api/users', usersRoutes);
 app.use('/api/providers', providersRoutes);
 app.use('/api/reviews', reviewsRoutes);
 app.use('/api/serviceCategories', serviceCategoriesRoutes);
+app.use('/api/contactRecommendations', contactRecommendationsRoutes);
 
 // Customer app routes
 app.use('/api/customer/jobCards', customerJobCardsRoutes);
+app.use('/api/customer/serviceRequests', customerServiceRequestsRoutes);
 
 // Provider app routes
 app.use('/api/provider/jobCards', providerJobCardsRoutes);
+app.use('/api/provider/serviceRequests', providerServiceRequestsRoutes);
 
 // Admin app routes
 app.use('/api/admin/jobCards', adminJobCardsRoutes);
@@ -97,8 +103,8 @@ async function startServer() {
     // Connect to MongoDB
     await connectDB();
 
-    // Start Express server
-    app.listen(PORT, () => {
+    // Start Express server - listen on all interfaces for emulator access
+    app.listen(PORT, '0.0.0.0', () => {
       console.log(`
 ╔════════════════════════════════════════╗
 ║   Home Services Backend API Server    ║

@@ -88,8 +88,9 @@ exports.createJobCard = async (req, res, next) => {
 
     // Update Realtime DB equivalent
     try {
-      const {getCollection} = require('../../config/database');
-      const jobCardsRTDB = getCollection('jobCards_rtdb');
+      const {getCollection, connectDB} = require('../../config/database');
+      await connectDB(); // Ensure database is connected
+      const jobCardsRTDB = await getCollection('jobCards_rtdb');
       await jobCardsRTDB.updateOne(
         {_id: jobCard._id},
         {$set: {status: jobCard.status, updatedAt: jobCard.updatedAt}},
@@ -156,8 +157,9 @@ exports.updateJobCardStatus = async (req, res, next) => {
 
     // Update Realtime DB equivalent
     try {
-      const {getCollection} = require('../../config/database');
-      const jobCardsRTDB = getCollection('jobCards_rtdb');
+      const {getCollection, connectDB} = require('../../config/database');
+      await connectDB(); // Ensure database is connected
+      const jobCardsRTDB = await getCollection('jobCards_rtdb');
       await jobCardsRTDB.updateOne(
         {_id: jobCardId},
         {$set: {status: update.status || jobCard.status, updatedAt: update.updatedAt}},

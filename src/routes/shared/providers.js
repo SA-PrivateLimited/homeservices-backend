@@ -10,9 +10,11 @@ const {logRequest} = require('../../middleware/logger');
 const {
   getProviders,
   getProviderById,
+  getMyProfile,
   updateMyProfile,
   updateMyStatus,
   updateProviderApproval,
+  updateProvider,
 } = require('../../controllers/shared/providersController');
 
 /**
@@ -25,6 +27,18 @@ router.get(
   validatePagination,
   logRequest,
   getProviders,
+);
+
+/**
+ * GET /api/providers/me
+ * Get current provider's profile (provider only)
+ * NOTE: This must come BEFORE /:providerId to avoid 'me' being treated as an ID
+ */
+router.get(
+  '/me',
+  requireRole('provider'),
+  logRequest,
+  getMyProfile,
 );
 
 /**
@@ -64,6 +78,7 @@ router.put(
 /**
  * PUT /api/providers/:providerId/approval
  * Approve/reject provider (admin only)
+ * NOTE: This must come BEFORE /:providerId to avoid 'approval' being treated as an ID
  */
 router.put(
   '/:providerId/approval',
@@ -71,6 +86,18 @@ router.put(
   validateObjectId,
   logRequest,
   updateProviderApproval,
+);
+
+/**
+ * PUT /api/providers/:providerId
+ * Update provider details (admin only)
+ */
+router.put(
+  '/:providerId',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  updateProvider,
 );
 
 module.exports = router;

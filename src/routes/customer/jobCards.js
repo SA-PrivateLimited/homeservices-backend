@@ -8,6 +8,7 @@ const {verifyAuth} = require('../../middleware/auth');
 const {validatePagination, validateCancellationReason, validateObjectId} = require('../../middleware/validate');
 const {checkJobCardCustomer} = require('../../middleware/permissions');
 const {logRequest} = require('../../middleware/logger');
+const {detectLanguage} = require('../../utils/translations');
 const {
   getMyJobCards,
   getMyJobCardById,
@@ -20,6 +21,7 @@ const {
  */
 router.get(
   '/',
+  detectLanguage,
   verifyAuth,
   validatePagination,
   logRequest,
@@ -32,6 +34,7 @@ router.get(
  */
 router.get(
   '/:jobCardId',
+  detectLanguage,
   verifyAuth,
   validateObjectId,
   checkJobCardCustomer,
@@ -45,6 +48,7 @@ router.get(
  */
 router.put(
   '/:jobCardId/cancel',
+  detectLanguage,
   verifyAuth,
   validateObjectId,
   validateCancellationReason,

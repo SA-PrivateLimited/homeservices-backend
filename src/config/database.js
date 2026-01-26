@@ -66,7 +66,15 @@ async function closeDB() {
  * Get collection (for backward compatibility, but prefer using Models)
  * @deprecated Use Mongoose Models instead
  */
-function getCollection(collectionName) {
+async function getCollection(collectionName) {
+  // Ensure database is connected
+  if (mongoose.connection.readyState !== 1) {
+    try {
+      await connectDB();
+    } catch (error) {
+      throw new Error(`Database not connected. Call connectDB() first. Error: ${error.message}`);
+    }
+  }
   const database = getDB();
   return database.collection(collectionName);
 }

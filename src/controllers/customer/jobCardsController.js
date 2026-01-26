@@ -5,6 +5,7 @@
 
 const JobCard = require('../../models/JobCard');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
+const {t} = require('../../utils/translations');
 
 /**
  * Get customer's job cards
@@ -53,9 +54,11 @@ exports.getMyJobCardById = async (req, res, next) => {
     });
 
     if (!jobCard) {
+      const lang = req.lang || 'en';
       return res.status(404).json({
         success: false,
-        error: 'Job card not found',
+        error: t('jobCards.notFound', lang),
+        message: t('jobCards.notFound', lang),
       });
     }
 
@@ -76,11 +79,13 @@ exports.cancelJobCard = async (req, res, next) => {
     const {jobCardId} = req.params;
     const {cancellationReason} = req.body;
 
+    const lang = req.lang || 'en';
+
     if (!cancellationReason || !cancellationReason.trim()) {
       return res.status(400).json({
         success: false,
-        error: 'Bad Request',
-        message: 'Cancellation reason is required',
+        error: t('jobCards.badRequest', lang),
+        message: t('jobCards.cancellationReasonRequired', lang),
       });
     }
 
@@ -92,23 +97,24 @@ exports.cancelJobCard = async (req, res, next) => {
     if (!jobCard) {
       return res.status(404).json({
         success: false,
-        error: 'Job card not found',
+        error: t('jobCards.notFound', lang),
+        message: t('jobCards.notFound', lang),
       });
     }
 
     if (jobCard.status === 'cancelled') {
       return res.status(400).json({
         success: false,
-        error: 'Bad Request',
-        message: 'Job card is already cancelled',
+        error: t('jobCards.badRequest', lang),
+        message: t('jobCards.alreadyCancelled', lang),
       });
     }
 
     if (jobCard.status === 'completed') {
       return res.status(400).json({
         success: false,
-        error: 'Bad Request',
-        message: 'Cannot cancel a completed job',
+        error: t('jobCards.badRequest', lang),
+        message: t('jobCards.cannotCancelCompleted', lang),
       });
     }
 
@@ -127,8 +133,9 @@ exports.cancelJobCard = async (req, res, next) => {
 
     // Update Realtime DB equivalent
     try {
-      const {getCollection} = require('../../config/database');
-      const jobCardsRTDB = getCollection('jobCards_rtdb');
+      const {getCollection, connectDB} = require('../../config/database');
+      await connectDB(); // Ensure database is connected
+      const jobCardsRTDB = await getCollection('jobCards_rtdb');
       await jobCardsRTDB.updateOne(
         {_id: jobCardId},
         {$set: {status: 'cancelled', updatedAt: new Date()}},
@@ -141,7 +148,7 @@ exports.cancelJobCard = async (req, res, next) => {
     res.json({
       success: true,
       data: updatedJobCard,
-      message: 'Job card cancelled successfully',
+      message: t('jobCards.cancelledSuccessfully', lang),
     });
   } catch (error) {
     next(error);

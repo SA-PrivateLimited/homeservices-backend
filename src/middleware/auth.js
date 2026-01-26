@@ -8,13 +8,48 @@ const admin = require('firebase-admin');
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
   try {
-    const serviceAccount = require('../../../firebase/serviceAccountKey.json');
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    });
+    // Try multiple possible paths for service account key
+    const path = require('path');
+    const fs = require('fs');
+    
+    let serviceAccountPath = null;
+    const possiblePaths = [
+      path.join(__dirname, '../../serviceAccountsKey.json'), // In homeServicesBackend root
+      path.join(__dirname, '../../../serviceAccountsKey.json'), // In project root
+      path.join(__dirname, '../../../firebase/serviceAccountKey.json'), // In firebase folder
+      process.env.SERVICE_ACCOUNT_KEY_PATH, // From environment variable
+    ];
+    
+    for (const possiblePath of possiblePaths) {
+      if (possiblePath && fs.existsSync(possiblePath)) {
+        serviceAccountPath = possiblePath;
+        break;
+      }
+    }
+    
+    if (serviceAccountPath) {
+      const serviceAccount = require(serviceAccountPath);
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+      });
+      console.log('✅ Firebase Admin initialized with service account key:', serviceAccountPath);
+    } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      // Try parsing from environment variable (JSON string)
+      try {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount),
+        });
+        console.log('✅ Firebase Admin initialized from environment variable');
+      } catch (parseError) {
+        console.error('⚠️  Failed to parse FIREBASE_SERVICE_ACCOUNT from env:', parseError.message);
+      }
+    } else {
+      throw new Error('Service account key not found. Please provide serviceAccountsKey.json or set FIREBASE_SERVICE_ACCOUNT env variable.');
+    }
   } catch (error) {
     console.error('⚠️  Firebase Admin initialization failed:', error.message);
-    console.log('   Using environment variables for Firebase config');
+    console.log('   Make sure serviceAccountsKey.json exists or FIREBASE_SERVICE_ACCOUNT env variable is set');
   }
 }
 
@@ -45,6 +80,26 @@ async function verifyAuth(req, res, next) {
       phoneNumber: decodedToken.phone_number,
     };
 
+    // Fetch user role from database
+    try {
+      const {getCollection, connectDB} = require('../config/database');
+      // Ensure database is connected
+      await connectDB();
+      const usersCollection = await getCollection('users');
+      const userDoc = await usersCollection.findOne({_id: decodedToken.uid});
+      if (userDoc) {
+        req.user.role = userDoc.role || 'customer';
+        req.userDoc = userDoc;
+      } else {
+        // If user doesn't exist in database, default to customer
+        req.user.role = 'customer';
+      }
+    } catch (dbError) {
+      // Continue with default role if database lookup fails
+      console.warn('⚠️  Failed to fetch user role from database:', dbError.message);
+      req.user.role = 'customer'; // Default to customer
+    }
+
     next();
   } catch (error) {
     console.error('❌ Auth verification error:', error.message);
@@ -71,8 +126,10 @@ function requireRole(...allowedRoles) {
       });
 
       // Get user from database to check role
-      const {getCollection} = require('../config/database');
-      const usersCollection = getCollection('users');
+      const {getCollection, connectDB} = require('../config/database');
+      // Ensure database is connected
+      await connectDB();
+      const usersCollection = await getCollection('users');
       const userDoc = await usersCollection.findOne({_id: req.user.uid});
 
       if (!userDoc) {
@@ -110,6 +167,7 @@ function requireRole(...allowedRoles) {
 
 /**
  * Optional auth - doesn't fail if no token provided
+ * Also fetches user role from database if token is valid
  */
 async function optionalAuth(req, res, next) {
   try {
@@ -123,6 +181,22 @@ async function optionalAuth(req, res, next) {
         email: decodedToken.email,
         phoneNumber: decodedToken.phone_number,
       };
+
+      // Fetch user role from database
+      try {
+        const {getCollection, connectDB} = require('../config/database');
+        // Ensure database is connected
+        await connectDB();
+        const usersCollection = await getCollection('users');
+        const userDoc = await usersCollection.findOne({_id: req.user.uid});
+        if (userDoc) {
+          req.user.role = userDoc.role || 'customer';
+          req.userDoc = userDoc;
+        }
+      } catch (dbError) {
+        // Continue without role if database lookup fails
+        console.warn('Failed to fetch user role:', dbError.message);
+      }
     }
 
     next();
