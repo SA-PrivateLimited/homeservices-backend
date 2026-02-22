@@ -13,11 +13,12 @@ const User = require('../../models/User');
  */
 exports.getReviews = async (req, res, next) => {
   try {
-    const {providerId, customerId, limit = 50, offset = 0} = req.query;
+    const {providerId, customerId, jobCardId, limit = 50, offset = 0} = req.query;
 
     const query = {};
     if (providerId) query.providerId = providerId;
     if (customerId) query.customerId = customerId;
+    if (jobCardId) query.jobCardId = jobCardId;
 
     const reviews = await Review.find(query)
       .sort({createdAt: -1})

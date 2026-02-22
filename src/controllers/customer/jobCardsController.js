@@ -27,6 +27,7 @@ exports.getMyJobCards = async (req, res, next) => {
       .limit(parseInt(limit))
       .skip(parseInt(offset))
       .lean();
+    console.log('jobCards', jobCards);
 
     const duration = Date.now() - startTime;
     logPerformance('getMyJobCards', duration);

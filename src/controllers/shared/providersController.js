@@ -5,12 +5,15 @@
 
 const Provider = require('../../models/Provider');
 const User = require('../../models/User');
+const {connectDB} = require('../../config/database');
 
 /**
  * Get all providers (public, but admins can see all statuses)
  */
 exports.getProviders = async (req, res, next) => {
   try {
+    await connectDB();
+
     const {
       serviceType,
       city,
@@ -70,6 +73,8 @@ exports.getProviders = async (req, res, next) => {
  */
 exports.getProviderById = async (req, res, next) => {
   try {
+    await connectDB();
+
     const {providerId} = req.params;
     // Try to find by string _id first (for Firestore-style IDs)
     let provider = await Provider.findOne({_id: providerId});
@@ -135,6 +140,7 @@ exports.getProviderById = async (req, res, next) => {
  */
 exports.getMyProfile = async (req, res, next) => {
   try {
+    await connectDB();
     const provider = await Provider.findById(req.user.uid);
 
     if (!provider) {
@@ -158,6 +164,7 @@ exports.getMyProfile = async (req, res, next) => {
  */
 exports.updateMyProfile = async (req, res, next) => {
   try {
+    await connectDB();
     const updateData = {
       ...req.body,
       updatedAt: new Date(),
@@ -260,6 +267,7 @@ exports.updateMyStatus = async (req, res, next) => {
  */
 exports.updateProvider = async (req, res, next) => {
   try {
+    await connectDB();
     const {providerId} = req.params;
     const adminId = req.user.uid; // Admin ID from verified auth token
     const adminRole = req.user.role; // Role verified by requireRole middleware
@@ -316,6 +324,7 @@ exports.updateProvider = async (req, res, next) => {
  */
 exports.updateProviderApproval = async (req, res, next) => {
   try {
+    await connectDB();
     const {providerId} = req.params;
     const {approvalStatus, rejectionReason} = req.body;
 

@@ -1,5 +1,9 @@
 /**
  * MongoDB Database Connection using Mongoose
+ *
+ * Architecture: Only the backend connects to the database.
+ * All client apps (HomeServices, HomeServicesProvider, HomeServicesAdmin) must
+ * use this backend API only; they must never connect to MongoDB directly.
  */
 
 const mongoose = require('mongoose');
