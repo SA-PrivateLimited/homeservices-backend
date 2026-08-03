@@ -8,7 +8,7 @@ const Provider = require('../../models/Provider');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
 const {t} = require('../../utils/translations');
 const mongoose = require('mongoose');
-const axios = require('axios');
+const {notifyBooking} = require('../../realtime/socket');
 
 /**
  * Get pending service requests assigned to this provider
@@ -331,10 +331,9 @@ exports.acceptServiceRequest = async (req, res, next) => {
     const duration = Date.now() - startTime;
     logPerformance('acceptServiceRequest', duration);
 
-    // Best-effort: notify customer that request was accepted
+    // Best-effort: notify customer that request was accepted (ActiveService also polls)
     try {
-      const websocketServerUrl = process.env.WEBSOCKET_SERVER_URL || 'https://websocket-server-425944993130.us-central1.run.app';
-      await axios.post(`${websocketServerUrl}/emit-booking`, {
+      await notifyBooking({
         customerId: serviceRequest.customerId,
         bookingData: {
           type: 'service-request-status',
@@ -343,7 +342,7 @@ exports.acceptServiceRequest = async (req, res, next) => {
           providerId,
           providerName,
         },
-      }, {timeout: 5000}).catch(() => {});
+      });
     } catch (_) {
       // non-fatal
     }
@@ -441,8 +440,7 @@ exports.rejectServiceRequest = async (req, res, next) => {
 
     // Best-effort notify customer (ActiveService also polls status)
     try {
-      const websocketServerUrl = process.env.WEBSOCKET_SERVER_URL || 'https://websocket-server-425944993130.us-central1.run.app';
-      await axios.post(`${websocketServerUrl}/emit-booking`, {
+      await notifyBooking({
         customerId: serviceRequest.customerId,
         bookingData: {
           type: 'service-request-status',
@@ -453,7 +451,7 @@ exports.rejectServiceRequest = async (req, res, next) => {
           rejectionReason: reason,
           message: 'Provider is not ready to take this request',
         },
-      }, {timeout: 5000}).catch(() => {});
+      });
     } catch (_) {
       // non-fatal — customer UI polls status
     }

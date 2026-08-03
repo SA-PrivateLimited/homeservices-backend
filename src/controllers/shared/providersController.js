@@ -341,11 +341,75 @@ exports.updateMyProfile = async (req, res, next) => {
     delete updateData.approvalStatus;
     delete updateData.role;
 
+    // Keep location + address in sync when either is sent
+    if (updateData.address && typeof updateData.address === 'object') {
+      const addr = updateData.address;
+      updateData.location = {
+        ...(updateData.location || {}),
+        address: addr.address,
+        landmark: addr.landmark,
+        city: addr.district || addr.city,
+        district: addr.district || addr.city,
+        state: addr.state,
+        stateId: addr.stateId,
+        districtId: addr.districtId,
+        pincode: addr.pincode,
+        latitude: addr.latitude,
+        longitude: addr.longitude,
+      };
+    } else if (updateData.location && typeof updateData.location === 'object') {
+      const loc = updateData.location;
+      if (!updateData.address) {
+        updateData.address = {
+          type: 'home',
+          address: loc.address,
+          landmark: loc.landmark,
+          city: loc.district || loc.city,
+          district: loc.district || loc.city,
+          state: loc.state,
+          stateId: loc.stateId,
+          districtId: loc.districtId,
+          pincode: loc.pincode,
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+        };
+      }
+    }
+
     const provider = await Provider.findByIdAndUpdate(
       req.user.uid,
       {$set: updateData},
       {new: true, runValidators: false, upsert: true},
     );
+
+    // Sync linked user profile address fields (incl. landmark)
+    try {
+      const userPatch = {updatedAt: new Date()};
+      if (updateData.name) {
+        userPatch.name = updateData.name;
+        userPatch.displayName = updateData.name;
+      }
+      if (updateData.location) {
+        userPatch.location = updateData.location;
+      }
+      if (updateData.address) {
+        userPatch.homeAddress = {
+          address: updateData.address.address,
+          landmark: updateData.address.landmark,
+          city: updateData.address.city || updateData.address.district,
+          district: updateData.address.district || updateData.address.city,
+          state: updateData.address.state,
+          stateId: updateData.address.stateId,
+          districtId: updateData.address.districtId,
+          pincode: updateData.address.pincode,
+          latitude: updateData.address.latitude,
+          longitude: updateData.address.longitude,
+        };
+      }
+      await User.findByIdAndUpdate(req.user.uid, {$set: userPatch});
+    } catch (syncErr) {
+      console.warn('Could not sync user from provider self-update:', syncErr.message);
+    }
 
     res.json({
       success: true,

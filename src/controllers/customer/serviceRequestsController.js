@@ -7,8 +7,8 @@ const ServiceRequest = require('../../models/ServiceRequest');
 const Provider = require('../../models/Provider');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
 const {t} = require('../../utils/translations');
-const axios = require('axios');
 const mongoose = require('mongoose');
+const {notifyBooking} = require('../../realtime/socket');
 
 /**
  * Get customer's service requests
@@ -233,9 +233,6 @@ exports.createServiceRequest = async (req, res, next) => {
           .lean();
       }
 
-      // Get websocket server URL from environment or use Cloud Run URL
-      const websocketServerUrl = process.env.WEBSOCKET_SERVER_URL || 'https://websocket-server-425944993130.us-central1.run.app';
-      
       // Prepare booking data for websocket
       const bookingData = {
         id: serviceRequest._id.toString(),
@@ -254,24 +251,32 @@ exports.createServiceRequest = async (req, res, next) => {
         isTargeted: !!targetedProvider,
       };
 
-      // Emit to selected providers
+      // Emit to selected providers (in-process Socket.IO; optional remote fallback)
       const emitPromises = providersToNotify.map(async (provider) => {
         try {
-          await axios.post(`${websocketServerUrl}/emit-booking`, {
+          const result = await notifyBooking({
             providerId: provider._id.toString(),
-            bookingData: bookingData,
-          }, {
-            timeout: 5000, // 5 second timeout
+            bookingData,
           });
-          console.log(`✅ [WebSocket] Notification sent to provider ${provider._id}`);
+          if (result.ok) {
+            console.log(
+              `✅ [WebSocket] Notification sent to provider ${provider._id} via ${result.via}`,
+            );
+          } else {
+            console.warn(
+              `⚠️ [WebSocket] Failed to notify provider ${provider._id}:`,
+              result.reason,
+            );
+          }
         } catch (error) {
-          // Don't fail the request if websocket fails
-          console.warn(`⚠️ [WebSocket] Failed to notify provider ${provider._id}:`, error.message);
+          console.warn(
+            `⚠️ [WebSocket] Failed to notify provider ${provider._id}:`,
+            error.message,
+          );
         }
       });
 
-      // Emit notifications in parallel (don't wait for all to complete)
-      Promise.all(emitPromises).catch(err => {
+      Promise.all(emitPromises).catch((err) => {
         console.warn('⚠️ [WebSocket] Some provider notifications failed:', err.message);
       });
 

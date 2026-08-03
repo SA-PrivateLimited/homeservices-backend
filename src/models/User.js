@@ -76,6 +76,7 @@ const userSchema = new mongoose.Schema({
     latitude: Number,
     longitude: Number,
     address: String,
+    landmark: String,
     city: String,
     state: String,
     district: String,

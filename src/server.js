@@ -10,12 +10,17 @@ try {
 } catch (e) {
   /* optional */
 }
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const {connectDB} = require('./config/database');
 const errorHandler = require('./middleware/errorHandler');
+const {
+  initSocket,
+  mountEmitHttpRoutes,
+} = require('./realtime/socket');
 
 // Route imports - Organized by app
 const usersRoutes = require('./routes/users'); // Shared
@@ -100,6 +105,9 @@ app.use('/api/admin/jobCards', adminJobCardsRoutes);
 app.use('/api/admin/clients', adminClientsRoutes);
 app.use('/api/admin/geography', adminGeographyRoutes);
 
+// Realtime HTTP emit (compat with mobile clients; same host as API)
+mountEmitHttpRoutes(app);
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
@@ -119,14 +127,20 @@ app.use((err, req, res, next) => {
 // Error handling middleware (must be last)
 app.use(errorHandler);
 
+// HTTP server (required for Socket.IO). Vercel uses the Express export only.
+const server = http.createServer(app);
+
 // Start server
 async function startServer() {
   try {
     // Connect to MongoDB
     await connectDB();
 
-    // Start Express server - listen on all interfaces for emulator access
-    app.listen(PORT, '0.0.0.0', () => {
+    // Attach Socket.IO to the same HTTP server (long-lived process only)
+    initSocket(server);
+
+    // Listen on all interfaces for emulator access
+    server.listen(PORT, '0.0.0.0', () => {
       console.log(`
 ╔════════════════════════════════════════╗
 ║   Home Services Backend API Server    ║
@@ -136,6 +150,7 @@ async function startServer() {
 🔌 MongoDB: Connected
 📍 API Base URL: http://localhost:${PORT}/api
 📚 Health Check: http://localhost:${PORT}/health
+🔌 Socket.IO:   http://localhost:${PORT} (path /socket.io/)
 🔐 Auth: GET  http://localhost:${PORT}/api/auth/health  (verify auth routes loaded)
    POST http://localhost:${PORT}/api/auth/register
    POST http://localhost:${PORT}/api/auth/login
