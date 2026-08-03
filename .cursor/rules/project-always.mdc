@@ -1,0 +1,22 @@
+---
+description: Always-active project conventions (Home Services Backend)
+alwaysApply: true
+---
+
+# Project Always Rules
+
+## Never commit
+- `.env` — secrets
+- `agent-context/` (gitignored)
+
+## Branch naming
+`feat/[ticket-id]` · `fix/[ticket-id]` · `chore/[description]`
+
+## API
+Respect customer/provider/admin route split. Validate inputs. Use errorHandler.
+
+## Docs
+Update BACKEND_API.md / Postman when adding endpoints.
+
+## PR size
+Prefer PRs under ~400 lines changed.

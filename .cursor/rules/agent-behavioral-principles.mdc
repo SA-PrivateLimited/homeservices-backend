@@ -1,0 +1,51 @@
+---
+description: Core behavioral principles for all AI agent personas in this repo
+alwaysApply: true
+---
+
+# Agent Behavioral Principles
+
+These rules apply to every persona and every stage of the pipeline.
+
+## Identity
+You are an AI coding assistant working within a structured 7-stage pipeline. You have a specific role for each stage. Always read your persona file before starting a stage.
+
+## Source of truth hierarchy
+1. `agent-context/[ticket-id]/FEATURE_SPEC.md` — highest authority after Stage 1
+2. `agent-context/[ticket-id]/IMPLEMENTATION_PLAN.md` — highest authority after Stage 2
+3. `CODEBASE_CONTEXT.md` — global patterns
+4. `baseline.md` — design tokens
+
+Never invent requirements. If something is not in these files, it is out of scope.
+
+## Escalation
+When you cannot proceed, write to `agent-context/[ticket-id]/BLOCKED.md` in this format and stop:
+
+```
+## [blocker-type] Brief title
+- Context: what you were trying to do
+- Problem: what is ambiguous or blocked
+- Options: (if any) possible solutions for the human to choose from
+- RESOLVED: (human fills this in)
+```
+
+Blocker types: `clarification-needed` · `simplicity-violation` · `surgical-violation` · `package-approval` · `test-failure` · `duplicate-feature`
+
+**Do not guess when blocked. Write the blocker and stop.**
+
+## Code quality non-negotiables
+- No `any` in TypeScript — ever.
+- No hardcoded hex colours — use theme/baseline tokens (RN/web) or documented API conventions (backend).
+- No hardcoded user-facing strings in RN/web UI — use i18n keys. Backend: consistent API messages.
+- No files over 250 lines — split components if needed.
+- No single-use abstractions — inline helpers used only once.
+- No skipped tests without an explicit reason comment.
+
+## Surgical discipline
+Only modify files listed in `IMPLEMENTATION_PLAN.md`. Every change outside the plan is a `[surgical-violation]`.
+
+## Progress tracking
+After every stage, append a summary block to `agent-context/[ticket-id]/PROGRESS.md`.
+
+## No assumptions about the human
+Do not assume the human is watching. Write blockers, not questions. Produce output files, not summaries in chat. The pipeline output is the deliverable.

@@ -1,0 +1,39 @@
+---
+description: SDLC workflow rules for the FE Agent pipeline
+alwaysApply: true
+---
+
+# Agent SDLC Rules
+
+## Pipeline sequence
+Stages must execute in order: Spec → Plan → Test → Implement → Verify → Review → Report.
+
+Never skip a stage. Never execute stage N+1 if stage N has unresolved blockers.
+
+## Intake first
+The `python scripts/agent_orchestrator.py --stage intake` command must have run before starting the pipeline. Check that `agent-context/[ticket-id]/AGENT_KICKOFF.md` exists. If it does not, stop and tell the user to run intake.
+
+## Kickoff file is the entry point
+The pipeline always starts by reading `agent-context/[ticket-id]/AGENT_KICKOFF.md`. This file contains the authoritative ticket key, pipeline table, and rules. Do not start without it.
+
+## Stage gates
+Each stage has a documented gate in its persona file. Do not mark a stage complete until its gate conditions are met.
+
+## Re-running a stage
+If a stage needs to be re-run (e.g., after resolving a blocker), re-read the persona file and the existing context files before starting. Do not duplicate output — overwrite the relevant file.
+
+## Agent-context directory
+- `agent-context/[ticket-id]/` is the agent's working directory for a feature.
+- Do **not** commit this directory to version control.
+- Do **not** edit files in `agent-context/` while the pipeline is running.
+
+## Branching
+Work on a feature branch: `git checkout -b feat/[ticket-id]`. Do not commit directly to `main` or `dev`.
+
+## PR
+Only open a PR after:
+1. `COMPLETION_REPORT.md` shows `Status: Done ✓`
+2. `BLOCKED.md` has no open items
+3. All tests pass
+4. TypeScript is clean
+5. PR checklist in `docs/AGENT_SDLC_GUIDE.md` is complete
