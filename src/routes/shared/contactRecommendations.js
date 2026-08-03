@@ -14,6 +14,7 @@ const {
   getAllContactRecommendations,
   getMyContactRecommendations,
   updateRecommendationStatus,
+  updateContactRecommendation,
 } = require('../../controllers/shared/contactRecommendationsController');
 
 /**
@@ -48,6 +49,19 @@ router.get(
   verifyAuth,
   logRequest,
   getMyContactRecommendations,
+);
+
+/**
+ * PUT /api/contactRecommendations/:id
+ * Update recommendation details (admin only)
+ */
+router.put(
+  '/:id',
+  verifyAuth,
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  updateContactRecommendation,
 );
 
 /**

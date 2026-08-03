@@ -7,10 +7,22 @@ const express = require('express');
 const router = express.Router();
 const {verifyAuth, requireRole} = require('../../middleware/auth');
 const {
+  getMyPendingServiceRequests,
   getServiceRequestById,
   acceptServiceRequest,
   rejectServiceRequest,
 } = require('../../controllers/provider/serviceRequestsController');
+
+/**
+ * GET /api/provider/serviceRequests/pending
+ * Pending requests assigned specifically to this provider
+ */
+router.get(
+  '/pending',
+  verifyAuth,
+  requireRole('provider'),
+  getMyPendingServiceRequests,
+);
 
 /**
  * GET /api/provider/serviceRequests/:serviceRequestId

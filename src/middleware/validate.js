@@ -27,7 +27,7 @@ exports.validateJobCardStatus = (req, res, next) => {
   const {status} = req.body;
 
   if (status) {
-    const validStatuses = ['pending', 'accepted', 'in-progress', 'completed', 'cancelled'];
+    const validStatuses = ['unassigned', 'pending', 'accepted', 'in-progress', 'completed', 'cancelled'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,

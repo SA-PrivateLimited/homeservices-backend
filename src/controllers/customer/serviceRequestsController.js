@@ -131,10 +131,43 @@ exports.createServiceRequest = async (req, res, next) => {
       return result;
     };
 
+    // Optional: request directed at a specific provider (even if offline / unavailable).
+    // Open requests (Services tab) omit providerId so any matching provider can accept.
+    const targetedProviderId = req.body.providerId ? String(req.body.providerId).trim() : '';
+    let targetedProvider = null;
+    if (targetedProviderId) {
+      targetedProvider = await Provider.findOne({
+        _id: targetedProviderId,
+        approvalStatus: 'approved',
+      })
+        .select('_id name phone specialization specialty serviceCategories')
+        .lean();
+
+      if (!targetedProvider) {
+        return res.status(400).json({
+          success: false,
+          error: t('serviceRequests.providerNotFound', lang) || 'Provider not found or not approved',
+          message: t('serviceRequests.providerNotFound', lang) || 'Provider not found or not approved',
+        });
+      }
+    }
+
     // Create service request
     const generatedId = req.body._id || req.body.id || generateId();
+    const {
+      providerId: _ignoreProviderId,
+      providerName: _ignoreProviderName,
+      providerPhone: _ignoreProviderPhone,
+      providerSpecialization: _ignoreProviderSpecialization,
+      providerRating: _ignoreProviderRating,
+      providerImage: _ignoreProviderImage,
+      providerAddress: _ignoreProviderAddress,
+      providerEmail: _ignoreProviderEmail,
+      ...bodyWithoutProvider
+    } = req.body;
+
     const serviceRequestData = {
-      ...req.body,
+      ...bodyWithoutProvider,
       _id: generatedId,
       consultationId: generatedId, // For backward compatibility - allows lookup by either _id or consultationId
       customerId: userId,
@@ -143,7 +176,34 @@ exports.createServiceRequest = async (req, res, next) => {
       updatedAt: new Date(),
     };
 
-    logDatabaseOperation('create', 'serviceRequests', {customerId: userId, serviceType});
+    if (targetedProvider) {
+      // Specific-provider flow: reserve for this provider until they accept/reject
+      serviceRequestData.providerId = targetedProvider._id.toString();
+      serviceRequestData.providerName =
+        req.body.providerName || targetedProvider.name || '';
+      if (req.body.providerPhone || targetedProvider.phone) {
+        serviceRequestData.providerPhone =
+          req.body.providerPhone || targetedProvider.phone;
+      }
+      serviceRequestData.providerSpecialization =
+        req.body.providerSpecialization ||
+        targetedProvider.specialization ||
+        targetedProvider.specialty ||
+        '';
+      if (req.body.providerRating != null) {
+        serviceRequestData.providerRating = req.body.providerRating;
+      }
+      if (req.body.providerImage) {
+        serviceRequestData.providerImage = req.body.providerImage;
+      }
+    }
+    // else: open flow — leave provider fields unset so any provider can accept
+
+    logDatabaseOperation('create', 'serviceRequests', {
+      customerId: userId,
+      serviceType,
+      providerId: targetedProviderId || undefined,
+    });
 
     const serviceRequest = new ServiceRequest(serviceRequestData);
     await serviceRequest.save();
@@ -152,17 +212,26 @@ exports.createServiceRequest = async (req, res, next) => {
     logPerformance('createServiceRequest', duration);
 
     // Emit websocket notification to providers
-    // Find providers for this service type and notify them
     try {
-      const providers = await Provider.find({
-        approvalStatus: 'approved',
-        isOnline: true, // Only notify online providers
-        isAvailable: true, // Only notify available providers
-        $or: [
-          {serviceCategories: serviceType},
-          {specialization: serviceType},
-        ],
-      }).select('_id name').lean();
+      let providersToNotify = [];
+
+      if (targetedProvider) {
+        // Specific-provider request: always try that provider (online or not)
+        providersToNotify = [targetedProvider];
+      } else {
+        // Open request: notify online + available providers for this service type
+        providersToNotify = await Provider.find({
+          approvalStatus: 'approved',
+          isOnline: true,
+          isAvailable: true,
+          $or: [
+            {serviceCategories: serviceType},
+            {specialization: serviceType},
+          ],
+        })
+          .select('_id name')
+          .lean();
+      }
 
       // Get websocket server URL from environment or use Cloud Run URL
       const websocketServerUrl = process.env.WEBSOCKET_SERVER_URL || 'https://websocket-server-425944993130.us-central1.run.app';
@@ -181,10 +250,12 @@ exports.createServiceRequest = async (req, res, next) => {
         pincode: customerAddress.pincode,
         status: 'pending',
         createdAt: serviceRequest.createdAt,
+        providerId: targetedProvider ? targetedProvider._id.toString() : undefined,
+        isTargeted: !!targetedProvider,
       };
 
-      // Emit to all providers of this service type
-      const emitPromises = providers.map(async (provider) => {
+      // Emit to selected providers
+      const emitPromises = providersToNotify.map(async (provider) => {
         try {
           await axios.post(`${websocketServerUrl}/emit-booking`, {
             providerId: provider._id.toString(),
@@ -204,7 +275,11 @@ exports.createServiceRequest = async (req, res, next) => {
         console.warn('⚠️ [WebSocket] Some provider notifications failed:', err.message);
       });
 
-      console.log(`📤 [WebSocket] Emitting service request to ${providers.length} provider(s) for service type: ${serviceType}`);
+      console.log(
+        targetedProvider
+          ? `📤 [WebSocket] Emitting targeted service request to provider ${targetedProvider._id}`
+          : `📤 [WebSocket] Emitting service request to ${providersToNotify.length} provider(s) for service type: ${serviceType}`,
+      );
     } catch (websocketError) {
       // Don't fail the request if websocket fails
       console.warn('⚠️ [WebSocket] Failed to emit service request notification:', websocketError.message);

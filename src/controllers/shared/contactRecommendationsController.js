@@ -146,7 +146,42 @@ exports.getAllContactRecommendations = async (req, res, next) => {
     const recommendations = await ContactRecommendation.find(query)
       .sort({createdAt: -1})
       .limit(parseInt(limit))
-      .skip(parseInt(offset));
+      .skip(parseInt(offset))
+      .lean();
+
+    // Fill sharer phone from user profile when missing on the recommendation
+    const sharerIds = [
+      ...new Set(
+        recommendations
+          .filter((r) => r.recommendedBy && !r.recommendedByPhone)
+          .map((r) => r.recommendedBy),
+      ),
+    ];
+    if (sharerIds.length) {
+      try {
+        const users = await User.find({_id: {$in: sharerIds}})
+          .select('_id phone phoneNumber location')
+          .lean();
+        const byId = new Map(users.map((u) => [u._id, u]));
+        for (const rec of recommendations) {
+          if (rec.recommendedByPhone) continue;
+          const u = byId.get(rec.recommendedBy);
+          if (!u) continue;
+          rec.recommendedByPhone = u.phone || u.phoneNumber || '';
+          if (!rec.address && u.location?.address) {
+            rec.recommendedByLocation = [
+              u.location.address,
+              u.location.city,
+              u.location.pincode,
+            ]
+              .filter(Boolean)
+              .join(', ');
+          }
+        }
+      } catch (e) {
+        console.warn('Could not enrich contact sharer phones:', e.message);
+      }
+    }
 
     const total = await ContactRecommendation.countDocuments(query);
 
@@ -238,6 +273,111 @@ exports.updateRecommendationStatus = async (req, res, next) => {
       success: true,
       data: recommendation,
       message: 'Recommendation status updated successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update contact recommendation details (admin only)
+ * PUT /api/contactRecommendations/:id
+ * Body: name?, phone?, serviceType?, address?, status?, adminNotes?
+ */
+exports.updateContactRecommendation = async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Only administrators can update contact recommendations',
+      });
+    }
+
+    const {id} = req.params;
+    const recommendation = await ContactRecommendation.findById(id);
+    if (!recommendation) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not Found',
+        message: 'Contact recommendation not found',
+      });
+    }
+
+    const {
+      recommendedProviderName,
+      recommendedProviderPhone,
+      serviceType,
+      address,
+      status,
+      adminNotes,
+    } = req.body;
+
+    if (recommendedProviderName !== undefined) {
+      const name = String(recommendedProviderName || '').trim();
+      if (!name) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation Error',
+          message: 'Provider name is required',
+        });
+      }
+      recommendation.recommendedProviderName = name;
+    }
+
+    if (recommendedProviderPhone !== undefined) {
+      const phone = String(recommendedProviderPhone || '').trim();
+      if (!phone) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation Error',
+          message: 'Provider phone number is required',
+        });
+      }
+      recommendation.recommendedProviderPhone = phone;
+    }
+
+    if (serviceType !== undefined) {
+      const service = String(serviceType || '').trim();
+      if (!service) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation Error',
+          message: 'Service type is required',
+        });
+      }
+      recommendation.serviceType = service;
+    }
+
+    if (address !== undefined) {
+      const addr = String(address || '').trim();
+      recommendation.address = addr || undefined;
+    }
+
+    if (status !== undefined) {
+      if (!['pending', 'contacted', 'registered', 'rejected'].includes(status)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation Error',
+          message:
+            'Valid status is required (pending, contacted, registered, rejected)',
+        });
+      }
+      recommendation.status = status;
+    }
+
+    if (adminNotes !== undefined) {
+      const notes = String(adminNotes || '').trim();
+      recommendation.adminNotes = notes || undefined;
+    }
+
+    recommendation.updatedAt = new Date();
+    await recommendation.save();
+
+    res.json({
+      success: true,
+      data: recommendation,
+      message: 'Contact recommendation updated successfully',
     });
   } catch (error) {
     next(error);

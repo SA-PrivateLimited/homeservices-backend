@@ -28,6 +28,10 @@ Thumbs.db
 dist/
 build/
 
+# Uploaded provider documents
+uploads/
+
 # Testing
 coverage/
 .nyc_output/
+agent-context/

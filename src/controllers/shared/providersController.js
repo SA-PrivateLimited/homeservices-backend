@@ -7,6 +7,10 @@ const Provider = require('../../models/Provider');
 const User = require('../../models/User');
 const {connectDB} = require('../../config/database');
 
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Get all providers (public, but admins can see all statuses)
  */
@@ -18,9 +22,14 @@ exports.getProviders = async (req, res, next) => {
       serviceType,
       city,
       state,
+      district,
+      stateId,
+      districtId,
+      pincode,
       isOnline,
       minRating,
       approvalStatus, // Allow filtering by approval status
+      includeInactive,
       limit = 50,
       offset = 0,
     } = req.query;
@@ -38,29 +47,133 @@ exports.getProviders = async (req, res, next) => {
     }
     // If admin and no approvalStatus filter, show all providers
 
+    const andClauses = [];
+
     // Filters - check both serviceType (string) and serviceCategories (array) fields
     if (serviceType) {
-      query.$or = [
-        { serviceType: serviceType },
-        { serviceCategories: { $in: [serviceType] } },
-        { specialization: serviceType }
-      ];
+      andClauses.push({
+        $or: [
+          {serviceType: serviceType},
+          {serviceCategories: {$in: [serviceType]}},
+          {specialization: serviceType},
+        ],
+      });
     }
-    if (city) query['location.city'] = city;
-    if (state) query['location.state'] = state;
+    if (city) {
+      query['location.city'] = new RegExp(`^${escapeRegex(city)}$`, 'i');
+    }
+    if (stateId || state) {
+      const stateParts = [];
+      if (stateId) {
+        stateParts.push({'location.stateId': String(stateId).trim()});
+      }
+      if (state) {
+        stateParts.push({
+          'location.state': new RegExp(`^${escapeRegex(String(state).trim())}$`, 'i'),
+        });
+      }
+      if (stateParts.length === 1) {
+        Object.assign(query, stateParts[0]);
+      } else {
+        andClauses.push({$or: stateParts});
+      }
+    }
+    if (districtId || district) {
+      const districtParts = [];
+      if (districtId) {
+        districtParts.push({'location.districtId': String(districtId).trim()});
+      }
+      if (district) {
+        const d = String(district).trim();
+        districtParts.push({
+          'location.district': new RegExp(`^${escapeRegex(d)}$`, 'i'),
+        });
+        // Legacy: some providers stored district name in city
+        districtParts.push({
+          'location.city': new RegExp(`^${escapeRegex(d)}$`, 'i'),
+        });
+      }
+      if (districtParts.length === 1) {
+        Object.assign(query, districtParts[0]);
+      } else {
+        andClauses.push({$or: districtParts});
+      }
+    }
+    if (pincode) {
+      const pin = String(pincode).trim();
+      // Match provider.location or linked user.location (same _id)
+      const usersWithPin = await User.find({
+        role: 'provider',
+        'location.pincode': pin,
+      })
+        .select('_id')
+        .lean();
+      const userIds = usersWithPin.map((u) => u._id);
+      andClauses.push({
+        $or: [
+          {'location.pincode': pin},
+          {_id: {$in: userIds}},
+        ],
+      });
+    }
     if (isOnline === 'true') query.isOnline = true;
     if (minRating) query.rating = {$gte: parseFloat(minRating)};
+    if (String(includeInactive) !== 'true') {
+      query.isActive = {$ne: false};
+    }
+
+    if (andClauses.length === 1) {
+      Object.assign(query, andClauses[0]);
+    } else if (andClauses.length > 1) {
+      query.$and = andClauses;
+    }
+
+    const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
+    const off = Math.max(parseInt(offset, 10) || 0, 0);
 
     const providers = await Provider.find(query)
       .select('+phoneNumber') // Ensure phoneNumber is included
-      .limit(parseInt(limit))
-      .skip(parseInt(offset))
+      .limit(lim)
+      .skip(off)
       .lean();
+
+    const total = await Provider.countDocuments(query);
+
+    let enriched = providers;
+    if (isAdmin && providers.length > 0) {
+      try {
+        const ids = providers.map((p) => p._id);
+        const users = await User.find({_id: {$in: ids}})
+          .select('+encryptedPin +pinHash')
+          .lean();
+        const byId = new Map(users.map((u) => [u._id, u]));
+        enriched = providers.map((p) => {
+          const u = byId.get(p._id);
+          return {
+            ...p,
+            phone: p.phone || p.phoneNumber || u?.phone || u?.phoneNumber,
+            phoneNumber:
+              p.phoneNumber || p.phone || u?.phoneNumber || u?.phone,
+            location: p.location || u?.location || undefined,
+            hasPin: Boolean(u?.pinHash || u?.encryptedPin),
+            isActive:
+              p.isActive !== false && (u ? u.isActive !== false : true),
+            deactivationReason:
+              p.deactivationReason || u?.deactivationReason || undefined,
+          };
+        });
+      } catch (e) {
+        console.warn('Could not enrich providers with PIN status:', e.message);
+      }
+    }
 
     res.json({
       success: true,
-      data: providers,
-      count: providers.length,
+      data: enriched,
+      count: enriched.length,
+      total,
+      limit: lim,
+      offset: off,
     });
   } catch (error) {
     next(error);
@@ -124,6 +237,60 @@ exports.getProviderById = async (req, res, next) => {
         pincode: realtimeLocation.pincode,
         updatedAt: realtimeLocation.updatedAt || Date.now(),
       };
+    }
+
+    // Admin: PIN presence only — reveal via GET /api/users/:id/pin
+    if (req.user?.role === 'admin') {
+      try {
+        const linkedUser = await User.findById(providerId).select(
+          '+encryptedPin +pinHash',
+        );
+        providerData.hasPin = Boolean(
+          linkedUser?.pinHash || linkedUser?.encryptedPin,
+        );
+        providerData.userId = linkedUser?._id || providerId;
+        const userLoc = linkedUser?.location;
+        if (userLoc && typeof userLoc === 'object') {
+          const existing = providerData.location || {};
+          providerData.location = {
+            ...userLoc,
+            ...existing,
+            address: existing.address || userLoc.address || undefined,
+            city: existing.city || userLoc.city || undefined,
+            state: existing.state || userLoc.state || undefined,
+            pincode: existing.pincode || userLoc.pincode || undefined,
+            country: existing.country || userLoc.country || undefined,
+          };
+        }
+        if (
+          providerData.currentLocation?.address &&
+          !(providerData.location && providerData.location.address)
+        ) {
+          providerData.location = {
+            ...(providerData.location || {}),
+            address:
+              providerData.location?.address ||
+              providerData.currentLocation.address,
+            city:
+              providerData.location?.city ||
+              providerData.currentLocation.city,
+            state:
+              providerData.location?.state ||
+              providerData.currentLocation.state,
+            pincode:
+              providerData.location?.pincode ||
+              providerData.currentLocation.pincode,
+          };
+        }
+        if (providerData.isActive === undefined || providerData.isActive === null) {
+          providerData.isActive = linkedUser?.isActive !== false;
+        }
+        if (!providerData.deactivationReason && linkedUser?.deactivationReason) {
+          providerData.deactivationReason = linkedUser.deactivationReason;
+        }
+      } catch (pinErr) {
+        console.warn('Could not load provider PIN status:', pinErr.message);
+      }
     }
 
     res.json({
@@ -291,6 +458,15 @@ exports.updateProvider = async (req, res, next) => {
     delete updateData._id;
     delete updateData.createdAt;
 
+    if (updateData.phone !== undefined || updateData.phoneNumber !== undefined) {
+      const {syncPhoneFields} = require('../../utils/phone');
+      const synced = syncPhoneFields(
+        updateData.phoneNumber ?? updateData.phone,
+      );
+      updateData.phone = synced.phone;
+      updateData.phoneNumber = synced.phoneNumber;
+    }
+
     // Allow updating documents verification status
     // The updateData may contain documents object with verification fields
     const provider = await Provider.findByIdAndUpdate(
@@ -308,6 +484,29 @@ exports.updateProvider = async (req, res, next) => {
     }
 
     console.log(`✅ Admin ${adminId} updated provider ${providerId}`);
+
+    // Keep linked user profile fields in sync for address/phone display
+    try {
+      const userPatch = {updatedAt: new Date()};
+      if (updateData.name) {
+        userPatch.name = updateData.name;
+        userPatch.displayName = updateData.name;
+      }
+      if (updateData.phone || updateData.phoneNumber) {
+        userPatch.phone = updateData.phone || updateData.phoneNumber;
+        userPatch.phoneNumber =
+          updateData.phoneNumber || updateData.phone;
+      }
+      if (updateData.phoneVerified !== undefined) {
+        userPatch.phoneVerified = Boolean(updateData.phoneVerified);
+      }
+      if (updateData.location) {
+        userPatch.location = updateData.location;
+      }
+      await User.findByIdAndUpdate(providerId, {$set: userPatch});
+    } catch (syncErr) {
+      console.warn('Could not sync user from provider update:', syncErr.message);
+    }
 
     res.json({
       success: true,
@@ -369,6 +568,70 @@ exports.updateProviderApproval = async (req, res, next) => {
       success: true,
       data: provider,
       message: `Provider ${approvalStatus} successfully`,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const ALLOWED_DOC_KEYS = ['idProof', 'addressProof', 'certificate'];
+
+/**
+ * POST /api/providers/:providerId/documents/:docKey
+ * Admin upload provider document (multipart field: file)
+ */
+exports.uploadProviderDocument = async (req, res, next) => {
+  try {
+    await connectDB();
+    const {providerId, docKey} = req.params;
+
+    if (!ALLOWED_DOC_KEYS.includes(docKey)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `docKey must be one of: ${ALLOWED_DOC_KEYS.join(', ')}`,
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'file is required',
+      });
+    }
+
+    const provider = await Provider.findById(providerId);
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Provider not found',
+      });
+    }
+
+    const url = `/uploads/provider_documents/${req.file.filename}`;
+    const documents = {
+      ...(provider.documents?.toObject
+        ? provider.documents.toObject()
+        : provider.documents || {}),
+      [docKey]: url,
+      [`${docKey}Verified`]: false,
+      [`${docKey}Rejected`]: false,
+      [`${docKey}RejectionReason`]: '',
+    };
+
+    provider.documents = documents;
+    provider.updatedAt = new Date();
+    await provider.save();
+
+    res.json({
+      success: true,
+      data: {
+        url,
+        documents: provider.documents,
+        provider,
+      },
+      message: 'Document uploaded successfully',
     });
   } catch (error) {
     next(error);

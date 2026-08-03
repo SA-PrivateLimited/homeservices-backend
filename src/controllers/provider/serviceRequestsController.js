@@ -4,9 +4,47 @@
  */
 
 const ServiceRequest = require('../../models/ServiceRequest');
+const Provider = require('../../models/Provider');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
 const {t} = require('../../utils/translations');
 const mongoose = require('mongoose');
+const axios = require('axios');
+
+/**
+ * Get pending service requests assigned to this provider
+ * (includes requests directed at them while they were offline)
+ */
+exports.getMyPendingServiceRequests = async (req, res, next) => {
+  const startTime = Date.now();
+  try {
+    const providerId = req.user.uid;
+    const {limit = 20} = req.query;
+
+    const query = {
+      status: 'pending',
+      providerId: String(providerId),
+    };
+
+    logDatabaseOperation('find', 'serviceRequests', query);
+
+    const serviceRequests = await ServiceRequest.find(query)
+      .sort({createdAt: -1})
+      .limit(parseInt(limit, 10) || 20)
+      .lean();
+
+    const duration = Date.now() - startTime;
+    logPerformance('getMyPendingServiceRequests', duration);
+
+    res.json({
+      success: true,
+      data: serviceRequests,
+      count: serviceRequests.length,
+    });
+  } catch (error) {
+    console.error(`❌ [getMyPendingServiceRequests] Failed for provider ${req.user.uid}:`, error.message);
+    next(error);
+  }
+};
 
 /**
  * Get service request by ID (provider can view any service request)
@@ -250,6 +288,23 @@ exports.acceptServiceRequest = async (req, res, next) => {
       });
     }
 
+    // Provider must be online to accept (offline providers see pending when they come online)
+    const providerDoc = await Provider.findOne({_id: providerId}).select('isOnline isAvailable approvalStatus').lean();
+    if (!providerDoc || providerDoc.approvalStatus !== 'approved') {
+      return res.status(403).json({
+        success: false,
+        error: 'Not Allowed',
+        message: 'Only approved providers can accept service requests',
+      });
+    }
+    if (!providerDoc.isOnline) {
+      return res.status(400).json({
+        success: false,
+        error: 'Provider Offline',
+        message: 'You must be online to accept a service request',
+      });
+    }
+
     // Get provider details from request body or use defaults
     const providerName = req.body.providerName || req.user.name || 'Provider';
     const providerPhone = req.body.providerPhone || req.user.phoneNumber || '';
@@ -275,6 +330,23 @@ exports.acceptServiceRequest = async (req, res, next) => {
 
     const duration = Date.now() - startTime;
     logPerformance('acceptServiceRequest', duration);
+
+    // Best-effort: notify customer that request was accepted
+    try {
+      const websocketServerUrl = process.env.WEBSOCKET_SERVER_URL || 'https://websocket-server-425944993130.us-central1.run.app';
+      await axios.post(`${websocketServerUrl}/emit-booking`, {
+        customerId: serviceRequest.customerId,
+        bookingData: {
+          type: 'service-request-status',
+          serviceRequestId: serviceRequest._id.toString(),
+          status: 'accepted',
+          providerId,
+          providerName,
+        },
+      }, {timeout: 5000}).catch(() => {});
+    } catch (_) {
+      // non-fatal
+    }
 
     res.json({
       success: true,
@@ -334,15 +406,57 @@ exports.rejectServiceRequest = async (req, res, next) => {
       });
     }
 
-    // Update service request status to rejected
+    // Open (broadcast) requests: declining only dismisses for this provider — do not cancel for the customer
+    if (!serviceRequest.providerId) {
+      return res.json({
+        success: true,
+        data: serviceRequest.toObject(),
+        dismissed: true,
+        message: 'Request declined for this provider; still available to others',
+      });
+    }
+
+    // Specific-provider requests: only the assigned provider can reject
+    if (serviceRequest.providerId !== providerId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not Assigned',
+        message: 'Only the assigned provider can reject this service request',
+      });
+    }
+
+    const reason =
+      rejectionReason ||
+      'Provider is not ready to take this request';
+
     serviceRequest.status = 'rejected';
-    serviceRequest.rejectionReason = rejectionReason || 'Provider rejected the service request';
+    serviceRequest.rejectionReason = reason;
+    serviceRequest.rejectedAt = new Date();
     serviceRequest.updatedAt = new Date();
 
     await serviceRequest.save();
 
     const duration = Date.now() - startTime;
     logPerformance('rejectServiceRequest', duration);
+
+    // Best-effort notify customer (ActiveService also polls status)
+    try {
+      const websocketServerUrl = process.env.WEBSOCKET_SERVER_URL || 'https://websocket-server-425944993130.us-central1.run.app';
+      await axios.post(`${websocketServerUrl}/emit-booking`, {
+        customerId: serviceRequest.customerId,
+        bookingData: {
+          type: 'service-request-status',
+          serviceRequestId: serviceRequest._id.toString(),
+          status: 'rejected',
+          providerId,
+          providerName: serviceRequest.providerName || '',
+          rejectionReason: reason,
+          message: 'Provider is not ready to take this request',
+        },
+      }, {timeout: 5000}).catch(() => {});
+    } catch (_) {
+      // non-fatal — customer UI polls status
+    }
 
     res.json({
       success: true,

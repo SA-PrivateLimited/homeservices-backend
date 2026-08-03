@@ -40,6 +40,34 @@ const userSchema = new mongoose.Schema({
     enum: ['customer', 'provider', 'admin'],
     default: 'customer',
   },
+  passwordHash: {
+    type: String,
+    select: false,
+  },
+  /** bcrypt hash of 6-digit customer PIN (reused; verified with bcrypt) */
+  pinHash: {
+    type: String,
+    select: false,
+  },
+  /** Deterministic HMAC of PIN for global uniqueness (not for auth) */
+  pinKey: {
+    type: String,
+    select: false,
+    sparse: true,
+    unique: true,
+  },
+  /** AES-encrypted login PIN for admin recovery/view only */
+  encryptedPin: {
+    type: String,
+    select: false,
+    default: null,
+  },
+  /** AES-256-GCM encrypted JWT (or session token); decrypt with TOKEN_ENCRYPTION_KEY from .env */
+  encryptedAuthToken: {
+    type: String,
+    select: false,
+    default: null,
+  },
   fcmToken: {
     type: String,
     default: null,
@@ -50,9 +78,53 @@ const userSchema = new mongoose.Schema({
     address: String,
     city: String,
     state: String,
+    district: String,
+    stateId: String,
+    districtId: String,
     pincode: String,
     country: String,
   },
+  homeAddress: {
+    address: String,
+    landmark: String,
+    city: String,
+    district: String,
+    state: String,
+    stateId: String,
+    districtId: String,
+    pincode: String,
+    country: String,
+    latitude: Number,
+    longitude: Number,
+    label: String,
+    customLabel: String,
+    isDefault: Boolean,
+  },
+  officeAddress: {
+    address: String,
+    landmark: String,
+    city: String,
+    district: String,
+    state: String,
+    stateId: String,
+    districtId: String,
+    pincode: String,
+    country: String,
+    latitude: Number,
+    longitude: Number,
+    label: String,
+    customLabel: String,
+    isDefault: Boolean,
+  },
+  gender: {
+    type: String,
+    trim: true,
+  },
+  bloodGroup: {
+    type: String,
+    trim: true,
+  },
+  profileImage: String,
   photoURL: String,
   verified: {
     type: Boolean,
@@ -62,6 +134,39 @@ const userSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  /** AES-encrypted TOTP secret for authenticator apps (admin MFA) */
+  totpSecretEncrypted: {
+    type: String,
+    select: false,
+    default: null,
+  },
+  /** When true, admin must enter authenticator code after password */
+  totpEnabled: {
+    type: Boolean,
+    default: false,
+  },
+  /**
+   * Admin account approval by Super Admin.
+   * pending → cannot use AdminWeb until approved.
+   * Legacy admins with no value are treated as approved.
+   */
+  adminApprovalStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: undefined,
+  },
+  /** Soft deactivate — blocks app/admin login when false */
+  isActive: {
+    type: Boolean,
+    default: true,
+    index: true,
+  },
+  deactivatedAt: Date,
+  deactivationReason: {
+    type: String,
+    trim: true,
+  },
+  deactivatedBy: String,
   createdAt: {
     type: Date,
     default: Date.now,

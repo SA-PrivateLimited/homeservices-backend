@@ -4,6 +4,12 @@
  */
 
 require('dotenv').config();
+// Optional Firebase Admin (RTDB / legacy); JWT auth does not use Firebase
+try {
+  require('./config/firebaseAdmin');
+} catch (e) {
+  /* optional */
+}
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -24,12 +30,17 @@ const providerServiceRequestsRoutes = require('./routes/provider/serviceRequests
 
 // Admin app routes
 const adminJobCardsRoutes = require('./routes/admin/jobCards');
+const adminClientsRoutes = require('./routes/admin/clients');
+const adminGeographyRoutes = require('./routes/admin/geography');
 
 // Shared routes (used by multiple apps)
 const providersRoutes = require('./routes/shared/providers');
 const reviewsRoutes = require('./routes/shared/reviews');
 const serviceCategoriesRoutes = require('./routes/shared/serviceCategories');
 const contactRecommendationsRoutes = require('./routes/shared/contactRecommendations');
+const brandingRoutes = require('./routes/shared/branding');
+const authRoutes = require('./routes/auth');
+const superAdminRoutes = require('./routes/superadmin');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -43,6 +54,9 @@ app.use(cors({
 app.use(morgan('dev')); // Logging
 app.use(express.json()); // Parse JSON bodies
 app.use(express.urlencoded({extended: true})); // Parse URL-encoded bodies
+
+const {UPLOAD_ROOT} = require('./middleware/upload');
+app.use('/uploads', express.static(UPLOAD_ROOT));
 
 // Global request logging (optional - can be enabled per route)
 const {logRequest} = require('./middleware/logger');
@@ -60,12 +74,18 @@ app.get('/health', (req, res) => {
 
 // API Routes - Organized by app
 
+// Auth (login/register — no Bearer token; returns JWT)
+app.use('/api/auth', authRoutes);
+app.use('/api/superadmin', superAdminRoutes);
+
 // Shared routes (available to all apps)
 app.use('/api/users', usersRoutes);
 app.use('/api/providers', providersRoutes);
 app.use('/api/reviews', reviewsRoutes);
 app.use('/api/serviceCategories', serviceCategoriesRoutes);
 app.use('/api/contactRecommendations', contactRecommendationsRoutes);
+app.use('/api/branding', brandingRoutes);
+app.use('/api/geography', require('./routes/shared/geography'));
 
 // Customer app routes
 app.use('/api/customer/jobCards', customerJobCardsRoutes);
@@ -77,6 +97,8 @@ app.use('/api/provider/serviceRequests', providerServiceRequestsRoutes);
 
 // Admin app routes
 app.use('/api/admin/jobCards', adminJobCardsRoutes);
+app.use('/api/admin/clients', adminClientsRoutes);
+app.use('/api/admin/geography', adminGeographyRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -114,6 +136,9 @@ async function startServer() {
 🔌 MongoDB: Connected
 📍 API Base URL: http://localhost:${PORT}/api
 📚 Health Check: http://localhost:${PORT}/health
+🔐 Auth: GET  http://localhost:${PORT}/api/auth/health  (verify auth routes loaded)
+   POST http://localhost:${PORT}/api/auth/register
+   POST http://localhost:${PORT}/api/auth/login
       `);
     });
   } catch (error) {

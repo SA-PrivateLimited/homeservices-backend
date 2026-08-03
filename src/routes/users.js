@@ -12,8 +12,17 @@ const {
   getUserById,
   updateMe,
   updateFcmToken,
+  updateUserByAdmin,
+  setUserPasswordByAdmin,
+  setUserPinByAdmin,
+  revealUserPinByAdmin,
+  resetUserMfaByAdmin,
   getAllUsers,
   createOrUpdateMe,
+  createUserByAdmin,
+  deleteUserByAdmin,
+  deactivateUserByAdmin,
+  restoreUserByAdmin,
 } = require('../controllers/usersController');
 
 /**
@@ -75,6 +84,66 @@ router.put(
 );
 
 /**
+ * GET /api/users/:userId/pin
+ * One-shot reveal login PIN (admin). Admin targets need Super Admin.
+ */
+router.get(
+  '/:userId/pin',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  revealUserPinByAdmin,
+);
+
+/**
+ * PUT /api/users/:userId/pin
+ * Admin set / reset login PIN
+ */
+router.put(
+  '/:userId/pin',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  setUserPinByAdmin,
+);
+
+/**
+ * POST /api/users/:userId/mfa/reset
+ * Super Admin: clear MFA so admin re-enrolls on next login
+ */
+router.post(
+  '/:userId/mfa/reset',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  resetUserMfaByAdmin,
+);
+
+/**
+ * PUT /api/users/:userId/password
+ * Admin set / reset user password
+ */
+router.put(
+  '/:userId/password',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  setUserPasswordByAdmin,
+);
+
+/**
+ * PUT /api/users/:userId
+ * Admin update user (role, profile fields)
+ */
+router.put(
+  '/:userId',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  updateUserByAdmin,
+);
+
+/**
  * GET /api/users
  * Get all users (admin only)
  */
@@ -84,6 +153,53 @@ router.get(
   validatePagination,
   logRequest,
   getAllUsers,
+);
+
+/**
+ * POST /api/users
+ * Create user (admin only)
+ */
+router.post(
+  '/',
+  requireRole('admin'),
+  logRequest,
+  createUserByAdmin,
+);
+
+/**
+ * POST /api/users/:userId/deactivate
+ * Soft-deactivate (blocks login)
+ */
+router.post(
+  '/:userId/deactivate',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  deactivateUserByAdmin,
+);
+
+/**
+ * POST /api/users/:userId/restore
+ * Restore deactivated account
+ */
+router.post(
+  '/:userId/restore',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  restoreUserByAdmin,
+);
+
+/**
+ * DELETE /api/users/:userId
+ * Delete user (admin only; cannot delete self)
+ */
+router.delete(
+  '/:userId',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  deleteUserByAdmin,
 );
 
 module.exports = router;

@@ -15,7 +15,9 @@ const {
   updateMyStatus,
   updateProviderApproval,
   updateProvider,
+  uploadProviderDocument,
 } = require('../../controllers/shared/providersController');
+const {uploadProviderDocument: multerUpload} = require('../../middleware/upload');
 
 /**
  * GET /api/providers
@@ -86,6 +88,30 @@ router.put(
   validateObjectId,
   logRequest,
   updateProviderApproval,
+);
+
+/**
+ * POST /api/providers/:providerId/documents/:docKey
+ * Upload provider document (admin only)
+ */
+router.post(
+  '/:providerId/documents/:docKey',
+  requireRole('admin'),
+  validateObjectId,
+  (req, res, next) => {
+    multerUpload(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: err.message || 'Upload failed',
+        });
+      }
+      next();
+    });
+  },
+  logRequest,
+  uploadProviderDocument,
 );
 
 /**

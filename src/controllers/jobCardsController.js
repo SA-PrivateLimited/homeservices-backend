@@ -183,14 +183,21 @@ exports.updateJobCard = async (req, res, next) => {
         });
       }
 
-      const validStatuses = ['pending', 'accepted', 'in-progress', 'completed', 'cancelled'];
+      const validStatuses = [
+        'unassigned',
+        'pending',
+        'accepted',
+        'in-progress',
+        'completed',
+        'cancelled',
+      ];
       if (!validStatuses.includes(status)) {
         return res.status(400).json({
           success: false,
           error: 'Bad Request',
           message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`,
         });
-      });
+      }
     }
 
     // Prepare update

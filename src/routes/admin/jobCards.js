@@ -12,6 +12,9 @@ const {
   getJobCardById,
   updateJobCard,
   deleteJobCard,
+  assignProviderToJobCard,
+  unassignProviderFromJobCard,
+  addCommentToJobCard,
 } = require('../../controllers/admin/jobCardsController');
 
 /**
@@ -36,6 +39,42 @@ router.get(
   validateObjectId,
   logRequest,
   getJobCardById,
+);
+
+/**
+ * POST /api/admin/jobCards/:jobCardId/assign
+ * Assign or change provider + confirm to customer
+ */
+router.post(
+  '/:jobCardId/assign',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  assignProviderToJobCard,
+);
+
+/**
+ * POST /api/admin/jobCards/:jobCardId/unassign
+ * Remove provider from job
+ */
+router.post(
+  '/:jobCardId/unassign',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  unassignProviderFromJobCard,
+);
+
+/**
+ * POST /api/admin/jobCards/:jobCardId/comments
+ * Admin adds a comment
+ */
+router.post(
+  '/:jobCardId/comments',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  addCommentToJobCard,
 );
 
 /**

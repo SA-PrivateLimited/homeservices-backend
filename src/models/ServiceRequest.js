@@ -23,13 +23,21 @@ const serviceRequestSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  secondaryPhone: {
+    type: String,
+    trim: true,
+  },
   customerAddress: {
     address: {
       type: String,
       required: true,
     },
+    landmark: String,
     city: String,
+    district: String,
     state: String,
+    stateId: String,
+    districtId: String,
     pincode: {
       type: String,
       required: true,
@@ -45,7 +53,7 @@ const serviceRequestSchema = new mongoose.Schema({
   problem: String,
   status: {
     type: String,
-    enum: ['pending', 'accepted', 'in-progress', 'completed', 'cancelled'],
+    enum: ['pending', 'accepted', 'in-progress', 'completed', 'cancelled', 'rejected'],
     default: 'pending',
     index: true,
   },
@@ -68,6 +76,8 @@ const serviceRequestSchema = new mongoose.Schema({
   photos: [String],
   cancellationReason: String,
   cancelledAt: Date,
+  rejectionReason: String,
+  rejectedAt: Date,
   createdAt: {
     type: Date,
     default: Date.now,

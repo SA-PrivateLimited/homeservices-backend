@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Home Services Backend API",
-    "description": "Complete API collection for Home Services platform backend\n\n**Base URL:** {{base_url}}\n**Authentication:** Bearer Token (Firebase Auth)\n\n**Environment Variables:**\n- `base_url`: http://localhost:3000 (local) or https://your-vercel-app.vercel.app (production)\n- `auth_token`: Firebase Auth token (set after login)",
+    "description": "Complete API collection for Home Services platform backend\n\n**Base URL:** {{base_url}}\n**Authentication:** `Authorization: Bearer {{auth_token}}` — JWT from **POST /api/auth/register** or **POST /api/auth/login** (not Firebase).\n\n**Environment Variables:**\n- `base_url`: http://localhost:3001 (local; match PORT in package.json)\n- `auth_token`: paste `data.token` from login/register response",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "home-services-backend"
   },
@@ -20,6 +20,73 @@
               "path": ["health"]
             },
             "description": "Check if the API server is running"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"password12\",\n  \"fullName\": \"Test User\",\n  \"phoneNumber\": \"+919876543210\",\n  \"role\": \"customer\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "register"]
+            },
+            "description": "Creates user; returns data.token (JWT). role: customer | provider | admin. For admin: set ADMIN_REGISTRATION_SECRET in server .env and add \"adminSecret\": \"<same value>\" to body (or header X-Admin-Registration-Secret)."
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"password12\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Returns data.token (JWT). Or use phoneNumber instead of email."
+          },
+          "response": []
+        },
+        {
+          "name": "Auth health (routes loaded?)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/health",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "health"]
+            },
+            "description": "Should return 200 with Auth routes active. If 404, server is old build or wrong port."
           },
           "response": []
         }

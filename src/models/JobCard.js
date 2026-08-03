@@ -12,13 +12,16 @@ const jobCardSchema = new mongoose.Schema({
   },
   providerId: {
     type: String,
-    required: true,
+    required: false,
     index: true,
+    default: '',
   },
   providerName: {
     type: String,
-    required: true,
+    required: false,
+    default: '',
   },
+  providerPhone: String,
   providerAddress: {
     type: {
       type: String,
@@ -55,9 +58,24 @@ const jobCardSchema = new mongoose.Schema({
   },
   problem: String,
   bookingId: String,
+  /** Thread of comments from customer, provider, and admin */
+  comments: [
+    {
+      _id: {type: String, required: true},
+      role: {
+        type: String,
+        enum: ['customer', 'provider', 'admin'],
+        required: true,
+      },
+      authorId: String,
+      authorName: String,
+      text: {type: String, required: true},
+      createdAt: {type: Date, default: Date.now},
+    },
+  ],
   status: {
     type: String,
-    enum: ['pending', 'accepted', 'in-progress', 'completed', 'cancelled'],
+    enum: ['unassigned', 'pending', 'accepted', 'in-progress', 'completed', 'cancelled'],
     default: 'pending',
     index: true,
   },

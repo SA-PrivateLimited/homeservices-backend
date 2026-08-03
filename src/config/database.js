@@ -8,8 +8,12 @@
 
 const mongoose = require('mongoose');
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://sandepkgupta1996_db_user:sandeep1234@prod-services.fakecfy.mongodb.net/';
+const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'home-services';
+
+if (!MONGODB_URI) {
+  throw new Error('MONGODB_URI environment variable is required. Set it in .env or your environment.');
+}
 
 // Build full connection string with database name
 const fullUri = MONGODB_URI.endsWith('/') 

@@ -27,7 +27,17 @@ const providerSchema = new mongoose.Schema({
     type: String,
     trim: true,
   },
+  phone: {
+    type: String,
+    trim: true,
+  },
+  /** Admin-marked: phone accepted for login (OTP not required in current flow) */
+  phoneVerified: {
+    type: Boolean,
+    default: false,
+  },
   specialization: String,
+  serviceType: String,
   serviceCategories: [String],
   experience: Number,
   serviceFee: Number,
@@ -50,6 +60,18 @@ const providerSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  /** Soft deactivate — blocks provider app login when false */
+  isActive: {
+    type: Boolean,
+    default: true,
+    index: true,
+  },
+  deactivatedAt: Date,
+  deactivationReason: {
+    type: String,
+    trim: true,
+  },
+  deactivatedBy: String,
   rating: {
     type: Number,
     default: 0,
@@ -74,6 +96,9 @@ const providerSchema = new mongoose.Schema({
     address: String,
     city: String,
     state: String,
+    district: String,
+    stateId: String,
+    districtId: String,
     pincode: String,
   },
   currentLocation: {
@@ -142,6 +167,9 @@ providerSchema.index({isOnline: 1, approvalStatus: 1}); // Firebase: isOnline + 
 providerSchema.index({rating: -1}); // Rating-based queries
 providerSchema.index({'location.city': 1});
 providerSchema.index({'location.state': 1});
+providerSchema.index({'location.pincode': 1});
+providerSchema.index({'location.stateId': 1});
+providerSchema.index({'location.districtId': 1});
 
 const Provider = mongoose.model('Provider', providerSchema, 'providers');
 
