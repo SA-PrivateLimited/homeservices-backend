@@ -462,11 +462,35 @@ exports.updateMyStatus = async (req, res, next) => {
     }
 
     // Update providers collection
-    await Provider.findByIdAndUpdate(
-      req.user.uid,
-      {$set: updateData},
-      {new: true, upsert: true},
-    );
+    try {
+      await Provider.findByIdAndUpdate(
+        req.user.uid,
+        {$set: updateData},
+        {new: true, upsert: true},
+      );
+    } catch (mongoError) {
+      const msg = mongoError?.message || String(mongoError);
+      const isTransient =
+        /timed out|timeout|ECONNREFUSED|MongoNetwork|server selection|27017/i.test(
+          msg,
+        );
+      // Location-only pings are best-effort; don't fail the app hard on DB blips
+      const locationOnly =
+        currentLocation &&
+        typeof isOnline !== 'boolean' &&
+        typeof isAvailable !== 'boolean';
+      if (isTransient && locationOnly) {
+        console.warn(
+          '⚠️ Location update skipped (transient Mongo issue):',
+          msg,
+        );
+        return res.status(503).json({
+          success: false,
+          message: 'Location update temporarily unavailable',
+        });
+      }
+      throw mongoError;
+    }
 
     // Update providerStatus collection (Realtime DB equivalent) - only if collection is available
     if (providerStatusCollection) {
