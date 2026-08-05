@@ -97,7 +97,7 @@ exports.createJobCard = async (req, res, next) => {
   try {
     const jobCardData = {
       ...req.body,
-      _id: require('mongodb').ObjectId().toString(),
+      _id: new (require('mongodb').ObjectId)().toString(),
       providerId: req.user.uid,
       status: 'accepted',
       createdAt: new Date(),

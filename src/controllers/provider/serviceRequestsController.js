@@ -7,8 +7,27 @@ const ServiceRequest = require('../../models/ServiceRequest');
 const Provider = require('../../models/Provider');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
 const {t} = require('../../utils/translations');
-const mongoose = require('mongoose');
 const {notifyBooking} = require('../../realtime/socket');
+const {findNearbyOpenPendingForProvider} = require('../../utils/findProvidersInArea');
+const {
+  findServiceRequestFlexible,
+  saveServiceRequestFlexible,
+} = require('../../utils/findServiceRequestFlexible');
+const {notifyUser, notifyAdmins} = require('../../utils/notify');
+
+function serializeRequest(doc) {
+  const obj = doc.toObject ? doc.toObject() : {...doc};
+  if (obj && obj._id != null) obj._id = String(obj._id);
+  return obj;
+}
+
+function serializeList(rows) {
+  return (rows || []).map(row => {
+    const o = {...row};
+    if (o._id != null) o._id = String(o._id);
+    return o;
+  });
+}
 
 /**
  * Get pending service requests assigned to this provider
@@ -37,11 +56,43 @@ exports.getMyPendingServiceRequests = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: serviceRequests,
+      data: serializeList(serviceRequests),
       count: serviceRequests.length,
     });
   } catch (error) {
-    console.error(`❌ [getMyPendingServiceRequests] Failed for provider ${req.user.uid}:`, error.message);
+    console.error(
+      `❌ [getMyPendingServiceRequests] Failed for provider ${req.user.uid}:`,
+      error.message,
+    );
+    next(error);
+  }
+};
+
+/**
+ * Open pending requests near this provider (district / pincode + service type).
+ * Used as a poll fallback when Socket.IO events are missed.
+ */
+exports.getNearbyPendingServiceRequests = async (req, res, next) => {
+  try {
+    const provider = await Provider.findById(req.user.uid).lean();
+    if (!provider) {
+      return res.json({success: true, data: [], count: 0});
+    }
+    if (!provider.isOnline) {
+      return res.json({success: true, data: [], count: 0});
+    }
+
+    const serviceRequests = await findNearbyOpenPendingForProvider(provider);
+    res.json({
+      success: true,
+      data: serializeList(serviceRequests),
+      count: serviceRequests.length,
+    });
+  } catch (error) {
+    console.error(
+      `❌ [getNearbyPendingServiceRequests] Failed for provider ${req.user.uid}:`,
+      error.message,
+    );
     next(error);
   }
 };
@@ -56,22 +107,7 @@ exports.getServiceRequestById = async (req, res, next) => {
 
     logDatabaseOperation('findOne', 'serviceRequests', {_id: serviceRequestId});
 
-    // Try to find by string _id first (for Firestore-style IDs)
-    let serviceRequest = await ServiceRequest.findOne({
-      _id: serviceRequestId,
-    }).lean();
-
-    // If not found and the ID looks like an ObjectId, try with ObjectId conversion
-    if (!serviceRequest && mongoose.Types.ObjectId.isValid(serviceRequestId)) {
-      try {
-        serviceRequest = await ServiceRequest.findOne({
-          _id: new mongoose.Types.ObjectId(serviceRequestId),
-        }).lean();
-      } catch (objectIdError) {
-        // If ObjectId conversion fails, continue with null
-        console.warn('⚠️  ObjectId conversion failed:', objectIdError.message);
-      }
-    }
+    const serviceRequest = await findServiceRequestFlexible(serviceRequestId);
 
     if (!serviceRequest) {
       return res.status(404).json({
@@ -83,7 +119,7 @@ exports.getServiceRequestById = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: serviceRequest,
+      data: serializeRequest(serviceRequest),
     });
   } catch (error) {
     console.error(`❌ [getServiceRequestById] Failed:`, error.message);
@@ -110,144 +146,10 @@ exports.acceptServiceRequest = async (req, res, next) => {
 
     logDatabaseOperation('findOne', 'serviceRequests', {_id: serviceRequestId});
 
-    // Try multiple query strategies to find the service request
-    let serviceRequest = null;
-    
-    // Strategy 1: Direct string _id match (most common for Firestore-style IDs)
-    try {
-      serviceRequest = await ServiceRequest.findOne({
-        _id: serviceRequestId,
-      });
-      console.log('📋 [ACCEPT] Strategy 1 (string _id) result:', {
-        found: !!serviceRequest,
-        serviceRequestId,
-      });
-    } catch (queryError) {
-      console.warn('⚠️ [ACCEPT] Strategy 1 query error:', queryError.message);
-    }
-
-    // Strategy 2: Try with trimmed/cleaned ID
-    if (!serviceRequest && serviceRequestId) {
-      try {
-        const cleanedId = String(serviceRequestId).trim();
-        if (cleanedId !== serviceRequestId) {
-          serviceRequest = await ServiceRequest.findOne({
-            _id: cleanedId,
-          });
-          console.log('📋 [ACCEPT] Strategy 2 (trimmed ID) result:', {
-            found: !!serviceRequest,
-            cleanedId,
-          });
-        }
-      } catch (queryError) {
-        console.warn('⚠️ [ACCEPT] Strategy 2 query error:', queryError.message);
-      }
-    }
-
-    // Strategy 3: If ID looks like ObjectId, try ObjectId conversion
-    if (!serviceRequest && mongoose.Types.ObjectId.isValid(serviceRequestId)) {
-      try {
-        console.log('📋 [ACCEPT] Strategy 3: Trying ObjectId conversion...');
-        serviceRequest = await ServiceRequest.findOne({
-          _id: new mongoose.Types.ObjectId(serviceRequestId),
-        });
-        console.log('📋 [ACCEPT] Strategy 3 (ObjectId) result:', {
-          found: !!serviceRequest,
-        });
-      } catch (objectIdError) {
-        console.warn('⚠️ [ACCEPT] Strategy 3 ObjectId conversion failed:', objectIdError.message);
-      }
-    }
-
-    // Strategy 4: Try using getCollection for direct MongoDB query (last resort)
-    if (!serviceRequest) {
-      try {
-        console.log('📋 [ACCEPT] Strategy 4: Trying direct MongoDB collection query...');
-        const {getCollection, connectDB} = require('../../config/database');
-        await connectDB();
-        const serviceRequestsCollection = await getCollection('serviceRequests');
-        const doc = await serviceRequestsCollection.findOne({_id: serviceRequestId});
-        if (doc) {
-          // Convert to Mongoose document
-          serviceRequest = new ServiceRequest(doc);
-          console.log('📋 [ACCEPT] Strategy 4 (direct collection) result: FOUND');
-        } else {
-          console.log('📋 [ACCEPT] Strategy 4 (direct collection) result: NOT FOUND');
-        }
-      } catch (collectionError) {
-        console.warn('⚠️ [ACCEPT] Strategy 4 direct collection query failed:', collectionError.message);
-      }
-    }
-
-    // Strategy 5: Search by consultationId field (for backward compatibility with Firestore IDs)
-    if (!serviceRequest) {
-      try {
-        console.log('📋 [ACCEPT] Strategy 5: Trying consultationId field search...');
-        serviceRequest = await ServiceRequest.findOne({
-          consultationId: serviceRequestId,
-          status: 'pending',
-        });
-        if (serviceRequest) {
-          console.log('📋 [ACCEPT] Strategy 5 (consultationId field) result: FOUND', {
-            _id: serviceRequest._id,
-            consultationId: serviceRequest.consultationId,
-          });
-        } else {
-          console.log('📋 [ACCEPT] Strategy 5 (consultationId field) result: NOT FOUND');
-        }
-      } catch (consultationIdError) {
-        console.warn('⚠️ [ACCEPT] Strategy 5 consultationId search failed:', consultationIdError.message);
-      }
-    }
-
-    // Strategy 6: Search by any matching ID field (id, bookingId) using $or
-    if (!serviceRequest) {
-      try {
-        console.log('📋 [ACCEPT] Strategy 6: Trying $or search with multiple ID fields...');
-        const {getCollection, connectDB} = require('../../config/database');
-        await connectDB();
-        const serviceRequestsCollection = await getCollection('serviceRequests');
-        const doc = await serviceRequestsCollection.findOne({
-          $or: [
-            {_id: serviceRequestId},
-            {consultationId: serviceRequestId},
-            {id: serviceRequestId},
-            {bookingId: serviceRequestId},
-          ],
-          status: 'pending',
-        });
-        if (doc) {
-          serviceRequest = new ServiceRequest(doc);
-          console.log('📋 [ACCEPT] Strategy 6 ($or search) result: FOUND', {
-            _id: doc._id,
-            consultationId: doc.consultationId,
-          });
-        } else {
-          console.log('📋 [ACCEPT] Strategy 6 ($or search) result: NOT FOUND');
-        }
-      } catch (orSearchError) {
-        console.warn('⚠️ [ACCEPT] Strategy 6 $or search failed:', orSearchError.message);
-      }
-    }
+    const serviceRequest = await findServiceRequestFlexible(serviceRequestId);
 
     if (!serviceRequest) {
-      // Debug: Try to find any service requests to see what IDs exist
-      try {
-        const sampleRequests = await ServiceRequest.find({}).limit(5).select('_id status').lean();
-        console.error('❌ [ACCEPT] Service request not found. Debug info:', {
-          serviceRequestId,
-          serviceRequestIdType: typeof serviceRequestId,
-          serviceRequestIdLength: serviceRequestId?.length,
-          serviceRequestIdValue: JSON.stringify(serviceRequestId),
-          providerId,
-          triedStringId: true,
-          triedObjectId: mongoose.Types.ObjectId.isValid(serviceRequestId),
-          sampleRequestIds: sampleRequests.map(r => ({_id: r._id, _idType: typeof r._id, status: r.status})),
-        });
-      } catch (debugError) {
-        console.error('❌ [ACCEPT] Debug query failed:', debugError.message);
-      }
-      
+      console.error('❌ [ACCEPT] Service request not found:', serviceRequestId);
       return res.status(404).json({
         success: false,
         error: t('serviceRequests.notFound', lang),
@@ -256,12 +158,11 @@ exports.acceptServiceRequest = async (req, res, next) => {
     }
 
     console.log('✅ [ACCEPT] Service request found:', {
-      _id: serviceRequest._id,
+      _id: String(serviceRequest._id),
       status: serviceRequest.status,
       currentProviderId: serviceRequest.providerId,
     });
 
-    // Check if already assigned to another provider
     if (serviceRequest.providerId && serviceRequest.providerId !== providerId) {
       return res.status(409).json({
         success: false,
@@ -270,16 +171,14 @@ exports.acceptServiceRequest = async (req, res, next) => {
       });
     }
 
-    // Check if already accepted by this provider
     if (serviceRequest.status === 'accepted' && serviceRequest.providerId === providerId) {
       return res.json({
         success: true,
-        data: serviceRequest.toObject(),
+        data: serializeRequest(serviceRequest),
         message: 'Service request already accepted',
       });
     }
 
-    // Check if status allows acceptance
     if (serviceRequest.status !== 'pending') {
       return res.status(400).json({
         success: false,
@@ -288,8 +187,9 @@ exports.acceptServiceRequest = async (req, res, next) => {
       });
     }
 
-    // Provider must be online to accept (offline providers see pending when they come online)
-    const providerDoc = await Provider.findOne({_id: providerId}).select('isOnline isAvailable approvalStatus').lean();
+    const providerDoc = await Provider.findOne({_id: providerId})
+      .select('isOnline isAvailable approvalStatus')
+      .lean();
     if (!providerDoc || providerDoc.approvalStatus !== 'approved') {
       return res.status(403).json({
         success: false,
@@ -305,7 +205,6 @@ exports.acceptServiceRequest = async (req, res, next) => {
       });
     }
 
-    // Get provider details from request body or use defaults
     const providerName = req.body.providerName || req.user.name || 'Provider';
     const providerPhone = req.body.providerPhone || req.user.phoneNumber || '';
     const providerEmail = req.body.providerEmail || req.user.email || '';
@@ -314,7 +213,6 @@ exports.acceptServiceRequest = async (req, res, next) => {
     const providerImage = req.body.providerImage || '';
     const providerAddress = req.body.providerAddress || null;
 
-    // Update service request with provider details
     serviceRequest.status = 'accepted';
     serviceRequest.providerId = providerId;
     serviceRequest.providerName = providerName;
@@ -326,18 +224,17 @@ exports.acceptServiceRequest = async (req, res, next) => {
     serviceRequest.providerAddress = providerAddress;
     serviceRequest.updatedAt = new Date();
 
-    await serviceRequest.save();
+    await saveServiceRequestFlexible(serviceRequest);
 
     const duration = Date.now() - startTime;
     logPerformance('acceptServiceRequest', duration);
 
-    // Best-effort: notify customer that request was accepted (ActiveService also polls)
     try {
       await notifyBooking({
         customerId: serviceRequest.customerId,
         bookingData: {
           type: 'service-request-status',
-          serviceRequestId: serviceRequest._id.toString(),
+          serviceRequestId: String(serviceRequest._id),
           status: 'accepted',
           providerId,
           providerName,
@@ -347,13 +244,51 @@ exports.acceptServiceRequest = async (req, res, next) => {
       // non-fatal
     }
 
+    // Push via Mongo-stored FCM tokens (server-side). No client Firestore dependency.
+    try {
+      let body = `${providerName} has accepted your ${serviceRequest.serviceType || 'service'} request`;
+      if (serviceRequest.problem) {
+        const problemText =
+          String(serviceRequest.problem).length > 100
+            ? `${String(serviceRequest.problem).substring(0, 100)}...`
+            : String(serviceRequest.problem);
+        body += `. Problem: ${problemText}`;
+      }
+      await notifyUser(serviceRequest.customerId, {
+        title: 'Service Request Accepted',
+        body,
+        data: {
+          type: 'service',
+          status: 'accepted',
+          serviceRequestId: String(serviceRequest._id),
+          consultationId: String(serviceRequest._id),
+        },
+      });
+      await notifyAdmins({
+        title: 'Service Request Accepted',
+        body: `${providerName} accepted a ${serviceRequest.serviceType || 'service'} request`,
+        data: {
+          type: 'service',
+          status: 'accepted',
+          serviceRequestId: String(serviceRequest._id),
+        },
+      });
+    } catch (_) {
+      // non-fatal
+    }
+
     res.json({
       success: true,
-      data: serviceRequest.toObject(),
-      message: t('serviceRequests.accepted', lang) || 'Service request accepted successfully',
+      data: serializeRequest(serviceRequest),
+      message:
+        t('serviceRequests.accepted', lang) ||
+        'Service request accepted successfully',
     });
   } catch (error) {
-    console.error(`❌ [acceptServiceRequest] Failed for provider ${req.user.uid}:`, error.message);
+    console.error(
+      `❌ [acceptServiceRequest] Failed for provider ${req.user.uid}:`,
+      error.message,
+    );
     next(error);
   }
 };
@@ -371,22 +306,7 @@ exports.rejectServiceRequest = async (req, res, next) => {
 
     logDatabaseOperation('findOne', 'serviceRequests', {_id: serviceRequestId});
 
-    // Try to find by string _id first (for Firestore-style IDs)
-    let serviceRequest = await ServiceRequest.findOne({
-      _id: serviceRequestId,
-    });
-
-    // If not found and the ID looks like an ObjectId, try with ObjectId conversion
-    if (!serviceRequest && mongoose.Types.ObjectId.isValid(serviceRequestId)) {
-      try {
-        serviceRequest = await ServiceRequest.findOne({
-          _id: new mongoose.Types.ObjectId(serviceRequestId),
-        });
-      } catch (objectIdError) {
-        // If ObjectId conversion fails, continue with null
-        console.warn('⚠️  ObjectId conversion failed:', objectIdError.message);
-      }
-    }
+    const serviceRequest = await findServiceRequestFlexible(serviceRequestId);
 
     if (!serviceRequest) {
       return res.status(404).json({
@@ -396,7 +316,6 @@ exports.rejectServiceRequest = async (req, res, next) => {
       });
     }
 
-    // Check if status allows rejection
     if (serviceRequest.status !== 'pending') {
       return res.status(400).json({
         success: false,
@@ -405,17 +324,87 @@ exports.rejectServiceRequest = async (req, res, next) => {
       });
     }
 
-    // Open (broadcast) requests: declining only dismisses for this provider — do not cancel for the customer
+    // Open (broadcast) requests: record decline, keep pending for others
     if (!serviceRequest.providerId) {
+      const reason =
+        rejectionReason || 'Provider is not ready to take this request';
+
+      let providerDoc = null;
+      try {
+        providerDoc = await Provider.findById(providerId)
+          .select('name displayName phoneNumber phone')
+          .lean();
+      } catch (_) {
+        // non-fatal
+      }
+
+      const entry = {
+        providerId: String(providerId),
+        providerName:
+          providerDoc?.displayName ||
+          providerDoc?.name ||
+          req.user?.name ||
+          req.user?.displayName ||
+          'Provider',
+        providerPhone:
+          providerDoc?.phoneNumber || providerDoc?.phone || '',
+        reason,
+        declinedAt: new Date(),
+      };
+
+      const existing = Array.isArray(serviceRequest.declinedProviders)
+        ? serviceRequest.declinedProviders
+        : [];
+      const already = existing.some(
+        d => String(d.providerId) === String(providerId),
+      );
+      if (!already) {
+        serviceRequest.declinedProviders = [...existing, entry];
+        serviceRequest.updatedAt = new Date();
+        await saveServiceRequestFlexible(serviceRequest);
+
+        const declinedProviders = (serviceRequest.declinedProviders || []).map(
+          d => ({
+            providerId: String(d.providerId),
+            providerName: d.providerName || '',
+            providerPhone: d.providerPhone || '',
+            reason: d.reason || '',
+            declinedAt: d.declinedAt || entry.declinedAt,
+          }),
+        );
+
+        try {
+          await notifyBooking({
+            customerId: serviceRequest.customerId,
+            bookingData: {
+              type: 'service-request-status',
+              serviceRequestId: String(serviceRequest._id),
+              consultationId: String(serviceRequest._id),
+              status: 'pending',
+              declinedProviders,
+              lastDeclinedProvider: {
+                providerId: entry.providerId,
+                providerName: entry.providerName,
+              },
+              message: `${entry.providerName} declined; still waiting for others`,
+            },
+          });
+        } catch (_) {
+          // non-fatal
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      logPerformance('rejectServiceRequest', duration);
+
       return res.json({
         success: true,
-        data: serviceRequest.toObject(),
+        data: serializeRequest(serviceRequest),
         dismissed: true,
         message: 'Request declined for this provider; still available to others',
       });
     }
 
-    // Specific-provider requests: only the assigned provider can reject
     if (serviceRequest.providerId !== providerId) {
       return res.status(403).json({
         success: false,
@@ -425,26 +414,24 @@ exports.rejectServiceRequest = async (req, res, next) => {
     }
 
     const reason =
-      rejectionReason ||
-      'Provider is not ready to take this request';
+      rejectionReason || 'Provider is not ready to take this request';
 
     serviceRequest.status = 'rejected';
     serviceRequest.rejectionReason = reason;
     serviceRequest.rejectedAt = new Date();
     serviceRequest.updatedAt = new Date();
 
-    await serviceRequest.save();
+    await saveServiceRequestFlexible(serviceRequest);
 
     const duration = Date.now() - startTime;
     logPerformance('rejectServiceRequest', duration);
 
-    // Best-effort notify customer (ActiveService also polls status)
     try {
       await notifyBooking({
         customerId: serviceRequest.customerId,
         bookingData: {
           type: 'service-request-status',
-          serviceRequestId: serviceRequest._id.toString(),
+          serviceRequestId: String(serviceRequest._id),
           status: 'rejected',
           providerId,
           providerName: serviceRequest.providerName || '',
@@ -453,16 +440,35 @@ exports.rejectServiceRequest = async (req, res, next) => {
         },
       });
     } catch (_) {
-      // non-fatal — customer UI polls status
+      // non-fatal
+    }
+
+    try {
+      await notifyUser(serviceRequest.customerId, {
+        title: 'Provider unavailable',
+        body: reason,
+        data: {
+          type: 'service',
+          status: 'rejected',
+          serviceRequestId: String(serviceRequest._id),
+        },
+      });
+    } catch (_) {
+      // non-fatal
     }
 
     res.json({
       success: true,
-      data: serviceRequest.toObject(),
-      message: t('serviceRequests.rejected', lang) || 'Service request rejected successfully',
+      data: serializeRequest(serviceRequest),
+      message:
+        t('serviceRequests.rejected', lang) ||
+        'Service request rejected successfully',
     });
   } catch (error) {
-    console.error(`❌ [rejectServiceRequest] Failed for provider ${req.user.uid}:`, error.message);
+    console.error(
+      `❌ [rejectServiceRequest] Failed for provider ${req.user.uid}:`,
+      error.message,
+    );
     next(error);
   }
 };

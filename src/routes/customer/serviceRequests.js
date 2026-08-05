@@ -14,6 +14,7 @@ const {
   createServiceRequest,
   updateServiceRequest,
   cancelServiceRequest,
+  requestAreaProviders,
 } = require('../../controllers/customer/serviceRequestsController');
 
 /**
@@ -39,6 +40,18 @@ router.post(
   verifyAuth,
   logRequest,
   createServiceRequest,
+);
+
+/**
+ * POST /api/customer/serviceRequests/request-area-providers
+ * Notify admin that providers are needed for a service type in the customer's area
+ */
+router.post(
+  '/request-area-providers',
+  detectLanguage,
+  verifyAuth,
+  logRequest,
+  requestAreaProviders,
 );
 
 /**

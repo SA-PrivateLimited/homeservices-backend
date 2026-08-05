@@ -117,6 +117,28 @@ const userSchema = new mongoose.Schema({
     customLabel: String,
     isDefault: Boolean,
   },
+  /** Extra service addresses (e.g. labeled "other" with custom names) */
+  serviceAddresses: [
+    {
+      id: String,
+      label: {type: String, enum: ['home', 'office', 'other'], default: 'other'},
+      customLabel: String,
+      address: String,
+      landmark: String,
+      city: String,
+      district: String,
+      state: String,
+      stateId: String,
+      districtId: String,
+      pincode: String,
+      country: String,
+      latitude: Number,
+      longitude: Number,
+      isDefault: Boolean,
+      createdAt: Date,
+      updatedAt: Date,
+    },
+  ],
   gender: {
     type: String,
     trim: true,

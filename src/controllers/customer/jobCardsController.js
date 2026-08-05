@@ -155,3 +155,34 @@ exports.cancelJobCard = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * POST /api/customer/jobCards/:jobCardId/comments
+ */
+exports.addCommentToJobCard = async (req, res, next) => {
+  try {
+    const {jobCardId} = req.params;
+    const {text} = req.body;
+    const {addJobCardComment} = require('../../utils/jobCardComments');
+    const jobCard = await addJobCardComment({
+      jobCardId,
+      role: 'customer',
+      req,
+      text,
+    });
+    res.json({
+      success: true,
+      data: jobCard,
+      message: 'Comment added',
+    });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({
+        success: false,
+        error: error.message,
+        message: error.message,
+      });
+    }
+    next(error);
+  }
+};

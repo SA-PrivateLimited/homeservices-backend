@@ -51,7 +51,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(helmet()); // Security headers
+app.use(
+  helmet({
+    // Allow Socket.IO long-polling / websocket from mobile clients
+    crossOriginResourcePolicy: {policy: 'cross-origin'},
+    contentSecurityPolicy: false,
+  }),
+);
 app.use(cors({
   origin: process.env.CORS_ORIGIN || '*',
   credentials: true,
@@ -104,6 +110,11 @@ app.use('/api/provider/serviceRequests', providerServiceRequestsRoutes);
 app.use('/api/admin/jobCards', adminJobCardsRoutes);
 app.use('/api/admin/clients', adminClientsRoutes);
 app.use('/api/admin/geography', adminGeographyRoutes);
+app.use('/api/admin/overview', require('./routes/admin/overview'));
+app.use(
+  '/api/admin/area-provider-demands',
+  require('./routes/admin/areaProviderDemands'),
+);
 
 // Realtime HTTP emit (compat with mobile clients; same host as API)
 mountEmitHttpRoutes(app);

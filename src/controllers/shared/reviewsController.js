@@ -128,7 +128,7 @@ exports.createReview = async (req, res, next) => {
     const provider = await Provider.findById(providerId);
 
     const reviewData = {
-      _id: require('mongodb').ObjectId().toString(),
+      _id: new (require('mongodb').ObjectId)().toString(),
       providerId,
       jobCardId,
       customerId: req.user.uid,

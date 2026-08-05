@@ -5,10 +5,18 @@
 
 const ServiceRequest = require('../../models/ServiceRequest');
 const Provider = require('../../models/Provider');
+const JobCard = require('../../models/JobCard');
+const AreaProviderDemand = require('../../models/AreaProviderDemand');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
 const {t} = require('../../utils/translations');
 const mongoose = require('mongoose');
-const {notifyBooking} = require('../../realtime/socket');
+const {notifyBooking, notifyAdminsRealtime} = require('../../realtime/socket');
+const {findProvidersInArea} = require('../../utils/findProvidersInArea');
+const {notifyAdmins, notifyProvider} = require('../../utils/notify');
+
+function newObjectIdString() {
+  return new (require('mongodb').ObjectId)().toString();
+}
 
 /**
  * Get customer's service requests
@@ -152,8 +160,8 @@ exports.createServiceRequest = async (req, res, next) => {
       }
     }
 
-    // Create service request
-    const generatedId = req.body._id || req.body.id || generateId();
+    // Create service request — always persist string _id (avoid ObjectId/string mix)
+    const generatedId = String(req.body._id || req.body.id || generateId());
     const {
       providerId: _ignoreProviderId,
       providerName: _ignoreProviderName,
@@ -163,15 +171,19 @@ exports.createServiceRequest = async (req, res, next) => {
       providerImage: _ignoreProviderImage,
       providerAddress: _ignoreProviderAddress,
       providerEmail: _ignoreProviderEmail,
+      requestAdminHelp: _ignoreRequestAdminHelp,
       ...bodyWithoutProvider
     } = req.body;
 
+    const requestAdminHelp = req.body.requestAdminHelp === true;
     const serviceRequestData = {
       ...bodyWithoutProvider,
       _id: generatedId,
       consultationId: generatedId, // For backward compatibility - allows lookup by either _id or consultationId
       customerId: userId,
       status: 'pending',
+      needsAdminAssignment: requestAdminHelp,
+      noProvidersInArea: requestAdminHelp,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -211,33 +223,89 @@ exports.createServiceRequest = async (req, res, next) => {
     const duration = Date.now() - startTime;
     logPerformance('createServiceRequest', duration);
 
-    // Emit websocket notification to providers
+    // Notify providers (area-scoped for open requests) + admins
     try {
       let providersToNotify = [];
+      let matchBy = 'targeted';
 
       if (targetedProvider) {
-        // Specific-provider request: always try that provider (online or not)
         providersToNotify = [targetedProvider];
       } else {
-        // Open request: notify online + available providers for this service type
-        providersToNotify = await Provider.find({
-          approvalStatus: 'approved',
-          isOnline: true,
-          isAvailable: true,
-          $or: [
-            {serviceCategories: serviceType},
-            {specialization: serviceType},
-          ],
-        })
-          .select('_id name')
-          .lean();
+        const areaResult = await findProvidersInArea(serviceType, customerAddress);
+        providersToNotify = areaResult.providers;
+        matchBy = areaResult.matchBy;
+        if (providersToNotify.length === 0) {
+          console.log(
+            `ℹ️ [Notify] No online providers in area for ${serviceType} ` +
+              `(district/pincode). Skipping nationwide blast.`,
+          );
+          // Mark for admin sourcing even if client forgot the flag
+          if (!serviceRequest.needsAdminAssignment) {
+            serviceRequest.needsAdminAssignment = true;
+            serviceRequest.noProvidersInArea = true;
+            await serviceRequest.save();
+          }
+        }
       }
 
-      // Prepare booking data for websocket
+      const needsAdmin =
+        !!serviceRequest.needsAdminAssignment ||
+        (!targetedProvider && providersToNotify.length === 0);
+
+      // Create an unassigned job card so Admin Web Jobs can assign a provider
+      let adminJobCardId = null;
+      if (needsAdmin && !targetedProvider) {
+        try {
+          adminJobCardId = newObjectIdString();
+          const jobCard = new JobCard({
+            _id: adminJobCardId,
+            providerId: '',
+            providerName: '',
+            customerId: userId,
+            customerName:
+              serviceRequest.customerName || req.body.customerName || 'Customer',
+            customerPhone:
+              serviceRequest.customerPhone || req.body.customerPhone || '',
+            customerAddress: {
+              address: customerAddress.address,
+              landmark: customerAddress.landmark,
+              city: customerAddress.district || customerAddress.city,
+              district: customerAddress.district || customerAddress.city,
+              state: customerAddress.state,
+              stateId: customerAddress.stateId,
+              districtId: customerAddress.districtId,
+              pincode: customerAddress.pincode,
+              latitude: customerAddress.latitude,
+              longitude: customerAddress.longitude,
+              label: customerAddress.label,
+              customLabel: customerAddress.customLabel,
+            },
+            serviceType,
+            problem: serviceRequest.problem || req.body.problem || '',
+            questionnaireAnswers: serviceRequest.questionnaireAnswers,
+            bookingId: serviceRequest._id.toString(),
+            serviceRequestId: serviceRequest._id.toString(),
+            needsAdminAssignment: true,
+            status: 'unassigned',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+          await jobCard.save();
+          console.log(
+            `📋 [AdminAssist] Unassigned job card ${adminJobCardId} created for SR ${serviceRequest._id}`,
+          );
+        } catch (jobErr) {
+          console.warn(
+            '⚠️ [AdminAssist] Failed to create unassigned job card:',
+            jobErr.message,
+          );
+        }
+      }
+
       const bookingData = {
         id: serviceRequest._id.toString(),
         serviceRequestId: serviceRequest._id.toString(),
-        consultationId: serviceRequest._id.toString(), // For backward compatibility
+        consultationId: serviceRequest._id.toString(),
         customerId: userId,
         customerName: serviceRequest.customerName || req.body.customerName || 'Customer',
         customerPhone: serviceRequest.customerPhone || req.body.customerPhone || '',
@@ -245,49 +313,126 @@ exports.createServiceRequest = async (req, res, next) => {
         problem: serviceRequest.problem || req.body.problem || '',
         address: customerAddress.address,
         pincode: customerAddress.pincode,
+        district: customerAddress.district || customerAddress.city || '',
+        districtId: customerAddress.districtId || '',
+        state: customerAddress.state || '',
+        stateId: customerAddress.stateId || '',
         status: 'pending',
         createdAt: serviceRequest.createdAt,
         providerId: targetedProvider ? targetedProvider._id.toString() : undefined,
         isTargeted: !!targetedProvider,
+        matchBy,
+        needsAdminAssignment: needsAdmin,
+        jobCardId: adminJobCardId || undefined,
       };
 
-      // Emit to selected providers (in-process Socket.IO; optional remote fallback)
       const emitPromises = providersToNotify.map(async (provider) => {
+        const providerId = provider._id.toString();
         try {
           const result = await notifyBooking({
-            providerId: provider._id.toString(),
+            providerId,
             bookingData,
           });
           if (result.ok) {
             console.log(
-              `✅ [WebSocket] Notification sent to provider ${provider._id} via ${result.via}`,
+              `✅ [WebSocket] Notification sent to provider ${providerId} via ${result.via}`,
             );
           } else {
             console.warn(
-              `⚠️ [WebSocket] Failed to notify provider ${provider._id}:`,
+              `⚠️ [WebSocket] Failed to notify provider ${providerId}:`,
               result.reason,
             );
           }
         } catch (error) {
           console.warn(
-            `⚠️ [WebSocket] Failed to notify provider ${provider._id}:`,
+            `⚠️ [WebSocket] Failed to notify provider ${providerId}:`,
             error.message,
+          );
+        }
+
+        // FCM fallback when provider app is backgrounded / socket down
+        try {
+          await notifyProvider(providerId, {
+            title: 'New service request',
+            body: `${bookingData.customerName} needs ${serviceType} nearby`,
+            data: {
+              type: 'new-booking',
+              serviceRequestId: bookingData.serviceRequestId,
+              serviceType,
+            },
+          });
+        } catch (fcmErr) {
+          console.warn(
+            `⚠️ [FCM] Provider ${providerId}:`,
+            fcmErr.message,
           );
         }
       });
 
       Promise.all(emitPromises).catch((err) => {
-        console.warn('⚠️ [WebSocket] Some provider notifications failed:', err.message);
+        console.warn('⚠️ [Notify] Some provider notifications failed:', err.message);
+      });
+
+      // Admin realtime + FCM
+      const adminPayload = {
+        serviceRequestId: bookingData.serviceRequestId,
+        jobCardId: adminJobCardId || undefined,
+        customerId: userId,
+        customerName: bookingData.customerName,
+        customerPhone: bookingData.customerPhone,
+        serviceType,
+        address: customerAddress.address,
+        pincode: customerAddress.pincode,
+        district: bookingData.district,
+        status: needsAdmin ? 'unassigned' : 'pending',
+        isTargeted: !!targetedProvider,
+        providerId: bookingData.providerId,
+        providersNotified: providersToNotify.length,
+        matchBy,
+        needsAdminAssignment: needsAdmin,
+        createdAt: serviceRequest.createdAt,
+      };
+
+      try {
+        const adminSocket = await notifyAdminsRealtime(adminPayload);
+        console.log(
+          `📤 [Admin] Realtime new-service-request via ${adminSocket.via} ` +
+            `(providers notified: ${providersToNotify.length}, matchBy: ${matchBy}, needsAdmin: ${needsAdmin})`,
+        );
+      } catch (adminSockErr) {
+        console.warn('⚠️ [Admin] Realtime emit failed:', adminSockErr.message);
+      }
+
+      notifyAdmins({
+        title: needsAdmin
+          ? 'No provider in area — assign needed'
+          : 'New service request',
+        body: needsAdmin
+          ? `${bookingData.customerName} needs ${serviceType} at ${bookingData.pincode || bookingData.district || 'their address'} (no providers online)`
+          : `${bookingData.customerName} requested ${serviceType}` +
+            (bookingData.pincode ? ` (${bookingData.pincode})` : ''),
+        data: {
+          type: needsAdmin ? 'unmet-service-request' : 'new-service-request',
+          serviceRequestId: bookingData.serviceRequestId,
+          jobCardId: adminJobCardId || '',
+          serviceType,
+          needsAdminAssignment: needsAdmin ? 'true' : 'false',
+        },
+      }).catch((err) => {
+        console.warn('⚠️ [Admin] FCM failed:', err?.message || err);
       });
 
       console.log(
         targetedProvider
-          ? `📤 [WebSocket] Emitting targeted service request to provider ${targetedProvider._id}`
-          : `📤 [WebSocket] Emitting service request to ${providersToNotify.length} provider(s) for service type: ${serviceType}`,
+          ? `📤 [Notify] Targeted request → provider ${targetedProvider._id}`
+          : `📤 [Notify] Open request → ${providersToNotify.length} provider(s) ` +
+              `matchBy=${matchBy} serviceType=${serviceType} needsAdmin=${needsAdmin}`,
       );
     } catch (websocketError) {
-      // Don't fail the request if websocket fails
-      console.warn('⚠️ [WebSocket] Failed to emit service request notification:', websocketError.message);
+      console.warn(
+        '⚠️ [Notify] Failed to emit service request notification:',
+        websocketError.message,
+      );
     }
 
     res.status(201).json({
@@ -430,6 +575,154 @@ exports.cancelServiceRequest = async (req, res, next) => {
     });
   } catch (error) {
     console.error(`❌ [cancelServiceRequest] Failed for user ${req.user.uid}:`, error.message);
+    next(error);
+  }
+};
+
+/**
+ * POST /api/customer/serviceRequests/request-area-providers
+ * Customer asks admin to onboard / assign providers for a service type in their area
+ * (used when the service-type picker shows "Not available").
+ */
+exports.requestAreaProviders = async (req, res, next) => {
+  try {
+    const userId = req.user.uid;
+    const serviceType = String(req.body.serviceType || '').trim();
+    const customerAddress = req.body.customerAddress || {};
+    const pincode = String(customerAddress.pincode || req.body.pincode || '').trim();
+
+    if (!serviceType) {
+      return res.status(400).json({
+        success: false,
+        error: 'serviceType is required',
+        message: 'serviceType is required',
+      });
+    }
+    if (!pincode) {
+      return res.status(400).json({
+        success: false,
+        error: 'Service address pincode is required',
+        message: 'Service address pincode is required',
+      });
+    }
+
+    const customerName =
+      req.body.customerName ||
+      req.user.name ||
+      req.user.displayName ||
+      'Customer';
+    const customerPhone = req.body.customerPhone || req.user.phone || '';
+    const district =
+      customerAddress.district ||
+      customerAddress.city ||
+      req.body.district ||
+      '';
+    const addressLine = customerAddress.address || '';
+    const city = customerAddress.city || '';
+    const state = customerAddress.state || '';
+
+    // Reuse open demand for same customer + service + pincode (avoid spam)
+    let demand = await AreaProviderDemand.findOne({
+      customerId: userId,
+      serviceType,
+      pincode,
+      status: {$in: ['open', 'in_progress']},
+    });
+
+    if (demand) {
+      demand.customerName = customerName;
+      demand.customerPhone = customerPhone;
+      demand.address = addressLine;
+      demand.city = city;
+      demand.district = district;
+      demand.state = state;
+      if (customerAddress.latitude != null) {
+        demand.latitude = customerAddress.latitude;
+      }
+      if (customerAddress.longitude != null) {
+        demand.longitude = customerAddress.longitude;
+      }
+      await demand.save();
+    } else {
+      demand = await AreaProviderDemand.create({
+        customerId: userId,
+        customerName,
+        customerPhone,
+        serviceType,
+        address: addressLine,
+        city,
+        district,
+        state,
+        pincode,
+        latitude: customerAddress.latitude,
+        longitude: customerAddress.longitude,
+        status: 'open',
+      });
+    }
+
+    const payload = {
+      type: 'area_provider_demand',
+      needsProvidersInArea: true,
+      serviceRequestId: String(demand._id),
+      demandId: String(demand._id),
+      customerId: userId,
+      customerName,
+      customerPhone,
+      serviceType,
+      address: addressLine,
+      pincode,
+      district,
+      status: demand.status,
+      createdAt: (demand.createdAt || new Date()).toISOString(),
+    };
+
+    try {
+      await notifyAdminsRealtime(payload);
+    } catch (socketErr) {
+      console.warn(
+        '⚠️ [requestAreaProviders] Admin socket notify failed:',
+        socketErr?.message || socketErr,
+      );
+    }
+
+    try {
+      await notifyAdmins({
+        title: 'Provider needed in area',
+        body: `${customerName} needs ${serviceType} providers near ${pincode}${
+          district ? ` (${district})` : ''
+        }`,
+        data: {
+          type: 'area_provider_demand',
+          serviceType,
+          pincode,
+          district: district || '',
+          customerId: userId,
+          demandId: String(demand._id),
+          needsProvidersInArea: 'true',
+        },
+      });
+    } catch (fcmErr) {
+      console.warn(
+        '⚠️ [requestAreaProviders] Admin FCM notify failed:',
+        fcmErr?.message || fcmErr,
+      );
+    }
+
+    res.json({
+      success: true,
+      data: {
+        serviceType,
+        pincode,
+        demandId: String(demand._id),
+        status: demand.status,
+      },
+      message: 'Admin has been notified about provider demand in your area',
+    });
+  } catch (error) {
+    console.error(
+      `❌ [requestAreaProviders] Failed for user ${req.user?.uid}:`,
+      error.message,
+    );
     next(error);
   }
 };

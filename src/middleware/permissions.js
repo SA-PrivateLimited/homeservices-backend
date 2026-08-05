@@ -111,7 +111,7 @@ exports.checkJobCardProvider = async (req, res, next) => {
       });
     }
 
-    if (jobCard.providerId !== req.user.uid) {
+    if (jobCard.providerId !== req.user.uid && String(jobCard.providerId) !== String(req.user.uid)) {
       return res.status(403).json({
         success: false,
         error: 'Forbidden',

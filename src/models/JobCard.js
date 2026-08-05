@@ -47,7 +47,10 @@ const jobCardSchema = new mongoose.Schema({
   customerAddress: {
     address: String,
     city: String,
+    district: String,
     state: String,
+    stateId: String,
+    districtId: String,
     pincode: String,
     latitude: Number,
     longitude: Number,
@@ -58,6 +61,17 @@ const jobCardSchema = new mongoose.Schema({
   },
   problem: String,
   bookingId: String,
+  serviceRequestId: {
+    type: String,
+    index: true,
+  },
+  /** True when created because no providers were available in the customer area */
+  needsAdminAssignment: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  questionnaireAnswers: mongoose.Schema.Types.Mixed,
   /** Thread of comments from customer, provider, and admin */
   comments: [
     {
@@ -82,6 +96,11 @@ const jobCardSchema = new mongoose.Schema({
   taskPIN: String,
   pinGeneratedAt: Date,
   scheduledTime: Date,
+  /** Provider-entered service fee at completion (wallet earnings) */
+  serviceAmount: Number,
+  materialsUsed: mongoose.Schema.Types.Mixed,
+  jobCardPdfUrl: String,
+  completedAt: Date,
   cancellationReason: String,
   cancelledAt: Date,
   createdAt: {

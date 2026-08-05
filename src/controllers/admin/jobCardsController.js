@@ -21,6 +21,7 @@ function serviceRequestToJobShape(sr) {
     _id: `sr_${id}`,
     consultationId: id,
     bookingId: id,
+    serviceRequestId: id,
     customerId: sr.customerId,
     customerName: sr.customerName,
     customerPhone: sr.customerPhone,
@@ -30,7 +31,8 @@ function serviceRequestToJobShape(sr) {
     providerPhone: sr.providerPhone || '',
     serviceType: sr.serviceType,
     problem: sr.problem,
-    status: 'pending',
+    status: sr.needsAdminAssignment ? 'unassigned' : 'pending',
+    needsAdminAssignment: !!sr.needsAdminAssignment,
     urgency: sr.urgency,
     scheduledTime: sr.scheduledTime,
     createdAt: sr.createdAt,
@@ -46,10 +48,47 @@ function parseServiceRequestId(jobCardId) {
   return null;
 }
 
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Match customer service address by state / district (name or id).
+ */
+function applyCustomerAreaFilters(query, {state, district, stateId, districtId}) {
+  const and = [];
+  if (stateId || state) {
+    const or = [];
+    if (stateId) {
+      or.push({'customerAddress.stateId': String(stateId)});
+    }
+    if (state) {
+      const re = new RegExp(`^${escapeRegex(state)}$`, 'i');
+      or.push({'customerAddress.state': re});
+    }
+    and.push(or.length === 1 ? or[0] : {$or: or});
+  }
+  if (districtId || district) {
+    const or = [];
+    if (districtId) {
+      or.push({'customerAddress.districtId': String(districtId)});
+    }
+    if (district) {
+      const re = new RegExp(`^${escapeRegex(district)}$`, 'i');
+      or.push({'customerAddress.district': re});
+      or.push({'customerAddress.city': re});
+    }
+    and.push(or.length === 1 ? or[0] : {$or: or});
+  }
+  if (!and.length) return query;
+  query.$and = [...(query.$and || []), ...and];
+  return query;
+}
+
 /**
  * Get all job cards (admin can see all)
  * Also includes pending service requests (not yet accepted → no job card yet)
- * Query: status?, unassigned=true, customerId?, providerId?, limit, offset
+ * Query: status?, unassigned=true, customerId?, providerId?, state?, district?, limit, offset
  */
 exports.getAllJobCards = async (req, res, next) => {
   try {
@@ -58,25 +97,47 @@ exports.getAllJobCards = async (req, res, next) => {
       customerId,
       providerId,
       unassigned,
+      needsAdminAssignment,
+      state,
+      district,
+      stateId,
+      districtId,
       limit = 100,
       offset = 0,
     } = req.query;
 
     const lim = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 100);
     const off = Math.max(parseInt(offset, 10) || 0, 0);
+    const area = {state, district, stateId, districtId};
 
     const wantUnassigned = String(unassigned) === 'true';
+    const wantNeedsAdmin = String(needsAdminAssignment) === 'true';
     const wantPendingOnly = status === 'pending';
     const includePendingRequests =
-      wantUnassigned || wantPendingOnly || !status;
+      wantUnassigned || wantNeedsAdmin || wantPendingOnly || !status;
 
     const jobQuery = {};
     if (customerId) jobQuery.customerId = customerId;
     if (providerId) jobQuery.providerId = providerId;
 
-    if (wantUnassigned) {
+    if (wantNeedsAdmin) {
+      jobQuery.$and = [
+        {needsAdminAssignment: true},
+        {
+          $or: [
+            {status: 'unassigned'},
+            {providerId: {$exists: false}},
+            {providerId: null},
+            {providerId: ''},
+            {providerId: 'unassigned'},
+            {providerId: 'none'},
+          ],
+        },
+      ];
+    } else if (wantUnassigned) {
       jobQuery.$or = [
         {status: 'unassigned'},
+        {needsAdminAssignment: true},
         {providerId: {$exists: false}},
         {providerId: null},
         {providerId: ''},
@@ -86,6 +147,8 @@ exports.getAllJobCards = async (req, res, next) => {
     } else if (status) {
       jobQuery.status = status;
     }
+
+    applyCustomerAreaFilters(jobQuery, area);
 
     // Accepted / completed / etc. — no need to merge service requests
     if (!includePendingRequests) {
@@ -113,10 +176,14 @@ exports.getAllJobCards = async (req, res, next) => {
 
     const srQuery = {status: 'pending'};
     if (customerId) srQuery.customerId = customerId;
+    if (wantNeedsAdmin) {
+      srQuery.needsAdminAssignment = true;
+    }
     if (providerId) {
       srQuery.providerId = providerId;
-    } else if (wantUnassigned) {
+    } else if (wantUnassigned || wantNeedsAdmin) {
       srQuery.$and = [
+        ...(srQuery.$and || []),
         {
           $or: [
             {providerId: {$exists: false}},
@@ -126,6 +193,7 @@ exports.getAllJobCards = async (req, res, next) => {
         },
       ];
     }
+    applyCustomerAreaFilters(srQuery, area);
 
     const linked = await JobCard.find({}).select('_id bookingId').lean();
     const linkedIds = new Set(
@@ -540,43 +608,26 @@ exports.addCommentToJobCard = async (req, res, next) => {
       });
     }
 
-    if (!text || !String(text).trim()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Bad Request',
-        message: 'Comment text is required',
-      });
-    }
-
-    const jobCard = await JobCard.findById(jobCardId);
-    if (!jobCard) {
-      return res.status(404).json({
-        success: false,
-        error: 'Job card not found',
-      });
-    }
-
-    const comment = {
-      _id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    const {addJobCardComment} = require('../../utils/jobCardComments');
+    const jobCard = await addJobCardComment({
+      jobCardId,
       role: 'admin',
-      authorId: req.user?.uid || '',
-      authorName: req.user?.name || 'Admin',
-      text: String(text).trim(),
-      createdAt: new Date(),
-    };
-
-    if (!Array.isArray(jobCard.comments)) {
-      jobCard.comments = [];
-    }
-    jobCard.comments.push(comment);
-    jobCard.updatedAt = new Date();
-    await jobCard.save({validateBeforeSave: false});
+      req,
+      text,
+    });
 
     res.json({
       success: true,
       data: jobCard,
     });
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({
+        success: false,
+        error: error.status === 404 ? 'Not Found' : 'Bad Request',
+        message: error.message,
+      });
+    }
     next(error);
   }
 };

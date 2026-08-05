@@ -7,7 +7,7 @@ const mongoose = require('mongoose');
 
 const serviceRequestSchema = new mongoose.Schema({
   _id: {
-    type: String,
+    type: mongoose.Schema.Types.Mixed,
     required: true,
   },
   customerId: {
@@ -44,6 +44,8 @@ const serviceRequestSchema = new mongoose.Schema({
     },
     latitude: Number,
     longitude: Number,
+    label: String,
+    customLabel: String,
   },
   serviceType: {
     type: String,
@@ -74,10 +76,30 @@ const serviceRequestSchema = new mongoose.Schema({
   consultationId: String,
   questionnaireAnswers: mongoose.Schema.Types.Mixed,
   photos: [String],
+  /** Customer asked admin to source a provider (none online in area) */
+  needsAdminAssignment: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  noProvidersInArea: {
+    type: Boolean,
+    default: false,
+  },
   cancellationReason: String,
   cancelledAt: Date,
   rejectionReason: String,
   rejectedAt: Date,
+  /** Providers who declined an open (broadcast) request while it stays pending */
+  declinedProviders: [
+    {
+      providerId: {type: String, required: true},
+      providerName: {type: String, default: ''},
+      providerPhone: {type: String, default: ''},
+      reason: {type: String, default: ''},
+      declinedAt: {type: Date, default: Date.now},
+    },
+  ],
   createdAt: {
     type: Date,
     default: Date.now,

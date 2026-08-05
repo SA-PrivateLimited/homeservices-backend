@@ -3,15 +3,18 @@
  * Rooms:
  *   provider-{providerId}
  *   customer-{customerId}
+ *   admin
  *
  * Client events:
  *   join-provider-room (providerId)
  *   join-customer-room (customerId)
+ *   join-admin-room
  *
  * Server → client events:
  *   new-booking
  *   service-completed
- *   room-joined / customer-room-joined
+ *   new-service-request (admins)
+ *   room-joined / customer-room-joined / admin-room-joined
  *
  * HTTP (compat with existing apps):
  *   POST /emit-booking
@@ -21,6 +24,8 @@
 const {Server} = require('socket.io');
 
 let io = null;
+
+const ADMIN_ROOM = 'admin';
 
 function getAllowedOrigins() {
   const raw = process.env.CORS_ORIGIN || '*';
@@ -60,6 +65,15 @@ function initSocket(httpServer) {
       });
     }
 
+    const clientType = socket.handshake.query?.clientType;
+    if (clientType === 'admin') {
+      socket.join(ADMIN_ROOM);
+      socket.emit('admin-room-joined', {
+        room: ADMIN_ROOM,
+        roomSize: io.sockets.adapter.rooms.get(ADMIN_ROOM)?.size || 1,
+      });
+    }
+
     socket.on('join-provider-room', (providerId) => {
       if (!providerId) return;
       const room = `provider-${String(providerId)}`;
@@ -78,6 +92,14 @@ function initSocket(httpServer) {
         room,
         customerId: String(customerId),
         roomSize: io.sockets.adapter.rooms.get(room)?.size || 1,
+      });
+    });
+
+    socket.on('join-admin-room', () => {
+      socket.join(ADMIN_ROOM);
+      socket.emit('admin-room-joined', {
+        room: ADMIN_ROOM,
+        roomSize: io.sockets.adapter.rooms.get(ADMIN_ROOM)?.size || 1,
       });
     });
 
@@ -106,6 +128,12 @@ function emitToCustomer(customerId, event, payload) {
   return true;
 }
 
+function emitToAdmins(event, payload) {
+  if (!io) return false;
+  io.to(ADMIN_ROOM).emit(event, payload);
+  return true;
+}
+
 /**
  * Emit new booking to a provider room (and optionally customer status events).
  */
@@ -114,7 +142,6 @@ function emitBooking({providerId, customerId, bookingData}) {
   if (providerId) {
     emitted = emitToProvider(providerId, 'new-booking', bookingData) || emitted;
   }
-  // Status updates targeted at customer (accepted/rejected) use same payload shape
   if (customerId && bookingData?.type === 'service-request-status') {
     emitted =
       emitToCustomer(customerId, 'service-request-status', bookingData) ||
@@ -139,10 +166,10 @@ function emitServiceCompleted({
   });
 }
 
-/**
- * Best-effort notify: in-process Socket.IO first, optional remote WEBSOCKET_SERVER_URL
- * for serverless hosts that cannot keep sockets open.
- */
+function emitNewServiceRequest(payload) {
+  return emitToAdmins('new-service-request', payload);
+}
+
 async function notifyBooking(payload) {
   const {providerId, customerId, bookingData} = payload || {};
   const localOk = emitBooking({providerId, customerId, bookingData});
@@ -186,7 +213,12 @@ async function notifyServiceCompleted(payload) {
   }
 }
 
-/** Express handlers — keep old Cloud Run paths for mobile clients */
+async function notifyAdminsRealtime(payload) {
+  const localOk = emitNewServiceRequest(payload);
+  if (localOk) return {ok: true, via: 'local'};
+  return {ok: false, via: 'none', reason: 'no_socket'};
+}
+
 function mountEmitHttpRoutes(app) {
   app.post('/emit-booking', (req, res) => {
     try {
@@ -237,9 +269,12 @@ module.exports = {
   getIO,
   emitToProvider,
   emitToCustomer,
+  emitToAdmins,
   emitBooking,
   emitServiceCompleted,
+  emitNewServiceRequest,
   notifyBooking,
   notifyServiceCompleted,
+  notifyAdminsRealtime,
   mountEmitHttpRoutes,
 };

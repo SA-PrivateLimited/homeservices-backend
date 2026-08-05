@@ -8,6 +8,7 @@ const router = express.Router();
 const {verifyAuth, requireRole} = require('../../middleware/auth');
 const {
   getMyPendingServiceRequests,
+  getNearbyPendingServiceRequests,
   getServiceRequestById,
   acceptServiceRequest,
   rejectServiceRequest,
@@ -22,6 +23,17 @@ router.get(
   verifyAuth,
   requireRole('provider'),
   getMyPendingServiceRequests,
+);
+
+/**
+ * GET /api/provider/serviceRequests/nearby-pending
+ * Open pending requests in provider's area (poll fallback for accept cards)
+ */
+router.get(
+  '/nearby-pending',
+  verifyAuth,
+  requireRole('provider'),
+  getNearbyPendingServiceRequests,
 );
 
 /**

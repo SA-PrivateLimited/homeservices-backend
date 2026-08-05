@@ -67,7 +67,7 @@ exports.createJobCard = async (req, res, next) => {
   try {
     const jobCardData = {
       ...req.body,
-      _id: require('mongodb').ObjectId().toString(),
+      _id: new (require('mongodb').ObjectId)().toString(),
       providerId: req.user.uid,
       status: 'accepted',
       createdAt: new Date(),
@@ -116,21 +116,49 @@ exports.createJobCard = async (req, res, next) => {
 exports.updateJobCardStatus = async (req, res, next) => {
   try {
     const {jobCardId} = req.params;
-    const {status, taskPIN} = req.body;
+    const {
+      status,
+      taskPIN,
+      pinGeneratedAt,
+      cancellationReason,
+      serviceAmount,
+      materialsUsed,
+      jobCardPdfUrl,
+      completedAt,
+    } = req.body;
 
-    const jobCard = await JobCard.findOne({
-      _id: jobCardId,
-      providerId: req.user.uid,
-    });
+    let jobCard = req.jobCard;
+    if (!jobCard) {
+      jobCard = await JobCard.findOne({
+        _id: jobCardId,
+        providerId: String(req.user.uid),
+      });
+    }
 
     if (!jobCard) {
       return res.status(404).json({
         success: false,
         error: 'Job card not found',
+        message: 'Job card not found or you do not own this job card',
       });
     }
 
-    const validStatuses = ['pending', 'accepted', 'in-progress', 'completed'];
+    // Ownership (middleware may already have checked)
+    if (String(jobCard.providerId || '') !== String(req.user.uid)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'You do not own this job card',
+      });
+    }
+
+    const validStatuses = [
+      'pending',
+      'accepted',
+      'in-progress',
+      'completed',
+      'cancelled',
+    ];
     if (status && !validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -146,7 +174,25 @@ exports.updateJobCardStatus = async (req, res, next) => {
     if (status) update.status = status;
     if (taskPIN) {
       update.taskPIN = taskPIN;
-      update.pinGeneratedAt = new Date();
+      update.pinGeneratedAt = pinGeneratedAt
+        ? new Date(pinGeneratedAt)
+        : new Date();
+    }
+    if (cancellationReason) {
+      update.cancellationReason = cancellationReason;
+      update.cancelledAt = new Date();
+    }
+    if (serviceAmount !== undefined && serviceAmount !== null) {
+      update.serviceAmount = Number(serviceAmount) || 0;
+    }
+    if (materialsUsed !== undefined) {
+      update.materialsUsed = materialsUsed;
+    }
+    if (jobCardPdfUrl) {
+      update.jobCardPdfUrl = jobCardPdfUrl;
+    }
+    if (completedAt || status === 'completed') {
+      update.completedAt = completedAt ? new Date(completedAt) : new Date();
     }
 
     const updatedJobCard = await JobCard.findByIdAndUpdate(
@@ -155,18 +201,45 @@ exports.updateJobCardStatus = async (req, res, next) => {
       {new: true},
     );
 
-    // Update Realtime DB equivalent
+    // Mirror in Mongo RTDB collection (not Firebase)
     try {
       const {getCollection, connectDB} = require('../../config/database');
-      await connectDB(); // Ensure database is connected
+      await connectDB();
       const jobCardsRTDB = await getCollection('jobCards_rtdb');
       await jobCardsRTDB.updateOne(
         {_id: jobCardId},
-        {$set: {status: update.status || jobCard.status, updatedAt: update.updatedAt}},
+        {
+          $set: {
+            status: update.status || jobCard.status,
+            updatedAt: update.updatedAt,
+          },
+        },
         {upsert: true},
       );
     } catch (rtdbError) {
-      console.warn('⚠️  Could not update Realtime DB equivalent:', rtdbError.message);
+      console.warn('⚠️  Could not update jobCards_rtdb:', rtdbError.message);
+    }
+
+    // Notify customer via Mongo FCM token when service starts
+    if (status === 'in-progress' && updatedJobCard?.customerId) {
+      try {
+        const {notifyUser} = require('../../utils/notify');
+        const pinText = update.taskPIN
+          ? ` Your verification PIN is: ${update.taskPIN}.`
+          : '';
+        await notifyUser(updatedJobCard.customerId, {
+          title: 'Service Started',
+          body: `${updatedJobCard.providerName || 'Provider'} has started your ${updatedJobCard.serviceType || 'service'}.${pinText}`,
+          data: {
+            type: 'service',
+            status: 'in-progress',
+            jobCardId: String(jobCardId),
+            pin: update.taskPIN || '',
+          },
+        });
+      } catch (notifyErr) {
+        console.warn('⚠️  Customer start notify failed:', notifyErr.message);
+      }
     }
 
     res.json({
@@ -175,6 +248,37 @@ exports.updateJobCardStatus = async (req, res, next) => {
       message: 'Job card updated successfully',
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/provider/jobCards/:jobCardId/comments
+ */
+exports.addCommentToJobCard = async (req, res, next) => {
+  try {
+    const {jobCardId} = req.params;
+    const {text} = req.body;
+    const {addJobCardComment} = require('../../utils/jobCardComments');
+    const jobCard = await addJobCardComment({
+      jobCardId,
+      role: 'provider',
+      req,
+      text,
+    });
+    res.json({
+      success: true,
+      data: jobCard,
+      message: 'Comment added',
+    });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({
+        success: false,
+        error: error.message,
+        message: error.message,
+      });
+    }
     next(error);
   }
 };

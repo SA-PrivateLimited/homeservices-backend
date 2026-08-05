@@ -13,6 +13,7 @@ const {
   getMyJobCardById,
   createJobCard,
   updateJobCardStatus,
+  addCommentToJobCard,
 } = require('../../controllers/provider/jobCardsController');
 
 /**
@@ -68,6 +69,19 @@ router.put(
   checkJobCardProvider,
   logRequest,
   updateJobCardStatus,
+);
+
+/**
+ * POST /api/provider/jobCards/:jobCardId/comments
+ */
+router.post(
+  '/:jobCardId/comments',
+  verifyAuth,
+  requireRole('provider'),
+  validateObjectId,
+  checkJobCardProvider,
+  logRequest,
+  addCommentToJobCard,
 );
 
 module.exports = router;

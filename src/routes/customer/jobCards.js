@@ -13,6 +13,7 @@ const {
   getMyJobCards,
   getMyJobCardById,
   cancelJobCard,
+  addCommentToJobCard,
 } = require('../../controllers/customer/jobCardsController');
 
 /**
@@ -55,6 +56,19 @@ router.put(
   checkJobCardCustomer,
   logRequest,
   cancelJobCard,
+);
+
+/**
+ * POST /api/customer/jobCards/:jobCardId/comments
+ */
+router.post(
+  '/:jobCardId/comments',
+  detectLanguage,
+  verifyAuth,
+  validateObjectId,
+  checkJobCardCustomer,
+  logRequest,
+  addCommentToJobCard,
 );
 
 module.exports = router;

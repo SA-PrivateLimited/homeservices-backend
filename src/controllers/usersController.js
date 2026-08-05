@@ -1308,6 +1308,19 @@ exports.deleteUserByAdmin = async (req, res, next) => {
 
     await User.findByIdAndDelete(userId);
 
+    // Providers share the same _id on the Provider collection — remove that too
+    if (existing.role === 'provider') {
+      try {
+        const Provider = require('../models/Provider');
+        await Provider.findByIdAndDelete(userId);
+      } catch (providerErr) {
+        console.warn(
+          '⚠️ Provider profile cleanup after user delete:',
+          providerErr.message,
+        );
+      }
+    }
+
     res.json({
       success: true,
       data: {_id: userId},
