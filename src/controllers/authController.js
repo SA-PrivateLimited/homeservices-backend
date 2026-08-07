@@ -1,6 +1,7 @@
 /**
  * Email / phone + password registration and login.
- * Issues HS256-signed JWTs (HMAC). No Firebase Auth for login/signup.
+ * Issues HS256-signed JWTs (HMAC).
+ * Phone OTP: Firebase Phone Auth ID token (default) or Twilio fallback.
  */
 
 const crypto = require('crypto');
@@ -9,6 +10,7 @@ const User = require('../models/User');
 const {signAccessToken, signMfaToken, verifyMfaToken} = require('../utils/jwtAuth');
 const {encryptToken} = require('../utils/tokenEncryption');
 const twilioVerify = require('../services/twilioVerify');
+const firebaseService = require('../services/firebaseService');
 const {
   normalizePhone,
   toE164,
@@ -24,6 +26,71 @@ const {
 } = require('../utils/totp');
 
 const SALT_ROUNDS = 12;
+
+/**
+ * AUTH_OTP_PROVIDER=firebase|twilio (default: firebase when Admin ready, else twilio).
+ */
+function getOtpProvider() {
+  const raw = String(process.env.AUTH_OTP_PROVIDER || '')
+    .trim()
+    .toLowerCase();
+  if (raw === 'twilio' || raw === 'firebase') return raw;
+  return firebaseService.isReady() ? 'firebase' : 'twilio';
+}
+
+/**
+ * Prove phone ownership via Firebase ID token (preferred) or Twilio SMS code.
+ * @returns {Promise<{ firebaseUid?: string, phoneE164?: string, provider: string }>}
+ */
+async function assertPhoneOtpVerified({idToken, code, phoneE164}) {
+  const provider = getOtpProvider();
+  const token = String(idToken || '').trim();
+  const smsCode = String(code || '').trim();
+
+  if (provider === 'firebase' || token) {
+    if (!token) {
+      const err = new Error(
+        'Firebase idToken is required. Complete Phone Auth on the client, then send idToken.',
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+    if (!firebaseService.isReady()) {
+      const err = new Error(
+        'Firebase Admin is not configured on the server. Cannot verify idToken.',
+      );
+      err.statusCode = 503;
+      throw err;
+    }
+    const verified = await firebaseService.verifyPhoneIdToken(token, phoneE164);
+    return {
+      provider: 'firebase',
+      firebaseUid: verified.firebaseUid,
+      phoneE164: verified.phoneE164,
+    };
+  }
+
+  // Twilio fallback
+  if (!smsCode) {
+    const err = new Error('Verification code is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!twilioVerify.isConfigured()) {
+    const err = new Error(
+      'OTP is not configured. Configure Firebase Admin (preferred) or Twilio.',
+    );
+    err.statusCode = 503;
+    throw err;
+  }
+  const approved = await twilioVerify.checkVerification(phoneE164, smsCode);
+  if (!approved) {
+    const err = new Error('Invalid or expired verification code');
+    err.statusCode = 401;
+    throw err;
+  }
+  return {provider: 'twilio', phoneE164};
+}
 
 function normalizeEmail(email) {
   return (email || '').trim().toLowerCase();
@@ -59,7 +126,7 @@ async function issueSessionForUser(user, {includePin} = {}) {
   if (String(process.env.ENABLE_FIREBASE || '').toLowerCase() === 'true') {
     try {
       const admin = require('../config/firebaseAdmin');
-      if (admin.apps?.length) {
+      if (admin.isFirebaseReady()) {
         firebaseCustomToken = await admin.auth().createCustomToken(user._id, {
           role: user.role || 'customer',
           phone: user.phoneNumber || user.phone || '',
@@ -620,7 +687,11 @@ exports.verifyMfa = async (req, res, next) => {
 
 /**
  * POST /api/auth/phone/send-otp
- * Body: { phoneNumber } — E.164 preferred (+9198...)
+ * Body: { phoneNumber }
+ *
+ * Firebase mode (default): OTP is sent by the client Firebase Phone Auth SDK.
+ * This endpoint only acknowledges / guides the client (no server SMS).
+ * Twilio mode (AUTH_OTP_PROVIDER=twilio): legacy server-side SMS via Twilio Verify.
  */
 exports.sendPhoneOtp = async (req, res, next) => {
   try {
@@ -633,12 +704,28 @@ exports.sendPhoneOtp = async (req, res, next) => {
       });
     }
 
+    const provider = getOtpProvider();
+
+    if (provider === 'firebase') {
+      return res.json({
+        success: true,
+        data: {
+          phoneNumber,
+          provider: 'firebase',
+          status: 'client_sdk',
+          channel: 'firebase_phone_auth',
+        },
+        message:
+          'Use Firebase Phone Auth on the client to send/verify OTP, then call register-with-otp / reset-pin / verify-otp with idToken.',
+      });
+    }
+
     if (!twilioVerify.isConfigured()) {
       return res.status(503).json({
         success: false,
         error: 'Service Unavailable',
         message:
-          'Twilio is not configured. Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VERIFY_SERVICE_SID to .env',
+          'Twilio is not configured. Prefer Firebase Phone Auth (set AUTH_OTP_PROVIDER=firebase and configure Firebase Admin).',
       });
     }
 
@@ -647,10 +734,10 @@ exports.sendPhoneOtp = async (req, res, next) => {
       success: true,
       data: {
         phoneNumber,
+        provider: 'twilio',
         status: result.status,
         channel: result.channel || 'sms',
         dev: Boolean(result.dev),
-        // Returned only in TWILIO_DEV_MODE so the app can show a banner
         ...(result.otp
           ? {
               otp: result.otp,
@@ -677,46 +764,39 @@ exports.sendPhoneOtp = async (req, res, next) => {
 
 /**
  * POST /api/auth/phone/verify-otp
- * Body: { phoneNumber, code, fullName? }
- * Creates / updates customer, marks phoneVerified, returns JWT (+ optional Firebase custom token)
+ * Body: { phoneNumber, idToken } (Firebase) or { phoneNumber, code } (Twilio)
+ * Creates / updates customer, marks phoneVerified, returns app JWT
  */
 exports.verifyPhoneOtp = async (req, res, next) => {
   try {
     const phoneNumber = toE164(req.body.phoneNumber || req.body.phone);
-    const code = String(req.body.code || req.body.otp || '').trim();
     const fullName = (req.body.fullName || req.body.name || 'Customer').trim();
+    const idToken = req.body.idToken || req.body.firebaseIdToken;
+    const code = req.body.code || req.body.otp;
 
-    if (!phoneNumber || !code) {
+    if (!phoneNumber) {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: 'phoneNumber and code are required',
+        message: 'phoneNumber is required',
       });
     }
 
-    if (!twilioVerify.isConfigured()) {
-      return res.status(503).json({
-        success: false,
-        error: 'Service Unavailable',
-        message:
-          'Twilio is not configured. Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VERIFY_SERVICE_SID to .env',
-      });
-    }
-
-    const approved = await twilioVerify.checkVerification(phoneNumber, code);
-    if (!approved) {
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: 'Invalid or expired verification code',
-      });
-    }
-
-    let user = await User.findOne({
-      $or: [{phoneNumber}, {phone: phoneNumber}],
+    const verified = await assertPhoneOtpVerified({
+      idToken,
+      code,
+      phoneE164: phoneNumber,
     });
 
-    const synced = syncPhoneFields(phoneNumber);
+    const synced = syncPhoneFields(verified.phoneE164 || phoneNumber);
+
+    let user = await User.findOne({
+      $or: [
+        {phoneNumber: synced.phoneNumber},
+        {phone: synced.phone},
+        ...(verified.firebaseUid ? [{firebaseUid: verified.firebaseUid}] : []),
+      ],
+    });
 
     if (!user) {
       user = await User.create({
@@ -724,6 +804,7 @@ exports.verifyPhoneOtp = async (req, res, next) => {
         phoneNumber: synced.phoneNumber,
         phone: synced.phone,
         phoneVerified: true,
+        firebaseUid: verified.firebaseUid || null,
         name: fullName,
         displayName: fullName,
         role: 'customer',
@@ -734,6 +815,7 @@ exports.verifyPhoneOtp = async (req, res, next) => {
       user.phoneNumber = synced.phoneNumber;
       user.phone = synced.phone;
       user.phoneVerified = true;
+      if (verified.firebaseUid) user.firebaseUid = verified.firebaseUid;
       user.role = user.role || 'customer';
       if (!user.name && !user.displayName) {
         user.name = fullName;
@@ -753,7 +835,7 @@ exports.verifyPhoneOtp = async (req, res, next) => {
     if (err.statusCode) {
       return res.status(err.statusCode).json({
         success: false,
-        error: 'Twilio Error',
+        error: err.statusCode === 503 ? 'Service Unavailable' : 'Unauthorized',
         message: err.message,
       });
     }
@@ -1002,15 +1084,16 @@ exports.loginPin = async (req, res, next) => {
 
 /**
  * POST /api/auth/phone/register-with-otp
- * New number: verify OTP, then create account with user-chosen 6-digit PIN.
- * Body: { phoneNumber, code, pin, fullName?, role? }
+ * New number: verify Firebase idToken (or Twilio code), then create account with 6-digit PIN.
+ * Body: { phoneNumber, pin, idToken?, code?, fullName?, role? }
  */
 exports.registerWithOtp = async (req, res, next) => {
   try {
     const {ten, e164} = assertTenDigitMobile(
       req.body.phoneNumber || req.body.phone,
     );
-    const code = String(req.body.code || req.body.otp || '').trim();
+    const idToken = req.body.idToken || req.body.firebaseIdToken;
+    const code = req.body.code || req.body.otp;
     const pin = req.body.pin != null ? String(req.body.pin).trim() : '';
     const requestedRole = resolveAuthRole(req.body.role);
     const fullName = (
@@ -1019,13 +1102,6 @@ exports.registerWithOtp = async (req, res, next) => {
       (requestedRole === 'provider' ? 'Provider' : 'Customer')
     ).trim();
 
-    if (!code) {
-      return res.status(400).json({
-        success: false,
-        error: 'Bad Request',
-        message: 'Verification code is required',
-      });
-    }
     if (!isValidPin(pin)) {
       return res.status(400).json({
         success: false,
@@ -1034,23 +1110,11 @@ exports.registerWithOtp = async (req, res, next) => {
       });
     }
 
-    if (!twilioVerify.isConfigured()) {
-      return res.status(503).json({
-        success: false,
-        error: 'Service Unavailable',
-        message:
-          'OTP is not configured. Set TWILIO_DEV_MODE=true for local testing, or configure Twilio.',
-      });
-    }
-
-    const approved = await twilioVerify.checkVerification(e164, code);
-    if (!approved) {
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: 'Invalid or expired verification code',
-      });
-    }
+    const verified = await assertPhoneOtpVerified({
+      idToken,
+      code,
+      phoneE164: e164,
+    });
 
     let user = await User.findOne({
       $or: [
@@ -1058,6 +1122,7 @@ exports.registerWithOtp = async (req, res, next) => {
         {phone: e164},
         {phoneNumber: ten},
         {phone: ten},
+        ...(verified.firebaseUid ? [{firebaseUid: verified.firebaseUid}] : []),
       ],
     }).select('+pinHash +pinKey +encryptedPin');
 
@@ -1105,6 +1170,7 @@ exports.registerWithOtp = async (req, res, next) => {
         phoneNumber: e164,
         phone: ten,
         phoneVerified: true,
+        firebaseUid: verified.firebaseUid || null,
         pinHash,
         pinKey,
         encryptedPin,
@@ -1118,6 +1184,7 @@ exports.registerWithOtp = async (req, res, next) => {
       user.phoneNumber = e164;
       user.phone = ten;
       user.phoneVerified = true;
+      if (verified.firebaseUid) user.firebaseUid = verified.firebaseUid;
       user.pinHash = pinHash;
       user.pinKey = pinKey;
       if (encryptedPin) user.encryptedPin = encryptedPin;
@@ -1157,24 +1224,17 @@ exports.registerWithOtp = async (req, res, next) => {
 
 /**
  * POST /api/auth/phone/reset-pin
- * Forgot PIN: verify SMS OTP, then set a new login PIN (user must choose PIN).
- * Body: { phoneNumber, code, pin }
+ * Forgot PIN: verify Firebase idToken (or Twilio code), then set a new login PIN.
+ * Body: { phoneNumber, pin, idToken?, code? }
  */
 exports.resetPin = async (req, res, next) => {
   try {
     const {ten, e164} = assertTenDigitMobile(
       req.body.phoneNumber || req.body.phone,
     );
-    const code = String(req.body.code || req.body.otp || '').trim();
+    const idToken = req.body.idToken || req.body.firebaseIdToken;
+    const code = req.body.code || req.body.otp;
     const pin = req.body.pin != null ? String(req.body.pin).trim() : '';
-
-    if (!code) {
-      return res.status(400).json({
-        success: false,
-        error: 'Bad Request',
-        message: 'Verification code is required',
-      });
-    }
 
     if (!isValidPin(pin)) {
       return res.status(400).json({
@@ -1184,23 +1244,11 @@ exports.resetPin = async (req, res, next) => {
       });
     }
 
-    if (!twilioVerify.isConfigured()) {
-      return res.status(503).json({
-        success: false,
-        error: 'Service Unavailable',
-        message:
-          'OTP is not configured. Set TWILIO_DEV_MODE=true for local testing, or configure Twilio.',
-      });
-    }
-
-    const approved = await twilioVerify.checkVerification(e164, code);
-    if (!approved) {
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: 'Invalid or expired verification code',
-      });
-    }
+    const verified = await assertPhoneOtpVerified({
+      idToken,
+      code,
+      phoneE164: e164,
+    });
 
     let user = await User.findOne({
       $or: [
@@ -1208,6 +1256,7 @@ exports.resetPin = async (req, res, next) => {
         {phone: e164},
         {phoneNumber: ten},
         {phone: ten},
+        ...(verified.firebaseUid ? [{firebaseUid: verified.firebaseUid}] : []),
       ],
     }).select('+pinHash +pinKey +encryptedPin');
 
@@ -1231,6 +1280,7 @@ exports.resetPin = async (req, res, next) => {
     user.phoneNumber = e164;
     user.phone = ten;
     user.phoneVerified = true;
+    if (verified.firebaseUid) user.firebaseUid = verified.firebaseUid;
     user.pinHash = pinHash;
     user.pinKey = pinKey;
     if (encryptedPin) user.encryptedPin = encryptedPin;

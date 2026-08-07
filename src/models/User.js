@@ -72,6 +72,12 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  /** Firebase Auth uid from Phone Auth (when OTP verified via Firebase ID token) */
+  firebaseUid: {
+    type: String,
+    default: null,
+    index: true,
+  },
   location: {
     latitude: Number,
     longitude: Number,

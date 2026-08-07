@@ -1,7 +1,7 @@
 /**
  * Auth routes — JWT (HMAC/HS256)
- * Primary: phone + PIN (no Firebase / no SMS required)
- * Optional legacy: password login, Twilio OTP (if configured)
+ * Primary: phone + PIN
+ * Phone OTP proof: Firebase Phone Auth idToken (default) or Twilio code (fallback)
  */
 
 const express = require('express');
@@ -27,19 +27,21 @@ router.get('/health', (req, res) => {
   res.json({
     success: true,
     message: 'Auth routes active',
+    otpProviderHint:
+      'Firebase Phone Auth idToken (default) or AUTH_OTP_PROVIDER=twilio',
     routes: [
       'POST /api/auth/phone/lookup',
       'POST /api/auth/phone/register-pin',
-      'POST /api/auth/phone/register-with-otp',
+      'POST /api/auth/phone/register-with-otp (idToken + pin)',
       'POST /api/auth/phone/login-pin',
-      'POST /api/auth/phone/reset-pin',
+      'POST /api/auth/phone/reset-pin (idToken + pin)',
       'POST /api/auth/register',
       'POST /api/auth/login',
       'POST /api/auth/logout',
       'POST /api/auth/mfa/enable',
       'POST /api/auth/mfa/verify',
       'POST /api/auth/phone/send-otp',
-      'POST /api/auth/phone/verify-otp',
+      'POST /api/auth/phone/verify-otp (idToken)',
     ],
   });
 });
@@ -57,7 +59,7 @@ router.post('/phone/register-with-otp', registerWithOtp);
 router.post('/phone/login-pin', loginPin);
 router.post('/phone/reset-pin', resetPin);
 
-// OTP (Twilio or TWILIO_DEV_MODE) — signup + forgot-PIN
+// OTP — Firebase Phone Auth (client) or Twilio (AUTH_OTP_PROVIDER=twilio)
 router.post('/phone/send-otp', sendPhoneOtp);
 router.post('/phone/verify-otp', verifyPhoneOtp);
 

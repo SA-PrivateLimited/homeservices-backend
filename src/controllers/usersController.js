@@ -213,14 +213,14 @@ exports.updateMe = async (req, res, next) => {
 };
 
 /**
- * Update FCM token
+ * Update FCM token (customer / provider / admin).
+ * Also mirrors token onto Provider doc and subscribes to FCM topics.
  */
 exports.updateFcmToken = async (req, res, next) => {
   try {
     const {userId} = req.params;
     const {fcmToken} = req.body;
 
-    // Users can only update their own FCM token
     if (userId !== req.user.uid) {
       return res.status(403).json({
         success: false,
@@ -237,18 +237,26 @@ exports.updateFcmToken = async (req, res, next) => {
       });
     }
 
-    await User.findByIdAndUpdate(userId, {
-      $set: {
-        fcmToken,
-        updatedAt: new Date(),
-      },
+    const {registerDeviceToken} = require('../services/notificationService');
+    const result = await registerDeviceToken(userId, fcmToken, {
+      role: req.userDoc?.role || req.user?.role,
     });
 
     res.json({
       success: true,
       message: 'FCM token updated successfully',
+      data: {
+        topics: result.topics,
+      },
     });
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        error: error.statusCode === 404 ? 'Not Found' : 'Bad Request',
+        message: error.message,
+      });
+    }
     next(error);
   }
 };

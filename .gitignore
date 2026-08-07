@@ -35,3 +35,6 @@ uploads/
 coverage/
 .nyc_output/
 agent-context/
+
+
+config/firebase-admin.json
