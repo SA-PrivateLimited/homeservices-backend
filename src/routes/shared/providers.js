@@ -5,6 +5,8 @@
 const express = require('express');
 const router = express.Router();
 const {verifyAuth, optionalAuth, requireRole} = require('../../middleware/auth');
+const {requirePermission} = require('../../middleware/requirePermission');
+const {PERMISSIONS} = require('../../constants/permissions');
 const {validatePagination, validateObjectId} = require('../../middleware/validate');
 const {logRequest} = require('../../middleware/logger');
 const {
@@ -21,7 +23,7 @@ const {uploadProviderDocument: multerUpload} = require('../../middleware/upload'
 
 /**
  * GET /api/providers
- * Get all approved providers (public)
+ * Get all approved providers (public); admins need providers.view when authenticated as admin
  */
 router.get(
   '/',
@@ -80,11 +82,11 @@ router.put(
 /**
  * PUT /api/providers/:providerId/approval
  * Approve/reject provider (admin only)
- * NOTE: This must come BEFORE /:providerId to avoid 'approval' being treated as an ID
  */
 router.put(
   '/:providerId/approval',
   requireRole('admin'),
+  requirePermission(PERMISSIONS.PROVIDERS_UPDATE),
   validateObjectId,
   logRequest,
   updateProviderApproval,
@@ -97,6 +99,7 @@ router.put(
 router.post(
   '/:providerId/documents/:docKey',
   requireRole('admin'),
+  requirePermission(PERMISSIONS.PROVIDERS_UPDATE),
   validateObjectId,
   (req, res, next) => {
     multerUpload(req, res, (err) => {
@@ -121,6 +124,7 @@ router.post(
 router.put(
   '/:providerId',
   requireRole('admin'),
+  requirePermission(PERMISSIONS.PROVIDERS_UPDATE),
   validateObjectId,
   logRequest,
   updateProvider,

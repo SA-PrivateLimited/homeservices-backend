@@ -1,11 +1,13 @@
 /**
- * Admin Clients CRUD — Super Admin elevation required.
+ * Admin Clients CRUD — Super Admin elevation required + clients.* permissions.
  */
 
 const express = require('express');
 const router = express.Router();
 const {requireRole} = require('../../middleware/auth');
 const {requireSuperAdmin} = require('../../middleware/requireSuperAdmin');
+const {requirePermission} = require('../../middleware/requirePermission');
+const {PERMISSIONS} = require('../../constants/permissions');
 const {logRequest} = require('../../middleware/logger');
 const {
   listClients,
@@ -15,38 +17,40 @@ const {
   deleteClient,
 } = require('../../controllers/shared/clientsController');
 
+const gate = [requireRole('admin'), requireSuperAdmin];
+
 router.get(
   '/',
-  requireRole('admin'),
-  requireSuperAdmin,
+  ...gate,
+  requirePermission(PERMISSIONS.CLIENTS_VIEW),
   logRequest,
   listClients,
 );
 router.post(
   '/',
-  requireRole('admin'),
-  requireSuperAdmin,
+  ...gate,
+  requirePermission(PERMISSIONS.CLIENTS_CREATE),
   logRequest,
   createClient,
 );
 router.put(
   '/:clientId',
-  requireRole('admin'),
-  requireSuperAdmin,
+  ...gate,
+  requirePermission(PERMISSIONS.CLIENTS_UPDATE),
   logRequest,
   updateClient,
 );
 router.put(
   '/:clientId/activate',
-  requireRole('admin'),
-  requireSuperAdmin,
+  ...gate,
+  requirePermission(PERMISSIONS.CLIENTS_UPDATE),
   logRequest,
   activateClient,
 );
 router.delete(
   '/:clientId',
-  requireRole('admin'),
-  requireSuperAdmin,
+  ...gate,
+  requirePermission(PERMISSIONS.CLIENTS_DELETE),
   logRequest,
   deleteClient,
 );

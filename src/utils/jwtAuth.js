@@ -18,24 +18,33 @@ function assertSecret() {
 }
 
 /**
- * @param {{ sub: string, email?: string, phone?: string, name?: string, role: string }} payload
+ * @param {{
+ *   sub: string,
+ *   email?: string,
+ *   phone?: string,
+ *   name?: string,
+ *   role: string,
+ *   permissions?: string[],
+ * }} payload
  */
 function signAccessToken(payload) {
   assertSecret();
-  return jwt.sign(
-    {
-      sub: payload.sub,
-      email: payload.email || '',
-      phone: payload.phone || '',
-      name: payload.name || '',
-      role: payload.role,
-    },
-    SECRET,
-    {
-      algorithm: 'HS256',
-      expiresIn: EXPIRES_IN,
-    },
-  );
+  const body = {
+    sub: payload.sub,
+    email: payload.email || '',
+    phone: payload.phone || '',
+    name: payload.name || '',
+    role: payload.role,
+  };
+  if (payload.role === 'admin') {
+    body.permissions = Array.isArray(payload.permissions)
+      ? payload.permissions
+      : [];
+  }
+  return jwt.sign(body, SECRET, {
+    algorithm: 'HS256',
+    expiresIn: EXPIRES_IN,
+  });
 }
 
 /**

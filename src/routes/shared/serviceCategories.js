@@ -5,6 +5,8 @@
 const express = require('express');
 const router = express.Router();
 const {optionalAuth, requireRole} = require('../../middleware/auth');
+const {requirePermission} = require('../../middleware/requirePermission');
+const {PERMISSIONS} = require('../../constants/permissions');
 const {validateObjectId} = require('../../middleware/validate');
 const {logRequest} = require('../../middleware/logger');
 const {
@@ -45,6 +47,7 @@ router.get(
 router.post(
   '/',
   requireRole('admin'),
+  requirePermission(PERMISSIONS.CATEGORIES_CREATE),
   logRequest,
   createCategory,
 );
@@ -56,6 +59,7 @@ router.post(
 router.put(
   '/:categoryId',
   requireRole('admin'),
+  requirePermission(PERMISSIONS.CATEGORIES_UPDATE),
   validateObjectId,
   logRequest,
   updateCategory,
@@ -68,6 +72,7 @@ router.put(
 router.delete(
   '/:categoryId',
   requireRole('admin'),
+  requirePermission(PERMISSIONS.CATEGORIES_DELETE),
   validateObjectId,
   logRequest,
   deleteCategory,

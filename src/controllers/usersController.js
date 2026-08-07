@@ -9,6 +9,16 @@ const User = require('../models/User');
 const {encryptToken, decryptToken} = require('../utils/tokenEncryption');
 const {syncPhoneFields} = require('../utils/phone');
 const {verifySuperAdminToken} = require('../utils/jwtAuth');
+const {
+  createPendingAdmin,
+  resolveAdminStatus,
+} = require('../services/adminActivationService');
+const {
+  resolveAdminPermissions,
+  PERMISSIONS,
+  hasPermission,
+} = require('../constants/permissions');
+const {isSuperAdminElevated} = require('../middleware/requirePermission');
 
 const PASSWORD_SALT_ROUNDS = 12;
 const MIN_PASSWORD_LENGTH = 8;
@@ -77,6 +87,7 @@ function withAdminPinFields(userDoc, isAdmin) {
   delete raw.encryptedAuthToken;
   delete raw.fcmToken;
   delete raw.totpSecretEncrypted;
+  delete raw.activationTokenHash;
 
   if (isAdmin) {
     raw.hasPin = Boolean(userDoc.pinHash || userDoc.encryptedPin || raw.hasPin);
@@ -84,6 +95,14 @@ function withAdminPinFields(userDoc, isAdmin) {
   }
 
   raw.totpEnabled = Boolean(userDoc.totpEnabled);
+  if ((userDoc.role || '').toLowerCase() === 'admin') {
+    raw.adminStatus = resolveAdminStatus(userDoc);
+    raw.permissions = resolveAdminPermissions(userDoc);
+    raw.hasPendingInvitation =
+      raw.adminStatus === 'PENDING' &&
+      Boolean(userDoc.activationExpiresAt) &&
+      new Date(userDoc.activationExpiresAt).getTime() > Date.now();
+  }
 
   return raw;
 }
@@ -115,6 +134,13 @@ exports.getMe = async (req, res, next) => {
     // Remove sensitive fields
     const userData = user.toObject();
     delete userData.fcmToken;
+    delete userData.passwordHash;
+    delete userData.totpSecretEncrypted;
+    delete userData.activationTokenHash;
+    if (userData.role === 'admin') {
+      userData.permissions = resolveAdminPermissions(user);
+      userData.id = userData._id;
+    }
 
     res.json({
       success: true,
@@ -565,6 +591,33 @@ exports.getAllUsers = async (req, res, next) => {
       stateId,
       districtId,
     } = req.query;
+
+    // RBAC: list scope by role filter (Super Admin bypasses)
+    if (!isSuperAdminElevated(req)) {
+      const perms = Array.isArray(req.user?.permissions)
+        ? req.user.permissions
+        : resolveAdminPermissions(req.userDoc);
+      const roleFilter = String(role || '')
+        .trim()
+        .toLowerCase();
+      const needed =
+        roleFilter === 'admin'
+          ? PERMISSIONS.ADMINS_VIEW
+          : roleFilter === 'customer'
+            ? PERMISSIONS.CUSTOMERS_VIEW
+            : roleFilter === 'provider'
+              ? PERMISSIONS.PROVIDERS_VIEW
+              : null;
+      if (needed && !hasPermission(perms, needed)) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden',
+          message: `Missing permission: ${needed}`,
+          required: [needed],
+        });
+      }
+    }
+
     const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
     const off = Math.max(parseInt(offset, 10) || 0, 0);
 
@@ -974,10 +1027,21 @@ exports.createUserByAdmin = async (req, res, next) => {
     }
 
     if (role === 'admin' && !password) {
-      return res.status(400).json({
-        success: false,
-        error: 'Bad Request',
-        message: 'Admin accounts require a password',
+      const result = await createPendingAdmin({
+        name,
+        email,
+        permissions: req.body.permissions,
+      });
+      return res.status(201).json({
+        success: true,
+        data: {
+          ...result.admin,
+          activationLink: result.activationLink,
+          activationExpiresAt: result.activationExpiresAt,
+          qrCodeDataUrl: result.qrCodeDataUrl,
+        },
+        message:
+          'Admin created as PENDING. Share the activation link manually (no email sent).',
       });
     }
 
@@ -1078,6 +1142,10 @@ exports.createUserByAdmin = async (req, res, next) => {
 
     if (role === 'admin') {
       doc.adminApprovalStatus = 'approved';
+      doc.adminStatus = 'ACTIVE';
+      if (Array.isArray(req.body.permissions)) {
+        doc.permissions = req.body.permissions.filter(Boolean);
+      }
     }
 
     if (password) {
@@ -1187,6 +1255,9 @@ exports.deactivateUserByAdmin = async (req, res, next) => {
     user.deactivatedAt = new Date();
     user.deactivationReason = reason;
     user.deactivatedBy = req.user?.uid || '';
+    if (user.role === 'admin') {
+      user.adminStatus = 'DISABLED';
+    }
     user.updatedAt = new Date();
     await user.save();
 
@@ -1247,6 +1318,14 @@ exports.restoreUserByAdmin = async (req, res, next) => {
     user.deactivatedAt = undefined;
     user.deactivationReason = undefined;
     user.deactivatedBy = undefined;
+    if (user.role === 'admin') {
+      if (user.adminStatus === 'PENDING') {
+        // Keep PENDING — they still need activation link
+      } else {
+        user.adminStatus = 'ACTIVE';
+        user.adminApprovalStatus = 'approved';
+      }
+    }
     user.updatedAt = new Date();
     await user.save();
 

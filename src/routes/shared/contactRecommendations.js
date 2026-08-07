@@ -7,6 +7,8 @@ const express = require('express');
 const router = express.Router();
 const {verifyAuth} = require('../../middleware/auth');
 const {requireRole} = require('../../middleware/auth');
+const {requirePermission} = require('../../middleware/requirePermission');
+const {PERMISSIONS} = require('../../constants/permissions');
 const {validateObjectId} = require('../../middleware/validate');
 const {logRequest} = require('../../middleware/logger');
 const {
@@ -36,6 +38,7 @@ router.get(
   '/',
   verifyAuth,
   requireRole('admin'),
+  requirePermission(PERMISSIONS.CONTACTS_VIEW),
   logRequest,
   getAllContactRecommendations,
 );
@@ -59,6 +62,7 @@ router.put(
   '/:id',
   verifyAuth,
   requireRole('admin'),
+  requirePermission(PERMISSIONS.CONTACTS_UPDATE),
   validateObjectId,
   logRequest,
   updateContactRecommendation,
@@ -72,6 +76,7 @@ router.put(
   '/:id/status',
   verifyAuth,
   requireRole('admin'),
+  requirePermission(PERMISSIONS.CONTACTS_UPDATE),
   validateObjectId,
   logRequest,
   updateRecommendationStatus,

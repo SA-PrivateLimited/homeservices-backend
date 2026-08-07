@@ -178,11 +178,41 @@ const userSchema = new mongoose.Schema({
    * Admin account approval by Super Admin.
    * pending → cannot use AdminWeb until approved.
    * Legacy admins with no value are treated as approved.
+   * Prefer adminStatus for new invitation-based onboarding.
    */
   adminApprovalStatus: {
     type: String,
     enum: ['pending', 'approved', 'rejected'],
     default: undefined,
+  },
+  /**
+   * Admin lifecycle (invitation onboarding).
+   * PENDING → invited, not activated; ACTIVE → can login;
+   * LOCKED / DISABLED → login blocked.
+   * Legacy admins with no value are treated as ACTIVE.
+   */
+  adminStatus: {
+    type: String,
+    enum: ['PENDING', 'ACTIVE', 'LOCKED', 'DISABLED'],
+    default: undefined,
+    index: true,
+  },
+  /** Optional capability flags for admin accounts (RBAC). */
+  permissions: {
+    type: [String],
+    default: undefined,
+  },
+  /** SHA-256 of one-time activation token (never store plaintext). */
+  activationTokenHash: {
+    type: String,
+    select: false,
+    default: null,
+    index: true,
+  },
+  /** Activation link expiry (typically 24h from issue). */
+  activationExpiresAt: {
+    type: Date,
+    default: null,
   },
   /** Soft deactivate — blocks app/admin login when false */
   isActive: {

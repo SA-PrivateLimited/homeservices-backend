@@ -20,6 +20,11 @@ const {
   resetPin,
   registerWithOtp,
 } = require('../controllers/authController');
+const {
+  validateActivation,
+  activationSetPassword,
+  activationVerifyMfa,
+} = require('../controllers/adminActivationController');
 const {optionalAuth} = require('../middleware/auth');
 const {logRequest} = require('../middleware/logger');
 
@@ -40,6 +45,9 @@ router.get('/health', (req, res) => {
       'POST /api/auth/logout',
       'POST /api/auth/mfa/enable',
       'POST /api/auth/mfa/verify',
+      'GET /api/auth/activate?token=',
+      'POST /api/auth/activate/password',
+      'POST /api/auth/activate/mfa',
       'POST /api/auth/phone/send-otp',
       'POST /api/auth/phone/verify-otp (idToken)',
     ],
@@ -51,6 +59,11 @@ router.post('/login', login);
 router.post('/logout', optionalAuth, logRequest, logout);
 router.post('/mfa/enable', enableMfa);
 router.post('/mfa/verify', verifyMfa);
+
+// Admin invitation activation (public — no JWT; token in body/query)
+router.get('/activate', logRequest, validateActivation);
+router.post('/activate/password', logRequest, activationSetPassword);
+router.post('/activate/mfa', logRequest, activationVerifyMfa);
 
 // Primary customer auth (PIN)
 router.post('/phone/lookup', lookupPhone);

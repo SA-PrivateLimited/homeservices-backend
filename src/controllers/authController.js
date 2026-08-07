@@ -24,6 +24,8 @@ const {
   decryptTotpSecret,
   verifyTotpCode,
 } = require('../utils/totp');
+const {assertCanLoginAsAdmin} = require('../services/adminActivationService');
+const {resolveAdminPermissions} = require('../constants/permissions');
 
 const SALT_ROUNDS = 12;
 
@@ -97,12 +99,17 @@ function normalizeEmail(email) {
 }
 
 async function issueSessionForUser(user, {includePin} = {}) {
+  const role = user.role || 'customer';
+  const permissions =
+    role === 'admin' ? resolveAdminPermissions(user) : undefined;
+
   const token = signAccessToken({
     sub: user._id,
     email: user.email,
     phone: user.phoneNumber || user.phone,
     name: user.name || user.displayName,
-    role: user.role || 'customer',
+    role,
+    permissions,
   });
 
   let encryptedAuthToken;
@@ -144,8 +151,14 @@ async function issueSessionForUser(user, {includePin} = {}) {
   delete safe.encryptedPin;
   delete safe.encryptedAuthToken;
   delete safe.totpSecretEncrypted;
+  delete safe.activationTokenHash;
   safe.hasPin = true;
   safe.phoneVerified = true;
+  if (role === 'admin') {
+    safe.permissions = permissions;
+    // Shape expected by Admin Web: admin + token
+    safe.id = safe._id;
+  }
 
   if ((safe.role || user.role) === 'provider') {
     try {
@@ -169,6 +182,14 @@ async function issueSessionForUser(user, {includePin} = {}) {
     token,
     expiresIn: require('../utils/jwtAuth').expiresIn,
   };
+  if (role === 'admin') {
+    result.admin = {
+      id: String(user._id),
+      name: user.name || user.displayName || '',
+      role: 'admin',
+      permissions,
+    };
+  }
   if (includePin) {
     result.pin = includePin;
   }
@@ -449,7 +470,19 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    if (user.isActive === false) {
+    // Admin lifecycle before generic isActive (clearer PENDING/LOCKED messages)
+    if (user.role === 'admin') {
+      try {
+        assertCanLoginAsAdmin(user);
+      } catch (gateErr) {
+        return res.status(gateErr.statusCode || 403).json({
+          success: false,
+          error: 'Forbidden',
+          message: gateErr.message,
+          code: gateErr.code,
+        });
+      }
+    } else if (user.isActive === false) {
       return res.status(403).json({
         success: false,
         error: 'Forbidden',

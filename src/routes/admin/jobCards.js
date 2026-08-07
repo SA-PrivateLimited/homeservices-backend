@@ -5,6 +5,8 @@
 const express = require('express');
 const router = express.Router();
 const {requireRole} = require('../../middleware/auth');
+const {requirePermission} = require('../../middleware/requirePermission');
+const {PERMISSIONS} = require('../../constants/permissions');
 const {validatePagination, validateObjectId, validateJobCardStatus} = require('../../middleware/validate');
 const {logRequest} = require('../../middleware/logger');
 const {
@@ -17,86 +19,67 @@ const {
   addCommentToJobCard,
 } = require('../../controllers/admin/jobCardsController');
 
-/**
- * GET /api/admin/jobCards
- * Get all job cards
- */
+const admin = requireRole('admin');
+
 router.get(
   '/',
-  requireRole('admin'),
+  admin,
+  requirePermission(PERMISSIONS.JOBS_VIEW),
   validatePagination,
   logRequest,
   getAllJobCards,
 );
 
-/**
- * GET /api/admin/jobCards/:jobCardId
- * Get single job card
- */
 router.get(
   '/:jobCardId',
-  requireRole('admin'),
+  admin,
+  requirePermission(PERMISSIONS.JOBS_VIEW),
   validateObjectId,
   logRequest,
   getJobCardById,
 );
 
-/**
- * POST /api/admin/jobCards/:jobCardId/assign
- * Assign or change provider + confirm to customer
- */
 router.post(
   '/:jobCardId/assign',
-  requireRole('admin'),
+  admin,
+  requirePermission(PERMISSIONS.JOBS_ASSIGN),
   validateObjectId,
   logRequest,
   assignProviderToJobCard,
 );
 
-/**
- * POST /api/admin/jobCards/:jobCardId/unassign
- * Remove provider from job
- */
 router.post(
   '/:jobCardId/unassign',
-  requireRole('admin'),
+  admin,
+  requirePermission(PERMISSIONS.JOBS_ASSIGN),
   validateObjectId,
   logRequest,
   unassignProviderFromJobCard,
 );
 
-/**
- * POST /api/admin/jobCards/:jobCardId/comments
- * Admin adds a comment
- */
 router.post(
   '/:jobCardId/comments',
-  requireRole('admin'),
+  admin,
+  requirePermission(PERMISSIONS.JOBS_UPDATE),
   validateObjectId,
   logRequest,
   addCommentToJobCard,
 );
 
-/**
- * PUT /api/admin/jobCards/:jobCardId
- * Update job card
- */
 router.put(
   '/:jobCardId',
-  requireRole('admin'),
+  admin,
+  requirePermission(PERMISSIONS.JOBS_UPDATE),
   validateObjectId,
   validateJobCardStatus,
   logRequest,
   updateJobCard,
 );
 
-/**
- * DELETE /api/admin/jobCards/:jobCardId
- * Delete job card
- */
 router.delete(
   '/:jobCardId',
-  requireRole('admin'),
+  admin,
+  requirePermission(PERMISSIONS.JOBS_DELETE),
   validateObjectId,
   logRequest,
   deleteJobCard,

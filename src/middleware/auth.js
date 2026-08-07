@@ -6,6 +6,7 @@
 const {connectDB} = require('../config/database');
 const User = require('../models/User');
 const {verifyAccessToken} = require('../utils/jwtAuth');
+const {resolveAdminPermissions} = require('../constants/permissions');
 
 /**
  * Verify Bearer JWT and attach req.user / req.userDoc
@@ -24,11 +25,13 @@ async function verifyAuth(req, res, next) {
 
     const token = authHeader.split('Bearer ')[1].trim();
     const decoded = verifyAccessToken(token);
+    req.accessTokenPayload = decoded;
 
     req.user = {
       uid: decoded.sub,
       email: decoded.email,
       phoneNumber: decoded.phone,
+      permissions: Array.isArray(decoded.permissions) ? decoded.permissions : [],
     };
 
     await connectDB();
@@ -36,6 +39,12 @@ async function verifyAuth(req, res, next) {
     if (userDoc) {
       req.user.role = userDoc.role || 'customer';
       req.userDoc = userDoc;
+      if (userDoc.role === 'admin') {
+        // Option 1: JWT snapshot wins for enforcement; expose DB copy for UI/me
+        if (!Array.isArray(decoded.permissions)) {
+          req.user.permissions = resolveAdminPermissions(userDoc);
+        }
+      }
     } else {
       req.user.role = decoded.role || 'customer';
     }
@@ -68,11 +77,15 @@ function requireRole(...allowedRoles) {
 
       const token = authHeader.split('Bearer ')[1].trim();
       const decoded = verifyAccessToken(token);
+      req.accessTokenPayload = decoded;
 
       req.user = {
         uid: decoded.sub,
         email: decoded.email,
         phoneNumber: decoded.phone,
+        permissions: Array.isArray(decoded.permissions)
+          ? decoded.permissions
+          : [],
       };
 
       await connectDB();
@@ -98,6 +111,9 @@ function requireRole(...allowedRoles) {
 
       req.userDoc = userDoc;
       req.user.role = userRole;
+      if (userRole === 'admin' && !Array.isArray(decoded.permissions)) {
+        req.user.permissions = resolveAdminPermissions(userDoc);
+      }
 
       next();
     } catch (error) {

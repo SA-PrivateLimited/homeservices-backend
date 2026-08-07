@@ -24,6 +24,13 @@ const {
   deactivateUserByAdmin,
   restoreUserByAdmin,
 } = require('../controllers/usersController');
+const {
+  inviteAdmin,
+  regenerateActivation,
+  cancelActivation,
+  setAdminStatus,
+  updateAdminPermissions,
+} = require('../controllers/adminActivationController');
 
 /**
  * GET /api/users/me
@@ -34,6 +41,17 @@ router.get(
   verifyAuth,
   logRequest,
   getMe,
+);
+
+/**
+ * POST /api/users/admins/invite
+ * Super Admin: create PENDING admin + activation link (no email)
+ */
+router.post(
+  '/admins/invite',
+  requireRole('admin'),
+  logRequest,
+  inviteAdmin,
 );
 
 /**
@@ -117,6 +135,54 @@ router.post(
   validateObjectId,
   logRequest,
   resetUserMfaByAdmin,
+);
+
+/**
+ * POST /api/users/:userId/activation/regenerate
+ * Super Admin: new activation link (PENDING only)
+ */
+router.post(
+  '/:userId/activation/regenerate',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  regenerateActivation,
+);
+
+/**
+ * POST /api/users/:userId/activation/cancel
+ * Super Admin: cancel PENDING invitation
+ */
+router.post(
+  '/:userId/activation/cancel',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  cancelActivation,
+);
+
+/**
+ * POST /api/users/:userId/admin-status
+ * Super Admin: ACTIVE | LOCKED | DISABLED | PENDING
+ */
+router.post(
+  '/:userId/admin-status',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  setAdminStatus,
+);
+
+/**
+ * PATCH /api/users/:userId/permissions
+ * Super Admin: replace admin permissions (alias of PATCH /api/admins/:id/permissions)
+ */
+router.patch(
+  '/:userId/permissions',
+  requireRole('admin'),
+  validateObjectId,
+  logRequest,
+  updateAdminPermissions,
 );
 
 /**
