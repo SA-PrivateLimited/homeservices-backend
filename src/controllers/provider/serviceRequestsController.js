@@ -14,19 +14,20 @@ const {
   saveServiceRequestFlexible,
 } = require('../../utils/findServiceRequestFlexible');
 const {notifyUser, notifyAdmins} = require('../../utils/notify');
+const {onServiceRequestStatusChange} = require('../../services/activeServiceRequestService');
+const {
+  redactServiceRequestForViewer,
+  sanitizeBookingNotifyPayload,
+  canAccessCustomerContact,
+  pickPhone,
+} = require('../../utils/contactAccess');
 
-function serializeRequest(doc) {
-  const obj = doc.toObject ? doc.toObject() : {...doc};
-  if (obj && obj._id != null) obj._id = String(obj._id);
-  return obj;
+function serializeRequest(doc, viewer) {
+  return redactServiceRequestForViewer(doc, viewer);
 }
 
-function serializeList(rows) {
-  return (rows || []).map(row => {
-    const o = {...row};
-    if (o._id != null) o._id = String(o._id);
-    return o;
-  });
+function serializeList(rows, viewer) {
+  return (rows || []).map((row) => serializeRequest(row, viewer));
 }
 
 /**
@@ -56,7 +57,7 @@ exports.getMyPendingServiceRequests = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: serializeList(serviceRequests),
+      data: serializeList(serviceRequests, req.user),
       count: serviceRequests.length,
     });
   } catch (error) {
@@ -85,7 +86,7 @@ exports.getNearbyPendingServiceRequests = async (req, res, next) => {
     const serviceRequests = await findNearbyOpenPendingForProvider(provider);
     res.json({
       success: true,
-      data: serializeList(serviceRequests),
+      data: serializeList(serviceRequests, req.user),
       count: serviceRequests.length,
     });
   } catch (error) {
@@ -98,12 +99,13 @@ exports.getNearbyPendingServiceRequests = async (req, res, next) => {
 };
 
 /**
- * Get service request by ID (provider can view any service request)
+ * Get service request by ID (assigned provider, or pending open/targeted)
  */
 exports.getServiceRequestById = async (req, res, next) => {
   try {
     const {serviceRequestId} = req.params;
     const lang = req.lang || 'en';
+    const providerId = String(req.user.uid);
 
     logDatabaseOperation('findOne', 'serviceRequests', {_id: serviceRequestId});
 
@@ -117,9 +119,34 @@ exports.getServiceRequestById = async (req, res, next) => {
       });
     }
 
+    const assignedId = String(serviceRequest.providerId || '');
+    const isAssigned = assignedId === providerId;
+    const status = String(serviceRequest.status || '').toLowerCase();
+    const isPendingVisible =
+      status === 'pending' && (!assignedId || assignedId === providerId);
+
+    if (!isAssigned && !isPendingVisible) {
+      return res.status(404).json({
+        success: false,
+        error: t('serviceRequests.notFound', lang),
+        message: t('serviceRequests.notFound', lang),
+      });
+    }
+
+    const data = serializeRequest(serviceRequest, req.user);
+    // Defense in depth: never expose customer phone unless authorized
+    if (!canAccessCustomerContact(req.user, serviceRequest)) {
+      delete data.customerPhone;
+      delete data.secondaryPhone;
+      if (data.contact) {
+        data.contact.customerPhoneAvailable = false;
+        data.contact.canCallCustomer = false;
+      }
+    }
+
     res.json({
       success: true,
-      data: serializeRequest(serviceRequest),
+      data,
     });
   } catch (error) {
     console.error(`❌ [getServiceRequestById] Failed:`, error.message);
@@ -174,7 +201,7 @@ exports.acceptServiceRequest = async (req, res, next) => {
     if (serviceRequest.status === 'accepted' && serviceRequest.providerId === providerId) {
       return res.json({
         success: true,
-        data: serializeRequest(serviceRequest),
+        data: serializeRequest(serviceRequest, req.user),
         message: 'Service request already accepted',
       });
     }
@@ -188,7 +215,7 @@ exports.acceptServiceRequest = async (req, res, next) => {
     }
 
     const providerDoc = await Provider.findOne({_id: providerId})
-      .select('isOnline isAvailable approvalStatus')
+      .select('isOnline isAvailable approvalStatus phone phoneNumber name displayName')
       .lean();
     if (!providerDoc || providerDoc.approvalStatus !== 'approved') {
       return res.status(403).json({
@@ -205,8 +232,18 @@ exports.acceptServiceRequest = async (req, res, next) => {
       });
     }
 
-    const providerName = req.body.providerName || req.user.name || 'Provider';
-    const providerPhone = req.body.providerPhone || req.user.phoneNumber || '';
+    const providerName =
+      req.body.providerName ||
+      providerDoc.displayName ||
+      providerDoc.name ||
+      req.user.name ||
+      'Provider';
+    const providerPhone = pickPhone(
+      providerDoc.phoneNumber,
+      providerDoc.phone,
+      req.user.phoneNumber,
+      req.user.phone,
+    );
     const providerEmail = req.body.providerEmail || req.user.email || '';
     const providerSpecialization = req.body.providerSpecialization || '';
     const providerRating = req.body.providerRating || 0;
@@ -222,23 +259,90 @@ exports.acceptServiceRequest = async (req, res, next) => {
     serviceRequest.providerRating = providerRating;
     serviceRequest.providerImage = providerImage;
     serviceRequest.providerAddress = providerAddress;
-    serviceRequest.updatedAt = new Date();
+    serviceRequest.needsAdminAssignment = false;
+    const acceptedAt = new Date();
+    if (!serviceRequest.acceptedAt) {
+      serviceRequest.acceptedAt = acceptedAt;
+    }
+    serviceRequest.updatedAt = acceptedAt;
 
     await saveServiceRequestFlexible(serviceRequest);
+
+    // Clear admin-assist flag on any linked unassigned job card created earlier
+    try {
+      const JobCard = require('../../models/JobCard');
+      const srKey = String(serviceRequest._id);
+      await JobCard.updateMany(
+        {
+          $or: [
+            {_id: srKey},
+            {bookingId: srKey},
+            {serviceRequestId: srKey},
+          ],
+        },
+        {
+          $set: {
+            providerId,
+            providerName,
+            providerPhone,
+            providerAddress: providerAddress || undefined,
+            status: 'accepted',
+            needsAdminAssignment: false,
+            acceptedAt: serviceRequest.acceptedAt,
+            updatedAt: acceptedAt,
+            ...(serviceRequest.problem
+              ? {problem: serviceRequest.problem}
+              : {}),
+            ...(serviceRequest.serviceType
+              ? {serviceType: serviceRequest.serviceType}
+              : {}),
+            ...(serviceRequest.scheduledTime
+              ? {scheduledTime: serviceRequest.scheduledTime}
+              : {}),
+          },
+        },
+      );
+    } catch (syncErr) {
+      console.warn(
+        '⚠️ [acceptServiceRequest] Could not sync linked job card:',
+        syncErr.message,
+      );
+    }
 
     const duration = Date.now() - startTime;
     logPerformance('acceptServiceRequest', duration);
 
+    const acceptedAtIso = new Date(serviceRequest.acceptedAt).toISOString();
+    const createdAtIso = serviceRequest.createdAt
+      ? new Date(serviceRequest.createdAt).toISOString()
+      : '';
+    const serviceType = serviceRequest.serviceType || 'service';
+    const problemRaw = serviceRequest.problem
+      ? String(serviceRequest.problem)
+      : '';
+    const problemShort =
+      problemRaw.length > 100
+        ? `${problemRaw.substring(0, 100)}...`
+        : problemRaw;
+
     try {
       await notifyBooking({
         customerId: serviceRequest.customerId,
-        bookingData: {
-          type: 'service-request-status',
-          serviceRequestId: String(serviceRequest._id),
-          status: 'accepted',
-          providerId,
-          providerName,
-        },
+        bookingData: sanitizeBookingNotifyPayload(
+          {
+            type: 'service-request-status',
+            serviceRequestId: String(serviceRequest._id),
+            status: 'accepted',
+            providerId,
+            providerName,
+            providerPhone,
+            serviceType,
+            problem: problemRaw,
+            acceptedAt: acceptedAtIso,
+            createdAt: createdAtIso,
+          },
+          {includeProviderPhone: true},
+        ),
       });
     } catch (_) {
       // non-fatal
@@ -246,14 +350,13 @@ exports.acceptServiceRequest = async (req, res, next) => {
 
     // Push via Mongo-stored FCM tokens (server-side). No client Firestore dependency.
     try {
-      let body = `${providerName} has accepted your ${serviceRequest.serviceType || 'service'} request`;
-      if (serviceRequest.problem) {
-        const problemText =
-          String(serviceRequest.problem).length > 100
-            ? `${String(serviceRequest.problem).substring(0, 100)}...`
-            : String(serviceRequest.problem);
-        body += `. Problem: ${problemText}`;
-      }
+      const bodyParts = [
+        `${providerName} has accepted your ${serviceType} request`,
+      ];
+      if (problemShort) bodyParts.push(`Problem: ${problemShort}`);
+      bodyParts.push(`Accepted: ${new Date(serviceRequest.acceptedAt).toLocaleString()}`);
+      const body = bodyParts.join('. ');
+
       await notifyUser(serviceRequest.customerId, {
         title: 'Service Request Accepted',
         body,
@@ -262,15 +365,22 @@ exports.acceptServiceRequest = async (req, res, next) => {
           status: 'accepted',
           serviceRequestId: String(serviceRequest._id),
           consultationId: String(serviceRequest._id),
+          providerName: String(providerName || ''),
+          providerPhone: String(providerPhone || ''),
+          serviceType: String(serviceType),
+          problem: problemShort,
+          acceptedAt: acceptedAtIso,
+          createdAt: createdAtIso,
         },
       });
       await notifyAdmins({
         title: 'Service Request Accepted',
-        body: `${providerName} accepted a ${serviceRequest.serviceType || 'service'} request`,
+        body: `${providerName} accepted a ${serviceType} request`,
         data: {
           type: 'service',
           status: 'accepted',
           serviceRequestId: String(serviceRequest._id),
+          acceptedAt: acceptedAtIso,
         },
       });
     } catch (_) {
@@ -279,7 +389,7 @@ exports.acceptServiceRequest = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: serializeRequest(serviceRequest),
+      data: serializeRequest(serviceRequest, req.user),
       message:
         t('serviceRequests.accepted', lang) ||
         'Service request accepted successfully',
@@ -399,7 +509,7 @@ exports.rejectServiceRequest = async (req, res, next) => {
 
       return res.json({
         success: true,
-        data: serializeRequest(serviceRequest),
+        data: serializeRequest(serviceRequest, req.user),
         dismissed: true,
         message: 'Request declined for this provider; still available to others',
       });
@@ -422,6 +532,7 @@ exports.rejectServiceRequest = async (req, res, next) => {
     serviceRequest.updatedAt = new Date();
 
     await saveServiceRequestFlexible(serviceRequest);
+    await onServiceRequestStatusChange(serviceRequest, 'rejected');
 
     const duration = Date.now() - startTime;
     logPerformance('rejectServiceRequest', duration);
@@ -459,7 +570,7 @@ exports.rejectServiceRequest = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: serializeRequest(serviceRequest),
+      data: serializeRequest(serviceRequest, req.user),
       message:
         t('serviceRequests.rejected', lang) ||
         'Service request rejected successfully',

@@ -6,6 +6,7 @@
 const JobCard = require('../../models/JobCard');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
 const {t} = require('../../utils/translations');
+const {redactJobCardForViewer} = require('../../utils/contactAccess');
 
 /**
  * Get customer's job cards
@@ -34,7 +35,7 @@ exports.getMyJobCards = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: jobCards,
+      data: jobCards.map((job) => redactJobCardForViewer(job, req.user)),
       count: jobCards.length,
     });
   } catch (error) {
@@ -65,7 +66,7 @@ exports.getMyJobCardById = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: jobCard,
+      data: redactJobCardForViewer(jobCard, req.user),
     });
   } catch (error) {
     next(error);
@@ -148,7 +149,7 @@ exports.cancelJobCard = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: updatedJobCard,
+      data: redactJobCardForViewer(updatedJobCard, req.user),
       message: t('jobCards.cancelledSuccessfully', lang),
     });
   } catch (error) {

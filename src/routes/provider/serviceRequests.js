@@ -13,6 +13,9 @@ const {
   acceptServiceRequest,
   rejectServiceRequest,
 } = require('../../controllers/provider/serviceRequestsController');
+const {
+  getCustomerContactForServiceRequest,
+} = require('../../controllers/contactController');
 
 /**
  * GET /api/provider/serviceRequests/pending
@@ -37,8 +40,19 @@ router.get(
 );
 
 /**
+ * GET /api/provider/serviceRequests/:serviceRequestId/customer-contact
+ * Authorized customer phone after accept
+ */
+router.get(
+  '/:serviceRequestId/customer-contact',
+  verifyAuth,
+  requireRole('provider'),
+  getCustomerContactForServiceRequest,
+);
+
+/**
  * GET /api/provider/serviceRequests/:serviceRequestId
- * Get service request by ID (provider can view any service request)
+ * Get service request by ID (assigned / pending open)
  */
 router.get(
   '/:serviceRequestId',

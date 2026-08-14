@@ -9,12 +9,14 @@ const {requireSuperAdmin} = require('../../middleware/requireSuperAdmin');
 const {requirePermission} = require('../../middleware/requirePermission');
 const {PERMISSIONS} = require('../../constants/permissions');
 const {logRequest} = require('../../middleware/logger');
+const {handleClientLogoUpload} = require('../../middleware/upload');
 const {
   listClients,
   createClient,
   updateClient,
   activateClient,
   deleteClient,
+  uploadClientLogo: uploadClientLogoHandler,
 } = require('../../controllers/shared/clientsController');
 
 const gate = [requireRole('admin'), requireSuperAdmin];
@@ -46,6 +48,14 @@ router.put(
   requirePermission(PERMISSIONS.CLIENTS_UPDATE),
   logRequest,
   activateClient,
+);
+router.post(
+  '/:clientId/logo',
+  ...gate,
+  requirePermission(PERMISSIONS.CLIENTS_UPDATE),
+  logRequest,
+  handleClientLogoUpload,
+  uploadClientLogoHandler,
 );
 router.delete(
   '/:clientId',

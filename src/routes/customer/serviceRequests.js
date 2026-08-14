@@ -15,7 +15,11 @@ const {
   updateServiceRequest,
   cancelServiceRequest,
   requestAreaProviders,
+  getActiveServiceRequestForType,
 } = require('../../controllers/customer/serviceRequestsController');
+const {
+  getProviderContactForServiceRequest,
+} = require('../../controllers/contactController');
 
 /**
  * GET /api/customer/serviceRequests
@@ -28,6 +32,18 @@ router.get(
   validatePagination,
   logRequest,
   getMyServiceRequests,
+);
+
+/**
+ * GET /api/customer/serviceRequests/active?serviceType=
+ * Active request for a service type (UX helper)
+ */
+router.get(
+  '/active',
+  detectLanguage,
+  verifyAuth,
+  logRequest,
+  getActiveServiceRequestForType,
 );
 
 /**
@@ -52,6 +68,19 @@ router.post(
   verifyAuth,
   logRequest,
   requestAreaProviders,
+);
+
+/**
+ * GET /api/customer/serviceRequests/:serviceRequestId/provider-contact
+ * Authorized provider phone after accept
+ */
+router.get(
+  '/:serviceRequestId/provider-contact',
+  detectLanguage,
+  verifyAuth,
+  validateObjectId,
+  logRequest,
+  getProviderContactForServiceRequest,
 );
 
 /**

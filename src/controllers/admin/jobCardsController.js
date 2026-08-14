@@ -7,6 +7,8 @@ const JobCard = require('../../models/JobCard');
 const Provider = require('../../models/Provider');
 const ServiceRequest = require('../../models/ServiceRequest');
 const {notifyUser} = require('../../utils/notify');
+const {notifyBooking} = require('../../realtime/socket');
+const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 
 function isUnassigned(job) {
   if ((job.status || '') === 'unassigned') return true;
@@ -37,6 +39,7 @@ function serviceRequestToJobShape(sr) {
     scheduledTime: sr.scheduledTime,
     createdAt: sr.createdAt,
     updatedAt: sr.updatedAt,
+    acceptedAt: sr.acceptedAt,
     source: 'serviceRequest',
     comments: [],
   };
@@ -154,7 +157,7 @@ exports.getAllJobCards = async (req, res, next) => {
     if (!includePendingRequests) {
       const [jobCards, jobTotal] = await Promise.all([
         JobCard.find(jobQuery)
-          .sort({createdAt: -1})
+          .sort(ADMIN_LIST_SORT)
           .limit(lim)
           .skip(off)
           .lean(),
@@ -171,7 +174,7 @@ exports.getAllJobCards = async (req, res, next) => {
     }
 
     const [jobCards] = await Promise.all([
-      JobCard.find(jobQuery).sort({createdAt: -1}).lean(),
+      JobCard.find(jobQuery).sort(ADMIN_LIST_SORT).lean(),
     ]);
 
     const srQuery = {status: 'pending'};
@@ -201,7 +204,7 @@ exports.getAllJobCards = async (req, res, next) => {
     );
 
     const pendingSrs = await ServiceRequest.find(srQuery)
-      .sort({createdAt: -1})
+      .sort(ADMIN_LIST_SORT)
       .limit(500)
       .lean();
 
@@ -213,9 +216,12 @@ exports.getAllJobCards = async (req, res, next) => {
       ...jobCards.map((j) => ({...j, source: 'jobCard'})),
       ...pendingAsJobs,
     ].sort((a, b) => {
-      const ta = new Date(a.createdAt || 0).getTime();
-      const tb = new Date(b.createdAt || 0).getTime();
-      return tb - ta;
+      const ua = new Date(a.updatedAt || a.createdAt || 0).getTime();
+      const ub = new Date(b.updatedAt || b.createdAt || 0).getTime();
+      if (ub !== ua) return ub - ua;
+      const ca = new Date(a.createdAt || 0).getTime();
+      const cb = new Date(b.createdAt || 0).getTime();
+      return cb - ca;
     });
 
     const total = merged.length;
@@ -266,17 +272,102 @@ exports.getJobCardById = async (req, res, next) => {
       });
     }
 
+    // Backfill PIN for in-progress jobs started without one (legacy Provider Web)
+    if (
+      jobCard.status === 'in-progress' &&
+      !(jobCard.taskPIN || '').trim()
+    ) {
+      jobCard.taskPIN = String(Math.floor(1000 + Math.random() * 9000));
+      jobCard.pinGeneratedAt = new Date();
+      jobCard.updatedAt = new Date();
+      await jobCard.save({validateBeforeSave: false});
+    }
+
+    const enriched = await enrichJobCardForAdmin(jobCard);
+
     res.json({
       success: true,
-      data: jobCard,
+      data: enriched,
     });
   } catch (error) {
     next(error);
   }
 };
 
+/** Fill missing admin detail fields from linked service request / provider. */
+async function enrichJobCardForAdmin(jobDoc) {
+  const obj = jobDoc.toObject ? jobDoc.toObject() : {...jobDoc};
+  const srKey = String(
+    obj.serviceRequestId || obj.bookingId || obj.consultationId || '',
+  ).trim();
+
+  if (srKey) {
+    try {
+      const sr = await ServiceRequest.findById(srKey).lean();
+      if (sr) {
+        if (!obj.problem && sr.problem) obj.problem = sr.problem;
+        if (!obj.scheduledTime && sr.scheduledTime) {
+          obj.scheduledTime = sr.scheduledTime;
+        }
+        if (!obj.acceptedAt && sr.acceptedAt) obj.acceptedAt = sr.acceptedAt;
+        if (!obj.customerName && sr.customerName) {
+          obj.customerName = sr.customerName;
+        }
+        if (!obj.customerPhone && sr.customerPhone) {
+          obj.customerPhone = sr.customerPhone;
+        }
+        if (
+          (!obj.customerAddress ||
+            (typeof obj.customerAddress === 'object' &&
+              !obj.customerAddress.address)) &&
+          sr.customerAddress
+        ) {
+          obj.customerAddress = sr.customerAddress;
+        }
+        if (!obj.serviceType && sr.serviceType) {
+          obj.serviceType = sr.serviceType;
+        }
+      }
+    } catch (_) {
+      // non-fatal
+    }
+  }
+
+  const providerId = String(obj.providerId || '').trim();
+  if (providerId && providerId !== 'unassigned' && providerId !== 'none') {
+    try {
+      const provider = await Provider.findById(providerId).lean();
+      if (provider) {
+        if (!obj.providerName) {
+          obj.providerName =
+            provider.businessName ||
+            provider.name ||
+            provider.displayName ||
+            '';
+        }
+        if (!obj.providerPhone) {
+          obj.providerPhone = provider.phone || provider.phoneNumber || '';
+        }
+        const hasProviderAddress =
+          obj.providerAddress &&
+          (typeof obj.providerAddress === 'string'
+            ? obj.providerAddress.trim()
+            : obj.providerAddress.address);
+        if (!hasProviderAddress) {
+          obj.providerAddress =
+            provider.address || provider.location || obj.providerAddress;
+        }
+      }
+    } catch (_) {
+      // non-fatal
+    }
+  }
+
+  return obj;
+}
+
 /**
- * Create a real job card from a pending service request (used when admin assigns).
+ * Create or update a job card from a pending service request (used when admin assigns).
  */
 async function ensureJobCardFromServiceRequest(srId, provider, nextStatus) {
   const sr = await ServiceRequest.findById(srId);
@@ -291,45 +382,72 @@ async function ensureJobCardFromServiceRequest(srId, provider, nextStatus) {
     throw err;
   }
 
-  const existing = await JobCard.findOne({
-    $or: [{_id: srId}, {bookingId: srId}],
-  });
-  if (existing) {
-    return existing;
-  }
-
   const providerName =
     provider.businessName ||
     provider.name ||
     provider.displayName ||
     'Provider';
   const providerPhone = provider.phone || provider.phoneNumber || '';
+  const providerId = provider._id.toString();
+  const status = nextStatus || 'accepted';
+  const now = new Date();
 
-  const jobCard = new JobCard({
-    _id: srId,
-    bookingId: srId,
-    customerId: sr.customerId,
-    customerName: sr.customerName,
-    customerPhone: sr.customerPhone,
-    customerAddress: sr.customerAddress,
-    providerId: provider._id.toString(),
-    providerName,
-    providerPhone,
-    providerAddress: provider.address || undefined,
-    serviceType: sr.serviceType,
-    problem: sr.problem || '',
-    status: nextStatus || 'accepted',
-    scheduledTime: sr.scheduledTime,
-    createdAt: sr.createdAt || new Date(),
-    updatedAt: new Date(),
+  let jobCard = await JobCard.findOne({
+    $or: [
+      {_id: srId},
+      {bookingId: srId},
+      {serviceRequestId: srId},
+    ],
   });
-  await jobCard.save({validateBeforeSave: false});
 
-  sr.status = nextStatus || 'accepted';
-  sr.providerId = provider._id.toString();
+  if (jobCard) {
+    jobCard.providerId = providerId;
+    jobCard.providerName = providerName;
+    jobCard.providerPhone = providerPhone;
+    if (provider.address) {
+      jobCard.providerAddress = provider.address;
+    }
+    jobCard.status = status;
+    jobCard.needsAdminAssignment = false;
+    if (status === 'accepted' && !jobCard.acceptedAt) {
+      jobCard.acceptedAt = sr.acceptedAt || now;
+    }
+    jobCard.updatedAt = now;
+    await jobCard.save({validateBeforeSave: false});
+  } else {
+    jobCard = new JobCard({
+      _id: srId,
+      bookingId: srId,
+      serviceRequestId: srId,
+      customerId: sr.customerId,
+      customerName: sr.customerName,
+      customerPhone: sr.customerPhone,
+      customerAddress: sr.customerAddress,
+      providerId,
+      providerName,
+      providerPhone,
+      providerAddress: provider.address || undefined,
+      serviceType: sr.serviceType,
+      problem: sr.problem || '',
+      status,
+      needsAdminAssignment: false,
+      acceptedAt: status === 'accepted' ? sr.acceptedAt || now : undefined,
+      scheduledTime: sr.scheduledTime,
+      createdAt: sr.createdAt || now,
+      updatedAt: now,
+    });
+    await jobCard.save({validateBeforeSave: false});
+  }
+
+  sr.status = status;
+  sr.providerId = providerId;
   sr.providerName = providerName;
   sr.providerPhone = providerPhone;
-  sr.updatedAt = new Date();
+  sr.needsAdminAssignment = false;
+  if (status === 'accepted' && !sr.acceptedAt) {
+    sr.acceptedAt = jobCard.acceptedAt || now;
+  }
+  sr.updatedAt = now;
   await sr.save({validateBeforeSave: false});
 
   return jobCard;
@@ -408,21 +526,103 @@ exports.assignProviderToJobCard = async (req, res, next) => {
         jobCard.providerAddress = provider.address;
       }
       jobCard.status = nextStatus;
-      jobCard.updatedAt = new Date();
+      jobCard.needsAdminAssignment = false;
+      const now = new Date();
+      if (nextStatus === 'accepted' && !jobCard.acceptedAt) {
+        jobCard.acceptedAt = now;
+      }
+      jobCard.updatedAt = now;
       await jobCard.save({validateBeforeSave: false});
+
+      const linkedSrId =
+        (jobCard.serviceRequestId || '').trim() ||
+        (jobCard.bookingId || '').trim();
+      if (linkedSrId) {
+        try {
+          const srPatch = {
+            providerId,
+            providerName,
+            providerPhone,
+            status: nextStatus,
+            needsAdminAssignment: false,
+            updatedAt: now,
+          };
+          await ServiceRequest.findByIdAndUpdate(linkedSrId, {$set: srPatch});
+          if (nextStatus === 'accepted') {
+            await ServiceRequest.updateOne(
+              {
+                _id: linkedSrId,
+                $or: [{acceptedAt: {$exists: false}}, {acceptedAt: null}],
+              },
+              {$set: {acceptedAt: jobCard.acceptedAt || now}},
+            );
+          }
+        } catch (_) {
+          // non-fatal — job card is source of truth for admin list
+        }
+      }
+
+      const acceptedAtIso = jobCard.acceptedAt
+        ? new Date(jobCard.acceptedAt).toISOString()
+        : '';
+      const createdAtIso = jobCard.createdAt
+        ? new Date(jobCard.createdAt).toISOString()
+        : '';
+      const serviceType = jobCard.serviceType || 'service';
+      const problemRaw = jobCard.problem ? String(jobCard.problem) : '';
+      const problemShort =
+        problemRaw.length > 100
+          ? `${problemRaw.substring(0, 100)}...`
+          : problemRaw;
+
+      const notifyBody = isChange
+        ? `Your ${serviceType} job is now with ${providerName}.${
+            providerPhone ? ` Phone: ${providerPhone}.` : ''
+          }`
+        : `${providerName} has been assigned to your ${serviceType} request.${
+            providerPhone ? ` Phone: ${providerPhone}.` : ''
+          }${problemShort ? ` Problem: ${problemShort}.` : ''}${
+            acceptedAtIso
+              ? ` Accepted: ${new Date(jobCard.acceptedAt).toLocaleString()}.`
+              : ''
+          }`;
 
       const notify = await notifyUser(jobCard.customerId, {
         title: isChange ? 'Provider updated' : 'Provider assigned',
-        body: isChange
-          ? `Your ${jobCard.serviceType || 'service'} job is now with ${providerName}.`
-          : `${providerName} has been assigned to your ${jobCard.serviceType || 'service'} request.`,
+        body: notifyBody,
         data: {
           type: isChange ? 'job_provider_changed' : 'job_assigned',
-          jobCardId: jobCard._id,
-          providerId,
+          jobCardId: String(jobCard._id),
+          providerId: String(providerId),
+          providerName: String(providerName || ''),
+          providerPhone: String(providerPhone || ''),
+          serviceType: String(serviceType),
+          problem: problemShort,
           status: nextStatus,
+          acceptedAt: acceptedAtIso,
+          createdAt: createdAtIso,
         },
       });
+
+      try {
+        await notifyBooking({
+          customerId: jobCard.customerId,
+          bookingData: {
+            type: 'service-request-status',
+            serviceRequestId: linkedSrId || String(jobCard._id),
+            status: nextStatus,
+            providerId,
+            providerName,
+            providerPhone,
+            serviceType,
+            problem: problemRaw,
+            acceptedAt: acceptedAtIso,
+            createdAt: createdAtIso,
+          },
+        });
+      } catch (_) {
+        // non-fatal
+      }
 
       return res.json({
         success: true,
@@ -447,17 +647,62 @@ exports.assignProviderToJobCard = async (req, res, next) => {
       provider.name ||
       provider.displayName ||
       'Provider';
+    const providerPhone = provider.phone || provider.phoneNumber || '';
+    const acceptedAtIso = jobCard.acceptedAt
+      ? new Date(jobCard.acceptedAt).toISOString()
+      : '';
+    const createdAtIso = jobCard.createdAt
+      ? new Date(jobCard.createdAt).toISOString()
+      : '';
+    const serviceType = jobCard.serviceType || 'service';
+    const problemRaw = jobCard.problem ? String(jobCard.problem) : '';
+    const problemShort =
+      problemRaw.length > 100
+        ? `${problemRaw.substring(0, 100)}...`
+        : problemRaw;
 
     const notify = await notifyUser(jobCard.customerId, {
       title: 'Provider assigned',
-      body: `${providerName} has been assigned to your ${jobCard.serviceType || 'service'} request.`,
+      body: `${providerName} has been assigned to your ${serviceType} request.${
+        providerPhone ? ` Phone: ${providerPhone}.` : ''
+      }${problemShort ? ` Problem: ${problemShort}.` : ''}${
+        acceptedAtIso
+          ? ` Accepted: ${new Date(jobCard.acceptedAt).toLocaleString()}.`
+          : ''
+      }`,
       data: {
         type: 'job_assigned',
-        jobCardId: jobCard._id,
-        providerId,
+        jobCardId: String(jobCard._id),
+        providerId: String(providerId),
+        providerName: String(providerName || ''),
+        providerPhone: String(providerPhone || ''),
+        serviceType: String(serviceType),
+        problem: problemShort,
         status: nextStatus,
+        acceptedAt: acceptedAtIso,
+        createdAt: createdAtIso,
       },
     });
+
+    try {
+      await notifyBooking({
+        customerId: jobCard.customerId,
+        bookingData: {
+          type: 'service-request-status',
+          serviceRequestId: String(srId || jobCard._id),
+          status: nextStatus,
+          providerId,
+          providerName,
+          providerPhone,
+          serviceType,
+          problem: problemRaw,
+          acceptedAt: acceptedAtIso,
+          createdAt: createdAtIso,
+        },
+      });
+    } catch (_) {
+      // non-fatal
+    }
 
     res.json({
       success: true,

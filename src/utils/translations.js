@@ -22,6 +22,10 @@ const translations = {
       serviceTypeRequired: 'Service type is required',
       created: 'Service request created successfully',
       updated: 'Service request updated successfully',
+      activeExists: 'You already have an active request for this service. Please wait for it to be completed or cancelled before creating another request.',
+      activeExistsPending: 'You already have an active request for this service waiting for a provider.',
+      activeExistsAccepted: 'You already have an accepted request for this service.',
+      activeExistsInProgress: 'Your service is currently in progress.',
     },
     common: {
       unauthorized: 'Unauthorized',
@@ -48,6 +52,10 @@ const translations = {
       serviceTypeRequired: 'सेवा प्रकार आवश्यक है',
       created: 'सेवा अनुरोध सफलतापूर्वक बनाया गया',
       updated: 'सेवा अनुरोध सफलतापूर्वक अपडेट किया गया',
+      activeExists: 'इस सेवा के लिए आपका एक अनुरोध पहले से सक्रिय है। नया अनुरोध करने से पहले कृपया मौजूदा अनुरोध पूरा या रद्द होने तक प्रतीक्षा करें।',
+      activeExistsPending: 'इस सेवा के लिए आपका एक अनुरोध पहले से सक्रिय है और प्रदाता की प्रतीक्षा कर रहा है।',
+      activeExistsAccepted: 'इस सेवा के लिए आपका एक स्वीकृत अनुरोध पहले से मौजूद है।',
+      activeExistsInProgress: 'आपकी सेवा का काम अभी चल रहा है।',
     },
     common: {
       unauthorized: 'अनधिकृत',

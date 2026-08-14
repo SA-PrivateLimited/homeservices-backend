@@ -31,6 +31,10 @@ const {
   setAdminStatus,
   updateAdminPermissions,
 } = require('../controllers/adminActivationController');
+const {handleProfileImageUpload} = require('../middleware/upload');
+const {
+  uploadCustomerProfileImage,
+} = require('../controllers/assetsController');
 
 /**
  * GET /api/users/me
@@ -41,6 +45,18 @@ router.get(
   verifyAuth,
   logRequest,
   getMe,
+);
+
+/**
+ * POST /api/users/me/profile-image
+ * Upload current user profile image → S3 + CloudFront
+ */
+router.post(
+  '/me/profile-image',
+  verifyAuth,
+  logRequest,
+  handleProfileImageUpload,
+  uploadCustomerProfileImage,
 );
 
 /**

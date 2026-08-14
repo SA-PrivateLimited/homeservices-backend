@@ -6,6 +6,8 @@
 const Provider = require('../../models/Provider');
 const User = require('../../models/User');
 const {connectDB} = require('../../config/database');
+const ADMIN_LIST_SORT = require('../../utils/adminListSort');
+const {toPublicProvider} = require('../../utils/contactAccess');
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -132,7 +134,7 @@ exports.getProviders = async (req, res, next) => {
     const off = Math.max(parseInt(offset, 10) || 0, 0);
 
     const providers = await Provider.find(query)
-      .select('+phoneNumber') // Ensure phoneNumber is included
+      .sort(ADMIN_LIST_SORT)
       .limit(lim)
       .skip(off)
       .lean();
@@ -165,6 +167,9 @@ exports.getProviders = async (req, res, next) => {
       } catch (e) {
         console.warn('Could not enrich providers with PIN status:', e.message);
       }
+    } else {
+      // Public / non-admin browse — never expose private contact fields
+      enriched = providers.map((p) => toPublicProvider(p));
     }
 
     res.json({
@@ -293,9 +298,18 @@ exports.getProviderById = async (req, res, next) => {
       }
     }
 
+    const isAdmin = req.user && req.user.role === 'admin';
+    const isSelfProvider =
+      req.user &&
+      req.user.role === 'provider' &&
+      String(req.user.uid) === String(providerId);
+
     res.json({
       success: true,
-      data: providerData,
+      data:
+        isAdmin || isSelfProvider
+          ? providerData
+          : toPublicProvider(providerData),
     });
   } catch (error) {
     next(error);
@@ -666,10 +680,18 @@ const ALLOWED_DOC_KEYS = ['idProof', 'addressProof', 'certificate'];
 
 /**
  * POST /api/providers/:providerId/documents/:docKey
- * Admin upload provider document (multipart field: file)
+ * Admin upload provider document (multipart field: file) → S3 + CloudFront
  */
 exports.uploadProviderDocument = async (req, res, next) => {
   try {
+    const s3 = require('../../services/s3.service');
+    const {validateDocumentBuffer} = require('../../utils/assetValidation');
+    const {
+      buildProviderDocumentKey,
+      keyFromUrlOrKey,
+      normalizeObjectKey,
+    } = require('../../utils/s3Keys');
+
     await connectDB();
     const {providerId, docKey} = req.params;
 
@@ -681,7 +703,7 @@ exports.uploadProviderDocument = async (req, res, next) => {
       });
     }
 
-    if (!req.file) {
+    if (!req.file?.buffer) {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
@@ -697,12 +719,30 @@ exports.uploadProviderDocument = async (req, res, next) => {
       });
     }
 
-    const url = `/uploads/provider_documents/${req.file.filename}`;
+    const validated = validateDocumentBuffer(
+      req.file.buffer,
+      req.file.mimetype,
+    );
+    const key = buildProviderDocumentKey(
+      providerId,
+      docKey,
+      validated.extension,
+    );
+    const uploaded = await s3.uploadFile({
+      body: req.file.buffer,
+      key,
+      contentType: validated.contentType,
+      userId: req.user?.uid,
+    });
+
+    const previousDocs = provider.documents?.toObject
+      ? provider.documents.toObject()
+      : provider.documents || {};
+    const previousUrl = previousDocs[docKey];
+
     const documents = {
-      ...(provider.documents?.toObject
-        ? provider.documents.toObject()
-        : provider.documents || {}),
-      [docKey]: url,
+      ...previousDocs,
+      [docKey]: uploaded.url,
       [`${docKey}Verified`]: false,
       [`${docKey}Rejected`]: false,
       [`${docKey}RejectionReason`]: '',
@@ -712,10 +752,23 @@ exports.uploadProviderDocument = async (req, res, next) => {
     provider.updatedAt = new Date();
     await provider.save();
 
+    if (previousUrl && previousUrl !== uploaded.url) {
+      try {
+        const oldKey = keyFromUrlOrKey(previousUrl);
+        normalizeObjectKey(oldKey);
+        await s3.deleteObject(oldKey, {userId: req.user?.uid});
+      } catch {
+        /* ignore legacy disk URLs */
+      }
+    }
+
     res.json({
       success: true,
       data: {
-        url,
+        url: uploaded.url,
+        key: uploaded.key,
+        contentType: uploaded.contentType,
+        size: uploaded.size,
         documents: provider.documents,
         provider,
       },

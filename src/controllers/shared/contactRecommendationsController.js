@@ -5,6 +5,7 @@
 
 const ContactRecommendation = require('../../models/ContactRecommendation');
 const User = require('../../models/User');
+const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 
 const POINTS_PER_RECOMMENDATION = 5;
 
@@ -144,7 +145,7 @@ exports.getAllContactRecommendations = async (req, res, next) => {
     }
 
     const recommendations = await ContactRecommendation.find(query)
-      .sort({createdAt: -1})
+      .sort(ADMIN_LIST_SORT)
       .limit(parseInt(limit))
       .skip(parseInt(offset))
       .lean();
@@ -208,8 +209,7 @@ exports.getMyContactRecommendations = async (req, res, next) => {
 
     const recommendations = await ContactRecommendation.find({
       recommendedBy: userId,
-    })
-      .sort({createdAt: -1});
+    }).sort(ADMIN_LIST_SORT);
 
     res.json({
       success: true,

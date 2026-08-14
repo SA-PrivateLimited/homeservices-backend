@@ -12,6 +12,7 @@ const {ensureGeographySeeded} = require('../../utils/geographySeed');
 const {syncPhoneFields} = require('../../utils/phone');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 
 const PASSWORD_SALT_ROUNDS = 10;
 
@@ -89,7 +90,7 @@ exports.listStates = async (req, res, next) => {
     await ensureGeographySeeded();
 
     const states = await State.find({isActive: {$ne: false}})
-      .sort({name: 1})
+      .sort(ADMIN_LIST_SORT)
       .lean();
 
     const providers = await Provider.find({
@@ -137,6 +138,8 @@ exports.listStates = async (req, res, next) => {
         providerCount: group.length,
         avgRating: avgRating(group),
         totalReviews: totalReviewsSum(group),
+        createdAt: state.createdAt,
+        updatedAt: state.updatedAt,
         jobStats,
       });
     }
@@ -181,7 +184,7 @@ exports.listDistrictsByState = async (req, res, next) => {
       stateId,
       isActive: {$ne: false},
     })
-      .sort({name: 1})
+      .sort(ADMIN_LIST_SORT)
       .lean();
 
     const providers = await Provider.find({
@@ -237,6 +240,8 @@ exports.listDistrictsByState = async (req, res, next) => {
         providerCount: group.length,
         avgRating: avgRating(group),
         totalReviews: totalReviewsSum(group),
+        createdAt: district.createdAt,
+        updatedAt: district.updatedAt,
         jobStats,
       });
     }
@@ -298,7 +303,7 @@ exports.listProvidersByDistrict = async (req, res, next) => {
         },
       ],
     })
-      .sort({name: 1})
+      .sort(ADMIN_LIST_SORT)
       .lean();
 
     const data = [];
@@ -313,6 +318,8 @@ exports.listProvidersByDistrict = async (req, res, next) => {
         rating: p.rating || 0,
         totalReviews: p.totalReviews || 0,
         location: p.location || {},
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
         jobStats,
       });
     }

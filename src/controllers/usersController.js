@@ -19,6 +19,7 @@ const {
   hasPermission,
 } = require('../constants/permissions');
 const {isSuperAdminElevated} = require('../middleware/requirePermission');
+const ADMIN_LIST_SORT = require('../utils/adminListSort');
 
 const PASSWORD_SALT_ROUNDS = 12;
 const MIN_PASSWORD_LENGTH = 8;
@@ -701,7 +702,7 @@ exports.getAllUsers = async (req, res, next) => {
     const [users, total] = await Promise.all([
       User.find(query)
         .select('+encryptedPin +pinHash')
-        .sort({createdAt: -1})
+        .sort(ADMIN_LIST_SORT)
         .limit(lim)
         .skip(off)
         .lean(),

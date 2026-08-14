@@ -3,6 +3,7 @@
  */
 
 const AreaProviderDemand = require('../../models/AreaProviderDemand');
+const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 
 exports.listAreaProviderDemands = async (req, res, next) => {
   try {
@@ -14,7 +15,7 @@ exports.listAreaProviderDemands = async (req, res, next) => {
 
     const [rows, total] = await Promise.all([
       AreaProviderDemand.find(query)
-        .sort({createdAt: -1})
+        .sort(ADMIN_LIST_SORT)
         .limit(Math.min(parseInt(limit, 10) || 50, 200))
         .skip(parseInt(offset, 10) || 0)
         .lean(),

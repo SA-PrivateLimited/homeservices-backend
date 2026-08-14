@@ -1,12 +1,21 @@
 /**
- * Multer setup for provider document uploads (admin).
+ * Multer upload middleware — memory storage for S3 uploads.
+ * Disk paths kept only for legacy local static serving of old files.
  */
+
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const {
+  ALLOWED_IMAGE_MIMES,
+  ALLOWED_DOCUMENT_MIMES,
+  getMaxImageBytes,
+  getMaxDocumentBytes,
+} = require('../utils/assetValidation');
 
 const UPLOAD_ROOT = path.join(__dirname, '../../uploads');
 const DOC_DIR = path.join(UPLOAD_ROOT, 'provider_documents');
+const LOGO_DIR = path.join(UPLOAD_ROOT, 'client_logos');
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
@@ -14,42 +23,62 @@ function ensureDir(dir) {
   }
 }
 
+// Keep dirs for any legacy disk files still referenced in DB
 ensureDir(DOC_DIR);
+ensureDir(LOGO_DIR);
 
-const storage = multer.diskStorage({
-  destination(_req, _file, cb) {
-    ensureDir(DOC_DIR);
-    cb(null, DOC_DIR);
-  },
-  filename(req, file, cb) {
-    const docKey = (req.params.docKey || 'doc').replace(/[^a-zA-Z0-9_-]/g, '');
-    const providerId = (req.params.providerId || 'unknown').replace(
-      /[^a-zA-Z0-9_-]/g,
-      '',
-    );
-    const ext = path.extname(file.originalname || '').toLowerCase() || '.bin';
-    const safeExt = ['.jpg', '.jpeg', '.png', '.webp', '.pdf', '.gif'].includes(
-      ext,
-    )
-      ? ext
-      : '.bin';
-    cb(
-      null,
-      `${providerId}_${docKey}_${Date.now()}_${Math.random()
-        .toString(36)
-        .slice(2, 8)}${safeExt}`,
-    );
-  },
-});
+const memoryStorage = multer.memoryStorage();
+
+function multerErrorHandler(upload) {
+  return (req, res, next) => {
+    upload(req, res, (err) => {
+      if (err) {
+        const message =
+          err.code === 'LIMIT_FILE_SIZE'
+            ? 'File exceeds maximum allowed size'
+            : err.message || 'Upload failed';
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message,
+        });
+      }
+      next();
+    });
+  };
+}
 
 const uploadProviderDocument = multer({
-  storage,
-  limits: {fileSize: 8 * 1024 * 1024},
+  storage: memoryStorage,
+  limits: {fileSize: getMaxDocumentBytes()},
   fileFilter(_req, file, cb) {
-    const ok =
-      /^image\//.test(file.mimetype) || file.mimetype === 'application/pdf';
-    if (!ok) {
+    const mime = file.mimetype === 'image/jpg' ? 'image/jpeg' : file.mimetype;
+    if (!ALLOWED_DOCUMENT_MIMES.has(mime)) {
       return cb(new Error('Only images and PDF files are allowed'));
+    }
+    cb(null, true);
+  },
+}).single('file');
+
+const uploadClientLogo = multer({
+  storage: memoryStorage,
+  limits: {fileSize: getMaxImageBytes()},
+  fileFilter(_req, file, cb) {
+    const mime = file.mimetype === 'image/jpg' ? 'image/jpeg' : file.mimetype;
+    if (!ALLOWED_IMAGE_MIMES.has(mime)) {
+      return cb(new Error('Only JPEG, PNG, WebP, or SVG images are allowed'));
+    }
+    cb(null, true);
+  },
+}).single('file');
+
+const uploadProfileImage = multer({
+  storage: memoryStorage,
+  limits: {fileSize: getMaxImageBytes()},
+  fileFilter(_req, file, cb) {
+    const mime = file.mimetype === 'image/jpg' ? 'image/jpeg' : file.mimetype;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(mime)) {
+      return cb(new Error('Only JPEG, PNG, or WebP images are allowed'));
     }
     cb(null, true);
   },
@@ -57,6 +86,12 @@ const uploadProviderDocument = multer({
 
 module.exports = {
   uploadProviderDocument,
+  uploadClientLogo,
+  uploadProfileImage,
+  handleProviderDocumentUpload: multerErrorHandler(uploadProviderDocument),
+  handleClientLogoUpload: multerErrorHandler(uploadClientLogo),
+  handleProfileImageUpload: multerErrorHandler(uploadProfileImage),
   UPLOAD_ROOT,
   DOC_DIR,
+  LOGO_DIR,
 };

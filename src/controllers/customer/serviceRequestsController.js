@@ -13,6 +13,20 @@ const mongoose = require('mongoose');
 const {notifyBooking, notifyAdminsRealtime} = require('../../realtime/socket');
 const {findProvidersInArea} = require('../../utils/findProvidersInArea');
 const {notifyAdmins, notifyProvider} = require('../../utils/notify');
+const {
+  findActiveServiceRequest,
+  acquireActiveRequestLock,
+  bindLockToRequest,
+  releaseActiveRequestLock,
+  onServiceRequestStatusChange,
+  activeRequestConflictPayload,
+  normalizeServiceTypeKey,
+} = require('../../services/activeServiceRequestService');
+const {
+  redactServiceRequestForViewer,
+  sanitizeBookingNotifyPayload,
+} = require('../../utils/contactAccess');
+const {normalizePhotoReferences} = require('../../utils/normalizeAssetPhotos');
 
 function newObjectIdString() {
   return new (require('mongodb').ObjectId)().toString();
@@ -45,7 +59,9 @@ exports.getMyServiceRequests = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: serviceRequests,
+      data: serviceRequests.map((doc) =>
+        redactServiceRequestForViewer(doc, req.user),
+      ),
       count: serviceRequests.length,
     });
   } catch (error) {
@@ -93,7 +109,7 @@ exports.getMyServiceRequestById = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: serviceRequest,
+      data: redactServiceRequestForViewer(serviceRequest, req.user),
     });
   } catch (error) {
     console.error(`❌ [getMyServiceRequestById] Failed for user ${req.user.uid}:`, error.message);
@@ -127,6 +143,26 @@ exports.createServiceRequest = async (req, res, next) => {
         error: t('serviceRequests.serviceTypeRequired', lang),
         message: t('serviceRequests.serviceTypeRequired', lang),
       });
+    }
+
+    const serviceTypeKey = normalizeServiceTypeKey(serviceType);
+    if (!serviceTypeKey) {
+      return res.status(400).json({
+        success: false,
+        error: t('serviceRequests.serviceTypeRequired', lang),
+        message: t('serviceRequests.serviceTypeRequired', lang),
+      });
+    }
+
+    // Race-safe: claim active slot before create (one active request per service type)
+    const lockResult = await acquireActiveRequestLock({
+      customerId: userId,
+      serviceType,
+    });
+    if (!lockResult.ok) {
+      return res.status(409).json(
+        activeRequestConflictPayload(lockResult.existing, lang, t),
+      );
     }
 
     // Generate ID if not provided (Firestore-style 20 character alphanumeric)
@@ -172,15 +208,33 @@ exports.createServiceRequest = async (req, res, next) => {
       providerAddress: _ignoreProviderAddress,
       providerEmail: _ignoreProviderEmail,
       requestAdminHelp: _ignoreRequestAdminHelp,
+      photos: _ignorePhotos,
       ...bodyWithoutProvider
     } = req.body;
 
     const requestAdminHelp = req.body.requestAdminHelp === true;
+
+    let normalizedPhotos;
+    try {
+      normalizedPhotos = normalizePhotoReferences(req.body.photos, req.user);
+    } catch (photoErr) {
+      if (photoErr.statusCode) {
+        return res.status(photoErr.statusCode).json({
+          success: false,
+          error: photoErr.name || 'Bad Request',
+          message: photoErr.message,
+        });
+      }
+      throw photoErr;
+    }
+
     const serviceRequestData = {
       ...bodyWithoutProvider,
       _id: generatedId,
       consultationId: generatedId, // For backward compatibility - allows lookup by either _id or consultationId
       customerId: userId,
+      serviceType,
+      serviceTypeKey,
       status: 'pending',
       needsAdminAssignment: requestAdminHelp,
       noProvidersInArea: requestAdminHelp,
@@ -188,15 +242,18 @@ exports.createServiceRequest = async (req, res, next) => {
       updatedAt: new Date(),
     };
 
+    if (normalizedPhotos && normalizedPhotos.length) {
+      serviceRequestData.photos = normalizedPhotos;
+    } else {
+      delete serviceRequestData.photos;
+    }
+
     if (targetedProvider) {
-      // Specific-provider flow: reserve for this provider until they accept/reject
+      // Specific-provider flow: reserve for this provider until they accept/reject.
+      // Do NOT set providerPhone here — revealed only after accept.
       serviceRequestData.providerId = targetedProvider._id.toString();
       serviceRequestData.providerName =
         req.body.providerName || targetedProvider.name || '';
-      if (req.body.providerPhone || targetedProvider.phone) {
-        serviceRequestData.providerPhone =
-          req.body.providerPhone || targetedProvider.phone;
-      }
       serviceRequestData.providerSpecialization =
         req.body.providerSpecialization ||
         targetedProvider.specialization ||
@@ -218,7 +275,19 @@ exports.createServiceRequest = async (req, res, next) => {
     });
 
     const serviceRequest = new ServiceRequest(serviceRequestData);
-    await serviceRequest.save();
+    try {
+      await serviceRequest.save();
+      await bindLockToRequest(userId, serviceType, serviceRequest._id);
+    } catch (saveErr) {
+      await releaseActiveRequestLock(userId, serviceType);
+      if (saveErr && (saveErr.code === 11000 || saveErr.code === 'E11000')) {
+        const existing = await findActiveServiceRequest(userId, serviceType);
+        return res.status(409).json(
+          activeRequestConflictPayload(existing, lang, t),
+        );
+      }
+      throw saveErr;
+    }
 
     const duration = Date.now() - startTime;
     logPerformance('createServiceRequest', duration);
@@ -302,29 +371,32 @@ exports.createServiceRequest = async (req, res, next) => {
         }
       }
 
-      const bookingData = {
-        id: serviceRequest._id.toString(),
-        serviceRequestId: serviceRequest._id.toString(),
-        consultationId: serviceRequest._id.toString(),
-        customerId: userId,
-        customerName: serviceRequest.customerName || req.body.customerName || 'Customer',
-        customerPhone: serviceRequest.customerPhone || req.body.customerPhone || '',
-        serviceType: serviceType,
-        problem: serviceRequest.problem || req.body.problem || '',
-        address: customerAddress.address,
-        pincode: customerAddress.pincode,
-        district: customerAddress.district || customerAddress.city || '',
-        districtId: customerAddress.districtId || '',
-        state: customerAddress.state || '',
-        stateId: customerAddress.stateId || '',
-        status: 'pending',
-        createdAt: serviceRequest.createdAt,
-        providerId: targetedProvider ? targetedProvider._id.toString() : undefined,
-        isTargeted: !!targetedProvider,
-        matchBy,
-        needsAdminAssignment: needsAdmin,
-        jobCardId: adminJobCardId || undefined,
-      };
+      const bookingData = sanitizeBookingNotifyPayload(
+        {
+          id: serviceRequest._id.toString(),
+          serviceRequestId: serviceRequest._id.toString(),
+          consultationId: serviceRequest._id.toString(),
+          customerId: userId,
+          customerName: serviceRequest.customerName || req.body.customerName || 'Customer',
+          customerPhone: serviceRequest.customerPhone || req.body.customerPhone || '',
+          serviceType: serviceType,
+          problem: serviceRequest.problem || req.body.problem || '',
+          address: customerAddress.address,
+          pincode: customerAddress.pincode,
+          district: customerAddress.district || customerAddress.city || '',
+          districtId: customerAddress.districtId || '',
+          state: customerAddress.state || '',
+          stateId: customerAddress.stateId || '',
+          status: 'pending',
+          createdAt: serviceRequest.createdAt,
+          providerId: targetedProvider ? targetedProvider._id.toString() : undefined,
+          isTargeted: !!targetedProvider,
+          matchBy,
+          needsAdminAssignment: needsAdmin,
+          jobCardId: adminJobCardId || undefined,
+        },
+        {includeCustomerPhone: false},
+      );
 
       const emitPromises = providersToNotify.map(async (provider) => {
         const providerId = provider._id.toString();
@@ -373,25 +445,28 @@ exports.createServiceRequest = async (req, res, next) => {
         console.warn('⚠️ [Notify] Some provider notifications failed:', err.message);
       });
 
-      // Admin realtime + FCM
-      const adminPayload = {
-        serviceRequestId: bookingData.serviceRequestId,
-        jobCardId: adminJobCardId || undefined,
-        customerId: userId,
-        customerName: bookingData.customerName,
-        customerPhone: bookingData.customerPhone,
-        serviceType,
-        address: customerAddress.address,
-        pincode: customerAddress.pincode,
-        district: bookingData.district,
-        status: needsAdmin ? 'unassigned' : 'pending',
-        isTargeted: !!targetedProvider,
-        providerId: bookingData.providerId,
-        providersNotified: providersToNotify.length,
-        matchBy,
-        needsAdminAssignment: needsAdmin,
-        createdAt: serviceRequest.createdAt,
-      };
+      // Admin realtime + FCM — strip phones from broadcast; admin APIs keep DB phones
+      const adminPayload = sanitizeBookingNotifyPayload(
+        {
+          serviceRequestId: bookingData.serviceRequestId,
+          jobCardId: adminJobCardId || undefined,
+          customerId: userId,
+          customerName: bookingData.customerName,
+          customerPhone: serviceRequest.customerPhone || req.body.customerPhone || '',
+          serviceType,
+          address: customerAddress.address,
+          pincode: customerAddress.pincode,
+          district: bookingData.district,
+          status: needsAdmin ? 'unassigned' : 'pending',
+          isTargeted: !!targetedProvider,
+          providerId: bookingData.providerId,
+          providersNotified: providersToNotify.length,
+          matchBy,
+          needsAdminAssignment: needsAdmin,
+          createdAt: serviceRequest.createdAt,
+        },
+        {includeCustomerPhone: false},
+      );
 
       try {
         const adminSocket = await notifyAdminsRealtime(adminPayload);
@@ -437,7 +512,7 @@ exports.createServiceRequest = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      data: serviceRequest.toObject(),
+      data: redactServiceRequestForViewer(serviceRequest.toObject(), req.user),
       message: t('serviceRequests.created', lang),
     });
   } catch (error) {
@@ -567,10 +642,11 @@ exports.cancelServiceRequest = async (req, res, next) => {
     serviceRequest.updatedAt = new Date();
 
     await serviceRequest.save();
+    await onServiceRequestStatusChange(serviceRequest, 'cancelled');
 
     res.json({
       success: true,
-      data: serviceRequest.toObject(),
+      data: redactServiceRequestForViewer(serviceRequest.toObject(), req.user),
       message: t('serviceRequests.cancelled', lang),
     });
   } catch (error) {
@@ -723,6 +799,41 @@ exports.requestAreaProviders = async (req, res, next) => {
       `❌ [requestAreaProviders] Failed for user ${req.user?.uid}:`,
       error.message,
     );
+    next(error);
+  }
+};
+
+
+/**
+ * GET /api/customer/serviceRequests/active?serviceType=
+ * Returns the customer's active request for a service type (UX helper).
+ */
+exports.getActiveServiceRequestForType = async (req, res, next) => {
+  try {
+    const serviceType = String(req.query.serviceType || req.query.service || '').trim();
+    if (!serviceType) {
+      return res.status(400).json({
+        success: false,
+        error: 'serviceType is required',
+        message: 'serviceType is required',
+      });
+    }
+    const existing = await findActiveServiceRequest(req.user.uid, serviceType);
+    if (!existing) {
+      return res.json({success: true, data: null});
+    }
+    return res.json({
+      success: true,
+      data: {
+        serviceRequestId: String(existing._id),
+        serviceType: existing.serviceType,
+        status: existing.status,
+        providerId: existing.providerId || null,
+        providerName: existing.providerName || null,
+        createdAt: existing.createdAt || null,
+      },
+    });
+  } catch (error) {
     next(error);
   }
 };

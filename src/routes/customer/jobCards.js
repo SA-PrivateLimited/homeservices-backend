@@ -15,6 +15,9 @@ const {
   cancelJobCard,
   addCommentToJobCard,
 } = require('../../controllers/customer/jobCardsController');
+const {
+  getProviderContactForJobCard,
+} = require('../../controllers/contactController');
 
 /**
  * GET /api/customer/jobCards
@@ -27,6 +30,20 @@ router.get(
   validatePagination,
   logRequest,
   getMyJobCards,
+);
+
+/**
+ * GET /api/customer/jobCards/:jobCardId/provider-contact
+ * Authorized provider phone after accept
+ */
+router.get(
+  '/:jobCardId/provider-contact',
+  detectLanguage,
+  verifyAuth,
+  validateObjectId,
+  checkJobCardCustomer,
+  logRequest,
+  getProviderContactForJobCard,
 );
 
 /**

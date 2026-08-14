@@ -4,6 +4,21 @@
  */
 
 const JobCard = require('../../models/JobCard');
+const ServiceRequest = require('../../models/ServiceRequest');
+const {onServiceRequestStatusChange} = require('../../services/activeServiceRequestService');
+const {redactJobCardForViewer} = require('../../utils/contactAccess');
+
+/** Providers must not see the customer verification PIN; phones follow contact rules. */
+function sanitizeJobCardForProvider(job, viewer) {
+  if (!job) return job;
+  const obj = job.toObject ? job.toObject() : {...job};
+  const hasPin = Boolean(obj.taskPIN);
+  delete obj.taskPIN;
+  return redactJobCardForViewer(
+    {...obj, hasVerificationPin: hasPin},
+    viewer,
+  );
+}
 
 /**
  * Get provider's job cards
@@ -25,7 +40,7 @@ exports.getMyJobCards = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: jobCards,
+      data: jobCards.map((job) => sanitizeJobCardForProvider(job, req.user)),
       count: jobCards.length,
     });
   } catch (error) {
@@ -53,7 +68,7 @@ exports.getMyJobCardById = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: jobCard,
+      data: sanitizeJobCardForProvider(jobCard, req.user),
     });
   } catch (error) {
     next(error);
@@ -102,7 +117,7 @@ exports.createJobCard = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      data: jobCard,
+      data: sanitizeJobCardForProvider(jobCard, req.user),
       message: 'Job card created successfully',
     });
   } catch (error) {
@@ -172,12 +187,49 @@ exports.updateJobCardStatus = async (req, res, next) => {
     };
 
     if (status) update.status = status;
-    if (taskPIN) {
+
+    if (status === 'in-progress') {
+      // Always server-generate the PIN — never trust / reveal it to the provider client
+      const existingPin = (jobCard.taskPIN || '').trim();
+      if (!existingPin) {
+        update.taskPIN = String(Math.floor(1000 + Math.random() * 9000));
+        update.pinGeneratedAt = new Date();
+      }
+    } else if (taskPIN && status !== 'completed' && status !== 'in-progress') {
       update.taskPIN = taskPIN;
       update.pinGeneratedAt = pinGeneratedAt
         ? new Date(pinGeneratedAt)
         : new Date();
     }
+
+    if (status === 'completed') {
+      const verificationPIN = String(
+        req.body.verificationPIN || req.body.taskPIN || '',
+      ).trim();
+      const expectedPin = String(jobCard.taskPIN || update.taskPIN || '').trim();
+      if (!verificationPIN || !/^\d{4}$/.test(verificationPIN)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: 'Enter the 4-digit PIN from the customer',
+        });
+      }
+      if (!expectedPin) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: 'No verification PIN on this job. Ask the customer to refresh their app.',
+        });
+      }
+      if (verificationPIN !== expectedPin) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: 'Verification PIN does not match',
+        });
+      }
+    }
+
     if (cancellationReason) {
       update.cancellationReason = cancellationReason;
       update.cancelledAt = new Date();
@@ -224,8 +276,8 @@ exports.updateJobCardStatus = async (req, res, next) => {
     if (status === 'in-progress' && updatedJobCard?.customerId) {
       try {
         const {notifyUser} = require('../../utils/notify');
-        const pinText = update.taskPIN
-          ? ` Your verification PIN is: ${update.taskPIN}.`
+        const pinText = (update.taskPIN || updatedJobCard.taskPIN)
+          ? ` Your verification PIN is: ${update.taskPIN || updatedJobCard.taskPIN}.`
           : '';
         await notifyUser(updatedJobCard.customerId, {
           title: 'Service Started',
@@ -234,7 +286,7 @@ exports.updateJobCardStatus = async (req, res, next) => {
             type: 'service',
             status: 'in-progress',
             jobCardId: String(jobCardId),
-            pin: update.taskPIN || '',
+            pin: String(update.taskPIN || updatedJobCard.taskPIN || ''),
           },
         });
       } catch (notifyErr) {
@@ -242,9 +294,43 @@ exports.updateJobCardStatus = async (req, res, next) => {
       }
     }
 
+    // Mirror terminal/active status onto linked service request + free active lock when done
+    if (status === 'completed' || status === 'cancelled' || status === 'canceled') {
+      try {
+        const srKey = String(
+          updatedJobCard.serviceRequestId ||
+            updatedJobCard.bookingId ||
+            updatedJobCard._id ||
+            '',
+        );
+        if (srKey) {
+          const sr = await ServiceRequest.findOne({
+            $or: [{_id: srKey}, {consultationId: srKey}],
+          });
+          if (sr && String(sr.customerId) === String(updatedJobCard.customerId)) {
+            const next =
+              status === 'completed' ? 'completed' : 'cancelled';
+            sr.status = next;
+            sr.updatedAt = new Date();
+            if (next === 'completed') {
+              // status only — ServiceRequest schema has no completedAt field
+            }
+            if (next === 'cancelled') {
+              sr.cancelledAt = new Date();
+              if (cancellationReason) sr.cancellationReason = cancellationReason;
+            }
+            await sr.save();
+            await onServiceRequestStatusChange(sr, next);
+          }
+        }
+      } catch (mirrorErr) {
+        console.warn('⚠️  Could not mirror job status to service request:', mirrorErr.message);
+      }
+    }
+
     res.json({
       success: true,
-      data: updatedJobCard,
+      data: sanitizeJobCardForProvider(updatedJobCard, req.user),
       message: 'Job card updated successfully',
     });
   } catch (error) {

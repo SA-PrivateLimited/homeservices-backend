@@ -103,6 +103,11 @@ const jobCardSchema = new mongoose.Schema({
   completedAt: Date,
   cancellationReason: String,
   cancelledAt: Date,
+  /** When provider accepted / was assigned */
+  acceptedAt: {
+    type: Date,
+    index: true,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

@@ -1,5 +1,5 @@
 /**
- * White-label Client — name + themeColors palette.
+ * White-label Client — name, product names, logo, themeColors palette.
  */
 
 const mongoose = require('mongoose');
@@ -41,6 +41,24 @@ const clientSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+    },
+    /** Product name shown in Customer Web / Customer RN */
+    customerProductName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    /** Product name shown in Provider Web / Provider RN */
+    providerProductName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    /** Absolute URL or /uploads/... path for product logo */
+    logoUrl: {
+      type: String,
+      trim: true,
+      default: '',
     },
     themeColors: {
       type: themeColorsSchema,

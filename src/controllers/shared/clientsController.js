@@ -11,6 +11,7 @@ const {
   validateThemeColors,
   normalizeThemeColors,
 } = require('../../utils/defaultThemeColors');
+const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 
 function slugifyId(raw) {
   return String(raw || '')
@@ -21,8 +22,24 @@ function slugifyId(raw) {
     .slice(0, 64);
 }
 
+function brandingPayload(activeClientId, client) {
+  const customerProductName =
+    (client.customerProductName || '').trim() || client.name || 'Home Services';
+  const providerProductName =
+    (client.providerProductName || '').trim() ||
+    `${client.name || 'Home Services'} Provider`;
+  return {
+    clientId: activeClientId,
+    clientName: client.name,
+    customerProductName,
+    providerProductName,
+    logoUrl: (client.logoUrl || '').trim(),
+    themeColors: client.themeColors,
+  };
+}
+
 /**
- * GET /api/branding — public, active client's themeColors
+ * GET /api/branding — public, active client's theme + product branding
  */
 exports.getBranding = async (req, res, next) => {
   try {
@@ -33,6 +50,9 @@ exports.getBranding = async (req, res, next) => {
         data: {
           clientId: DEFAULT_ACTIVE_CLIENT_ID,
           clientName: 'Home Services',
+          customerProductName: 'Home Services',
+          providerProductName: 'Home Services Provider',
+          logoUrl: '',
           themeColors: HOMESERVICES,
         },
       });
@@ -40,11 +60,7 @@ exports.getBranding = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: {
-        clientId: activeClientId,
-        clientName: client.name,
-        themeColors: client.themeColors,
-      },
+      data: brandingPayload(activeClientId, client),
     });
   } catch (error) {
     next(error);
@@ -60,7 +76,7 @@ exports.listClients = async (req, res, next) => {
     const config = await SystemConfig.findById('global').lean();
     const activeClientId =
       config?.activeClientId || DEFAULT_ACTIVE_CLIENT_ID;
-    const clients = await Client.find().sort({name: 1}).lean();
+    const clients = await Client.find().sort(ADMIN_LIST_SORT).lean();
 
     res.json({
       success: true,
@@ -81,7 +97,13 @@ exports.listClients = async (req, res, next) => {
 exports.createClient = async (req, res, next) => {
   try {
     await ensureClientsSeeded();
-    const {name, themeColors} = req.body;
+    const {
+      name,
+      themeColors,
+      customerProductName,
+      providerProductName,
+      logoUrl,
+    } = req.body;
     let {_id} = req.body;
 
     if (!name || !String(name).trim()) {
@@ -128,6 +150,9 @@ exports.createClient = async (req, res, next) => {
     const client = new Client({
       _id,
       name: String(name).trim(),
+      customerProductName: String(customerProductName || '').trim(),
+      providerProductName: String(providerProductName || '').trim(),
+      logoUrl: String(logoUrl || '').trim(),
       themeColors: normalizeThemeColors(themeColors),
       createdAt: now,
       updatedAt: now,
@@ -150,7 +175,13 @@ exports.createClient = async (req, res, next) => {
 exports.updateClient = async (req, res, next) => {
   try {
     const {clientId} = req.params;
-    const {name, themeColors} = req.body;
+    const {
+      name,
+      themeColors,
+      customerProductName,
+      providerProductName,
+      logoUrl,
+    } = req.body;
 
     const client = await Client.findById(clientId);
     if (!client) {
@@ -170,6 +201,16 @@ exports.updateClient = async (req, res, next) => {
         });
       }
       client.name = String(name).trim();
+    }
+
+    if (customerProductName !== undefined) {
+      client.customerProductName = String(customerProductName || '').trim();
+    }
+    if (providerProductName !== undefined) {
+      client.providerProductName = String(providerProductName || '').trim();
+    }
+    if (logoUrl !== undefined) {
+      client.logoUrl = String(logoUrl || '').trim();
     }
 
     if (themeColors !== undefined) {
@@ -223,13 +264,78 @@ exports.activateClient = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: {
-        activeClientId: clientId,
-        clientId: client._id,
-        clientName: client.name,
-        themeColors: client.themeColors,
-      },
+      data: brandingPayload(clientId, client),
       message: `Client "${client.name}" is now active`,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/admin/clients/:clientId/logo — multipart field `file` → S3 + CloudFront
+ */
+exports.uploadClientLogo = async (req, res, next) => {
+  try {
+    const s3 = require('../../services/s3.service');
+    const {validateImageBuffer} = require('../../utils/assetValidation');
+    const {
+      buildClientLogoKey,
+      keyFromUrlOrKey,
+      normalizeObjectKey,
+    } = require('../../utils/s3Keys');
+
+    const {clientId} = req.params;
+    const client = await Client.findById(clientId);
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not Found',
+        message: 'Client not found',
+      });
+    }
+    if (!req.file?.buffer) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'Logo file is required (field: file)',
+      });
+    }
+
+    const validated = validateImageBuffer(req.file.buffer, req.file.mimetype);
+    const key = buildClientLogoKey(clientId, validated.extension);
+    const uploaded = await s3.uploadFile({
+      body: req.file.buffer,
+      key,
+      contentType: validated.contentType,
+      userId: req.user?.uid,
+    });
+
+    const previous = client.logoUrl;
+    client.logoUrl = uploaded.url;
+    client.updatedAt = new Date();
+    await client.save();
+
+    if (previous && previous !== uploaded.url) {
+      try {
+        const oldKey = keyFromUrlOrKey(previous);
+        normalizeObjectKey(oldKey);
+        await s3.deleteObject(oldKey, {userId: req.user?.uid});
+      } catch {
+        /* ignore legacy disk URLs */
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        logoUrl: uploaded.url,
+        key: uploaded.key,
+        contentType: uploaded.contentType,
+        size: uploaded.size,
+        client,
+      },
+      message: 'Logo uploaded successfully',
     });
   } catch (error) {
     next(error);

@@ -97,6 +97,7 @@ app.use('/api/serviceCategories', serviceCategoriesRoutes);
 app.use('/api/contactRecommendations', contactRecommendationsRoutes);
 app.use('/api/branding', brandingRoutes);
 app.use('/api/geography', require('./routes/shared/geography'));
+app.use('/api/assets', require('./routes/assets').router);
 
 // Customer app routes
 app.use('/api/customer/jobCards', customerJobCardsRoutes);

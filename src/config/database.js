@@ -6,7 +6,22 @@
  * use this backend API only; they must never connect to MongoDB directly.
  */
 
+const dns = require('dns');
 const mongoose = require('mongoose');
+
+/**
+ * `mongodb+srv` needs DNS SRV lookups. Some local resolvers (esp. on macOS /
+ * flaky ISP DNS) return ECONNREFUSED for querySrv and Atlas then looks like
+ * ReplicaSetNoPrimary / whitelist failures. Prefer public DNS + IPv4 first.
+ */
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
+  if (typeof dns.setDefaultResultOrder === 'function') {
+    dns.setDefaultResultOrder('ipv4first');
+  }
+} catch {
+  // ignore — environment may not allow overriding resolvers
+}
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'home-services';
@@ -16,8 +31,8 @@ if (!MONGODB_URI) {
 }
 
 // Build full connection string with database name
-const fullUri = MONGODB_URI.endsWith('/') 
-  ? `${MONGODB_URI}${MONGODB_DB_NAME}` 
+const fullUri = MONGODB_URI.endsWith('/')
+  ? `${MONGODB_URI}${MONGODB_DB_NAME}`
   : `${MONGODB_URI}/${MONGODB_DB_NAME}`;
 
 /**
@@ -32,15 +47,31 @@ async function connectDB() {
 
     await mongoose.connect(fullUri, {
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 15000,
       socketTimeoutMS: 45000,
+      // Atlas Network Access lists are usually IPv4 — avoid IPv6 preference.
+      family: 4,
     });
 
     console.log('✅ Connected to MongoDB Atlas via Mongoose');
 
     return mongoose.connection.db;
   } catch (error) {
-    console.error('❌ MongoDB connection error:', error);
+    console.error('❌ MongoDB connection error:', error.message || error);
+    if (
+      /whitelist|IP|ReplicaSetNoPrimary|querySrv|ECONNREFUSED|ENOTFOUND/i.test(
+        String(error.message || error),
+      )
+    ) {
+      console.error(
+        [
+          'Hint: MongoDB Atlas could not be reached.',
+          '1) Atlas → Network Access: allow your current public IPv4 (or 0.0.0.0/0 for local dev).',
+          '2) Confirm MONGODB_URI in .env (mongodb+srv user/password, no typos).',
+          '3) If querySrv fails, this process now forces 8.8.8.8/1.1.1.1 DNS + IPv4.',
+        ].join('\n'),
+      );
+    }
     throw error;
   }
 }

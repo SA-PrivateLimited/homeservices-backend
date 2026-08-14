@@ -1,0 +1,486 @@
+/**
+ * AWS S3 asset service (SDK v3).
+ *
+ * Production: default credential chain (EC2 instance IAM role).
+ * Local/dev: optional AWS_ACCESS_KEY_ID/SECRET, or disk fallback when
+ * AWS_S3_LOCAL_FALLBACK=true (or auto on CredentialsProviderError in development).
+ */
+
+const path = require('path');
+const fs = require('fs');
+const {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+} = require('@aws-sdk/client-s3');
+const {getSignedUrl} = require('@aws-sdk/s3-request-presigner');
+const {normalizeObjectKey} = require('../utils/s3Keys');
+const {createHttpError} = require('../utils/assetValidation');
+const {UPLOAD_ROOT} = require('../middleware/upload');
+
+let s3Client = null;
+
+function getRegion() {
+  return process.env.AWS_REGION || 'eu-north-1';
+}
+
+function getBucket() {
+  const bucket = process.env.AWS_S3_BUCKET || 'akanso-assets';
+  if (!bucket) {
+    throw createHttpError(500, 'S3 bucket is not configured', 'Config Error');
+  }
+  return bucket;
+}
+
+function getCloudFrontDomain() {
+  return (process.env.AWS_CLOUDFRONT_DOMAIN || 'assets.akanso.in')
+    .replace(/^https?:\/\//, '')
+    .replace(/\/+$/, '');
+}
+
+function isDev() {
+  return (process.env.NODE_ENV || 'development') !== 'production';
+}
+
+function localFallbackForced() {
+  return String(process.env.AWS_S3_LOCAL_FALLBACK || '').toLowerCase() === 'true';
+}
+
+function publicApiBase() {
+  const fromEnv = (process.env.PUBLIC_API_BASE_URL || '').replace(/\/+$/, '');
+  if (fromEnv) return fromEnv;
+  const port = process.env.PORT || 3001;
+  return `http://127.0.0.1:${port}`;
+}
+
+/**
+ * Lazily create S3Client.
+ * - Production: IAM role via default chain (no static keys).
+ * - Local: optional AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY from .env.
+ */
+function getS3Client() {
+  if (!s3Client) {
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+    const config = {region: getRegion()};
+    if (accessKeyId && secretAccessKey) {
+      config.credentials = {
+        accessKeyId,
+        secretAccessKey,
+        sessionToken: process.env.AWS_SESSION_TOKEN || undefined,
+      };
+    }
+    s3Client = new S3Client(config);
+  }
+  return s3Client;
+}
+
+/** Test helper — inject a mock client */
+function setS3ClientForTests(client) {
+  s3Client = client;
+}
+
+function resetS3ClientForTests() {
+  s3Client = null;
+}
+
+/**
+ * Public CloudFront URL for an object key (never an S3 bucket URL).
+ */
+function generateCloudFrontUrl(key) {
+  const normalized = normalizeObjectKey(key);
+  return `https://${getCloudFrontDomain()}/${normalized}`;
+}
+
+function generateLocalUrl(key) {
+  const normalized = normalizeObjectKey(key);
+  return `${publicApiBase()}/uploads/${normalized}`;
+}
+
+function logS3(operation, meta = {}) {
+  const safe = {
+    operation,
+    key: meta.key,
+    userId: meta.userId,
+    success: meta.success,
+    contentType: meta.contentType,
+    size: meta.size,
+    storage: meta.storage,
+  };
+  if (meta.success) {
+    console.log('[s3]', JSON.stringify(safe));
+  } else {
+    console.warn('[s3]', JSON.stringify({...safe, error: meta.error}));
+  }
+}
+
+function isCredentialError(err) {
+  const name = err?.name || '';
+  const message = String(err?.message || '');
+  return (
+    name === 'CredentialsProviderError' ||
+    name === 'InvalidAccessKeyId' ||
+    name === 'UnrecognizedClientException' ||
+    /could not load credentials|credential/i.test(message)
+  );
+}
+
+function mapAwsError(err) {
+  const name = err?.name || '';
+  const status = err?.$metadata?.httpStatusCode;
+  if (name === 'NoSuchKey' || status === 404) {
+    return createHttpError(404, 'Object not found', 'Not Found');
+  }
+  if (name === 'AccessDenied' || status === 403) {
+    return createHttpError(403, 'Access denied to storage', 'Forbidden');
+  }
+  if (isCredentialError(err) && isDev()) {
+    return createHttpError(
+      503,
+      'Photo upload is unavailable locally. Enable AWS_S3_LOCAL_FALLBACK=true or configure AWS credentials.',
+      'Storage Unavailable',
+    );
+  }
+  const wrapped = createHttpError(
+    500,
+    'Could not upload photo. Please try again.',
+    'Storage Error',
+  );
+  wrapped.cause = err;
+  return wrapped;
+}
+
+async function uploadToLocalDisk({body, key, contentType, userId}) {
+  const normalizedKey = normalizeObjectKey(key);
+  const absPath = path.join(UPLOAD_ROOT, normalizedKey);
+  fs.mkdirSync(path.dirname(absPath), {recursive: true});
+  fs.writeFileSync(absPath, body);
+  const size = Buffer.byteLength(body);
+  const result = {
+    key: normalizedKey,
+    url: generateLocalUrl(normalizedKey),
+    contentType,
+    size,
+  };
+  logS3('uploadFile', {
+    key: normalizedKey,
+    userId,
+    success: true,
+    contentType,
+    size,
+    storage: 'local',
+  });
+  return result;
+}
+
+/**
+ * Upload a Buffer (or Uint8Array) to S3 (or local disk in dev fallback).
+ */
+async function uploadFile({body, key, contentType, userId} = {}) {
+  const normalizedKey = normalizeObjectKey(key);
+  if (!body || !(Buffer.isBuffer(body) || body instanceof Uint8Array)) {
+    throw createHttpError(400, 'Upload body must be a Buffer', 'Bad Request');
+  }
+  if (!contentType) {
+    throw createHttpError(400, 'contentType is required', 'Bad Request');
+  }
+
+  const size = Buffer.byteLength(body);
+
+  if (localFallbackForced() && isDev()) {
+    return uploadToLocalDisk({
+      body,
+      key: normalizedKey,
+      contentType,
+      userId,
+    });
+  }
+
+  const bucket = getBucket();
+
+  try {
+    await getS3Client().send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: normalizedKey,
+        Body: body,
+        ContentType: contentType,
+      }),
+    );
+
+    const result = {
+      key: normalizedKey,
+      url: generateCloudFrontUrl(normalizedKey),
+      contentType,
+      size,
+    };
+    logS3('uploadFile', {
+      key: normalizedKey,
+      userId,
+      success: true,
+      contentType,
+      size,
+      storage: 's3',
+    });
+    return result;
+  } catch (err) {
+    if (err.statusCode) throw err;
+    logS3('uploadFile', {
+      key: normalizedKey,
+      userId,
+      success: false,
+      error: err.name || 'Error',
+      storage: 's3',
+    });
+
+    if (isDev() && isCredentialError(err)) {
+      console.warn(
+        '[s3] Falling back to local disk uploads (no AWS credentials). Set AWS_S3_LOCAL_FALLBACK=true to skip S3 attempts.',
+      );
+      return uploadToLocalDisk({
+        body,
+        key: normalizedKey,
+        contentType,
+        userId,
+      });
+    }
+
+    throw mapAwsError(err);
+  }
+}
+
+async function getObject(key, {userId} = {}) {
+  const normalizedKey = normalizeObjectKey(key);
+  try {
+    const response = await getS3Client().send(
+      new GetObjectCommand({
+        Bucket: getBucket(),
+        Key: normalizedKey,
+      }),
+    );
+    logS3('getObject', {key: normalizedKey, userId, success: true});
+    return {
+      key: normalizedKey,
+      contentType: response.ContentType,
+      contentLength: response.ContentLength,
+      body: response.Body,
+      lastModified: response.LastModified,
+    };
+  } catch (err) {
+    if (err.statusCode) throw err;
+    const absPath = path.join(UPLOAD_ROOT, normalizedKey);
+    if (isDev() && fs.existsSync(absPath)) {
+      const buf = fs.readFileSync(absPath);
+      return {
+        key: normalizedKey,
+        contentType: 'application/octet-stream',
+        contentLength: buf.length,
+        body: buf,
+        lastModified: fs.statSync(absPath).mtime,
+      };
+    }
+    logS3('getObject', {
+      key: normalizedKey,
+      userId,
+      success: false,
+      error: err.name || 'Error',
+    });
+    throw mapAwsError(err);
+  }
+}
+
+async function deleteObject(key, {userId} = {}) {
+  const normalizedKey = normalizeObjectKey(key);
+  const absPath = path.join(UPLOAD_ROOT, normalizedKey);
+  if (isDev() && fs.existsSync(absPath)) {
+    try {
+      fs.unlinkSync(absPath);
+      logS3('deleteObject', {
+        key: normalizedKey,
+        userId,
+        success: true,
+        storage: 'local',
+      });
+      return {key: normalizedKey, deleted: true};
+    } catch {
+      /* fall through to S3 */
+    }
+  }
+  try {
+    await getS3Client().send(
+      new DeleteObjectCommand({
+        Bucket: getBucket(),
+        Key: normalizedKey,
+      }),
+    );
+    logS3('deleteObject', {
+      key: normalizedKey,
+      userId,
+      success: true,
+      storage: 's3',
+    });
+    return {key: normalizedKey, deleted: true};
+  } catch (err) {
+    if (err.statusCode) throw err;
+    logS3('deleteObject', {
+      key: normalizedKey,
+      userId,
+      success: false,
+      error: err.name || 'Error',
+    });
+    throw mapAwsError(err);
+  }
+}
+
+function getCredentialResolutionInfo() {
+  const hasExplicit =
+    Boolean(process.env.AWS_ACCESS_KEY_ID) &&
+    Boolean(process.env.AWS_SECRET_ACCESS_KEY);
+  return {
+    region: getRegion(),
+    bucket: getBucket(),
+    cloudFrontDomain: getCloudFrontDomain(),
+    localFallback: localFallbackForced(),
+    usesDefaultCredentialProviderChain: !hasExplicit,
+    hasExplicitConstructorCredentials: hasExplicit,
+  };
+}
+
+/**
+ * Whether we should issue S3 presigned URLs (vs local direct-upload tokens).
+ */
+function shouldUseS3Presign() {
+  if (localFallbackForced() && isDev()) return false;
+  return true;
+}
+
+/**
+ * Create a time-limited PUT URL for direct client → S3 upload.
+ */
+async function createPresignedPutUrl({
+  key,
+  contentType,
+  expiresIn = 900,
+  userId,
+} = {}) {
+  const normalizedKey = normalizeObjectKey(key);
+  if (!contentType) {
+    throw createHttpError(400, 'contentType is required', 'Bad Request');
+  }
+  const ttl = Math.min(Math.max(Number(expiresIn) || 900, 60), 3600);
+
+  try {
+    const command = new PutObjectCommand({
+      Bucket: getBucket(),
+      Key: normalizedKey,
+      ContentType: contentType,
+    });
+    const uploadUrl = await getSignedUrl(getS3Client(), command, {
+      expiresIn: ttl,
+    });
+    const result = {
+      uploadUrl,
+      key: normalizedKey,
+      url: generateCloudFrontUrl(normalizedKey),
+      method: 'PUT',
+      headers: {'Content-Type': contentType},
+      expiresIn: ttl,
+      storage: 's3',
+    };
+    logS3('createPresignedPutUrl', {
+      key: normalizedKey,
+      userId,
+      success: true,
+      contentType,
+      storage: 's3',
+    });
+    return result;
+  } catch (err) {
+    if (err.statusCode) throw err;
+    logS3('createPresignedPutUrl', {
+      key: normalizedKey,
+      userId,
+      success: false,
+      error: err.name || 'Error',
+      storage: 's3',
+    });
+    if (isDev() && isCredentialError(err)) {
+      const wrapped = createHttpError(
+        503,
+        'S3 presign unavailable locally',
+        'Storage Unavailable',
+      );
+      wrapped.cause = err;
+      wrapped.code = 'S3_PRESIGN_UNAVAILABLE';
+      throw wrapped;
+    }
+    throw mapAwsError(err);
+  }
+}
+
+async function headObject(key, {userId} = {}) {
+  const normalizedKey = normalizeObjectKey(key);
+  if (localFallbackForced() && isDev()) {
+    const absPath = path.join(UPLOAD_ROOT, normalizedKey);
+    if (!fs.existsSync(absPath)) {
+      throw createHttpError(404, 'Object not found', 'Not Found');
+    }
+    const stat = fs.statSync(absPath);
+    return {
+      key: normalizedKey,
+      contentLength: stat.size,
+      contentType: 'application/octet-stream',
+    };
+  }
+  try {
+    const response = await getS3Client().send(
+      new HeadObjectCommand({
+        Bucket: getBucket(),
+        Key: normalizedKey,
+      }),
+    );
+    logS3('headObject', {key: normalizedKey, userId, success: true});
+    return {
+      key: normalizedKey,
+      contentLength: response.ContentLength,
+      contentType: response.ContentType,
+    };
+  } catch (err) {
+    if (err.statusCode) throw err;
+    const absPath = path.join(UPLOAD_ROOT, normalizedKey);
+    if (isDev() && fs.existsSync(absPath)) {
+      const stat = fs.statSync(absPath);
+      return {
+        key: normalizedKey,
+        contentLength: stat.size,
+        contentType: 'application/octet-stream',
+      };
+    }
+    logS3('headObject', {
+      key: normalizedKey,
+      userId,
+      success: false,
+      error: err.name || 'Error',
+    });
+    throw mapAwsError(err);
+  }
+}
+
+module.exports = {
+  getS3Client,
+  setS3ClientForTests,
+  resetS3ClientForTests,
+  generateCloudFrontUrl,
+  uploadFile,
+  getObject,
+  deleteObject,
+  headObject,
+  createPresignedPutUrl,
+  shouldUseS3Presign,
+  getCredentialResolutionInfo,
+  getRegion,
+  getBucket,
+  getCloudFrontDomain,
+};

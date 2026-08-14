@@ -19,7 +19,13 @@ const {
   updateProvider,
   uploadProviderDocument,
 } = require('../../controllers/shared/providersController');
-const {uploadProviderDocument: multerUpload} = require('../../middleware/upload');
+const {
+  handleProviderDocumentUpload,
+  handleProfileImageUpload,
+} = require('../../middleware/upload');
+const {
+  uploadProviderProfileImage,
+} = require('../../controllers/assetsController');
 
 /**
  * GET /api/providers
@@ -69,6 +75,18 @@ router.put(
 );
 
 /**
+ * POST /api/providers/me/profile-image
+ * Upload provider profile image (provider only) → S3 + CloudFront
+ */
+router.post(
+  '/me/profile-image',
+  requireRole('provider'),
+  logRequest,
+  handleProfileImageUpload,
+  uploadProviderProfileImage,
+);
+
+/**
  * PUT /api/providers/me/status
  * Update provider online/offline status (provider only)
  */
@@ -101,19 +119,8 @@ router.post(
   requireRole('admin'),
   requirePermission(PERMISSIONS.PROVIDERS_UPDATE),
   validateObjectId,
-  (req, res, next) => {
-    multerUpload(req, res, (err) => {
-      if (err) {
-        return res.status(400).json({
-          success: false,
-          error: 'Bad Request',
-          message: err.message || 'Upload failed',
-        });
-      }
-      next();
-    });
-  },
   logRequest,
+  handleProviderDocumentUpload,
   uploadProviderDocument,
 );
 

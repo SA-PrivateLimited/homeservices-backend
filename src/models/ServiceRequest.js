@@ -52,6 +52,11 @@ const serviceRequestSchema = new mongoose.Schema({
     required: true,
     index: true,
   },
+  /** Normalized service identity for duplicate-active enforcement (language-independent). */
+  serviceTypeKey: {
+    type: String,
+    index: true,
+  },
   problem: String,
   status: {
     type: String,
@@ -90,6 +95,11 @@ const serviceRequestSchema = new mongoose.Schema({
   cancelledAt: Date,
   rejectionReason: String,
   rejectedAt: Date,
+  /** When a provider (or admin assign) accepted this request */
+  acceptedAt: {
+    type: Date,
+    index: true,
+  },
   /** Providers who declined an open (broadcast) request while it stays pending */
   declinedProviders: [
     {
@@ -119,6 +129,18 @@ serviceRequestSchema.index({customerId: 1, createdAt: -1});
 serviceRequestSchema.index({customerId: 1, status: 1});
 serviceRequestSchema.index({status: 1, createdAt: -1});
 serviceRequestSchema.index({serviceType: 1, status: 1});
+// At most one active request per customer + service type (when serviceTypeKey is set)
+serviceRequestSchema.index(
+  {customerId: 1, serviceTypeKey: 1},
+  {
+    unique: true,
+    name: 'uniq_active_customer_serviceTypeKey',
+    partialFilterExpression: {
+      status: {$in: ['pending', 'accepted', 'in-progress']},
+      serviceTypeKey: {$type: 'string'},
+    },
+  },
+);
 
 const ServiceRequest = mongoose.model('ServiceRequest', serviceRequestSchema, 'serviceRequests');
 
