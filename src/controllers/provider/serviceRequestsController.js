@@ -20,14 +20,21 @@ const {
   sanitizeBookingNotifyPayload,
   canAccessCustomerContact,
   pickPhone,
+  customerFacingProviderPhone,
+  redactDeclinedProviders,
 } = require('../../utils/contactAccess');
+const {getContactSettings} = require('../../services/contactPolicyService');
 
-function serializeRequest(doc, viewer) {
-  return redactServiceRequestForViewer(doc, viewer);
+async function serializeRequest(doc, viewer) {
+  const settings = await getContactSettings();
+  return redactServiceRequestForViewer(doc, viewer, settings);
 }
 
-function serializeList(rows, viewer) {
-  return (rows || []).map((row) => serializeRequest(row, viewer));
+async function serializeList(rows, viewer) {
+  const settings = await getContactSettings();
+  return (rows || []).map((row) =>
+    redactServiceRequestForViewer(row, viewer, settings),
+  );
 }
 
 /**
@@ -57,7 +64,7 @@ exports.getMyPendingServiceRequests = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: serializeList(serviceRequests, req.user),
+      data: await serializeList(serviceRequests, req.user),
       count: serviceRequests.length,
     });
   } catch (error) {
@@ -86,7 +93,7 @@ exports.getNearbyPendingServiceRequests = async (req, res, next) => {
     const serviceRequests = await findNearbyOpenPendingForProvider(provider);
     res.json({
       success: true,
-      data: serializeList(serviceRequests, req.user),
+      data: await serializeList(serviceRequests, req.user),
       count: serviceRequests.length,
     });
   } catch (error) {
@@ -133,7 +140,7 @@ exports.getServiceRequestById = async (req, res, next) => {
       });
     }
 
-    const data = serializeRequest(serviceRequest, req.user);
+    const data = await serializeRequest(serviceRequest, req.user);
     // Defense in depth: never expose customer phone unless authorized
     if (!canAccessCustomerContact(req.user, serviceRequest)) {
       delete data.customerPhone;
@@ -201,7 +208,7 @@ exports.acceptServiceRequest = async (req, res, next) => {
     if (serviceRequest.status === 'accepted' && serviceRequest.providerId === providerId) {
       return res.json({
         success: true,
-        data: serializeRequest(serviceRequest, req.user),
+        data: await serializeRequest(serviceRequest, req.user),
         message: 'Service request already accepted',
       });
     }
@@ -325,6 +332,17 @@ exports.acceptServiceRequest = async (req, res, next) => {
         ? `${problemRaw.substring(0, 100)}...`
         : problemRaw;
 
+    const contactSettings = await getContactSettings();
+    const phoneForCustomer = customerFacingProviderPhone(
+      contactSettings,
+      {
+        serviceType,
+        status: 'accepted',
+        hasProvider: true,
+      },
+      providerPhone,
+    );
+
     try {
       await notifyBooking({
         customerId: serviceRequest.customerId,
@@ -335,13 +353,13 @@ exports.acceptServiceRequest = async (req, res, next) => {
             status: 'accepted',
             providerId,
             providerName,
-            providerPhone,
+            providerPhone: phoneForCustomer,
             serviceType,
             problem: problemRaw,
             acceptedAt: acceptedAtIso,
             createdAt: createdAtIso,
           },
-          {includeProviderPhone: true},
+          {includeProviderPhone: Boolean(phoneForCustomer)},
         ),
       });
     } catch (_) {
@@ -354,6 +372,7 @@ exports.acceptServiceRequest = async (req, res, next) => {
         `${providerName} has accepted your ${serviceType} request`,
       ];
       if (problemShort) bodyParts.push(`Problem: ${problemShort}`);
+      if (phoneForCustomer) bodyParts.push(`Phone: ${phoneForCustomer}`);
       bodyParts.push(`Accepted: ${new Date(serviceRequest.acceptedAt).toLocaleString()}`);
       const body = bodyParts.join('. ');
 
@@ -366,7 +385,7 @@ exports.acceptServiceRequest = async (req, res, next) => {
           serviceRequestId: String(serviceRequest._id),
           consultationId: String(serviceRequest._id),
           providerName: String(providerName || ''),
-          providerPhone: String(providerPhone || ''),
+          providerPhone: String(phoneForCustomer || ''),
           serviceType: String(serviceType),
           problem: problemShort,
           acceptedAt: acceptedAtIso,
@@ -389,7 +408,7 @@ exports.acceptServiceRequest = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: serializeRequest(serviceRequest, req.user),
+      data: await serializeRequest(serviceRequest, req.user),
       message:
         t('serviceRequests.accepted', lang) ||
         'Service request accepted successfully',
@@ -473,14 +492,16 @@ exports.rejectServiceRequest = async (req, res, next) => {
         serviceRequest.updatedAt = new Date();
         await saveServiceRequestFlexible(serviceRequest);
 
-        const declinedProviders = (serviceRequest.declinedProviders || []).map(
-          d => ({
-            providerId: String(d.providerId),
-            providerName: d.providerName || '',
-            providerPhone: d.providerPhone || '',
-            reason: d.reason || '',
-            declinedAt: d.declinedAt || entry.declinedAt,
-          }),
+        const declinedProviders = redactDeclinedProviders(
+          (serviceRequest.declinedProviders || []).map(
+            d => ({
+              providerId: String(d.providerId),
+              providerName: d.providerName || '',
+              providerPhone: d.providerPhone || '',
+              reason: d.reason || '',
+              declinedAt: d.declinedAt || entry.declinedAt,
+            }),
+          ),
         );
 
         try {
@@ -509,7 +530,7 @@ exports.rejectServiceRequest = async (req, res, next) => {
 
       return res.json({
         success: true,
-        data: serializeRequest(serviceRequest, req.user),
+        data: await serializeRequest(serviceRequest, req.user),
         dismissed: true,
         message: 'Request declined for this provider; still available to others',
       });
@@ -570,7 +591,7 @@ exports.rejectServiceRequest = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: serializeRequest(serviceRequest, req.user),
+      data: await serializeRequest(serviceRequest, req.user),
       message:
         t('serviceRequests.rejected', lang) ||
         'Service request rejected successfully',

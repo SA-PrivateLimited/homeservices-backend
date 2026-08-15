@@ -9,6 +9,8 @@ const ServiceRequest = require('../../models/ServiceRequest');
 const {notifyUser} = require('../../utils/notify');
 const {notifyBooking} = require('../../realtime/socket');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
+const {getContactSettings} = require('../../services/contactPolicyService');
+const {customerFacingProviderPhone} = require('../../utils/contactAccess');
 
 function isUnassigned(job) {
   if ((job.status || '') === 'unassigned') return true;
@@ -575,12 +577,22 @@ exports.assignProviderToJobCard = async (req, res, next) => {
           ? `${problemRaw.substring(0, 100)}...`
           : problemRaw;
 
+      const phoneForCustomer = customerFacingProviderPhone(
+        await getContactSettings(),
+        {
+          serviceType,
+          status: nextStatus,
+          hasProvider: true,
+        },
+        providerPhone,
+      );
+
       const notifyBody = isChange
         ? `Your ${serviceType} job is now with ${providerName}.${
-            providerPhone ? ` Phone: ${providerPhone}.` : ''
+            phoneForCustomer ? ` Phone: ${phoneForCustomer}.` : ''
           }`
         : `${providerName} has been assigned to your ${serviceType} request.${
-            providerPhone ? ` Phone: ${providerPhone}.` : ''
+            phoneForCustomer ? ` Phone: ${phoneForCustomer}.` : ''
           }${problemShort ? ` Problem: ${problemShort}.` : ''}${
             acceptedAtIso
               ? ` Accepted: ${new Date(jobCard.acceptedAt).toLocaleString()}.`
@@ -595,7 +607,7 @@ exports.assignProviderToJobCard = async (req, res, next) => {
           jobCardId: String(jobCard._id),
           providerId: String(providerId),
           providerName: String(providerName || ''),
-          providerPhone: String(providerPhone || ''),
+          providerPhone: String(phoneForCustomer || ''),
           serviceType: String(serviceType),
           problem: problemShort,
           status: nextStatus,
@@ -613,7 +625,7 @@ exports.assignProviderToJobCard = async (req, res, next) => {
             status: nextStatus,
             providerId,
             providerName,
-            providerPhone,
+            providerPhone: phoneForCustomer,
             serviceType,
             problem: problemRaw,
             acceptedAt: acceptedAtIso,
@@ -661,10 +673,20 @@ exports.assignProviderToJobCard = async (req, res, next) => {
         ? `${problemRaw.substring(0, 100)}...`
         : problemRaw;
 
+    const phoneForCustomer = customerFacingProviderPhone(
+      await getContactSettings(),
+      {
+        serviceType,
+        status: nextStatus,
+        hasProvider: true,
+      },
+      providerPhone,
+    );
+
     const notify = await notifyUser(jobCard.customerId, {
       title: 'Provider assigned',
       body: `${providerName} has been assigned to your ${serviceType} request.${
-        providerPhone ? ` Phone: ${providerPhone}.` : ''
+        phoneForCustomer ? ` Phone: ${phoneForCustomer}.` : ''
       }${problemShort ? ` Problem: ${problemShort}.` : ''}${
         acceptedAtIso
           ? ` Accepted: ${new Date(jobCard.acceptedAt).toLocaleString()}.`
@@ -675,7 +697,7 @@ exports.assignProviderToJobCard = async (req, res, next) => {
         jobCardId: String(jobCard._id),
         providerId: String(providerId),
         providerName: String(providerName || ''),
-        providerPhone: String(providerPhone || ''),
+        providerPhone: String(phoneForCustomer || ''),
         serviceType: String(serviceType),
         problem: problemShort,
         status: nextStatus,
@@ -693,7 +715,7 @@ exports.assignProviderToJobCard = async (req, res, next) => {
           status: nextStatus,
           providerId,
           providerName,
-          providerPhone,
+          providerPhone: phoneForCustomer,
           serviceType,
           problem: problemRaw,
           acceptedAt: acceptedAtIso,

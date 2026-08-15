@@ -26,6 +26,7 @@ const {
   redactServiceRequestForViewer,
   sanitizeBookingNotifyPayload,
 } = require('../../utils/contactAccess');
+const {getContactSettings} = require('../../services/contactPolicyService');
 const {normalizePhotoReferences} = require('../../utils/normalizeAssetPhotos');
 
 function newObjectIdString() {
@@ -57,10 +58,11 @@ exports.getMyServiceRequests = async (req, res, next) => {
     const duration = Date.now() - startTime;
     logPerformance('getMyServiceRequests', duration);
 
+    const settings = await getContactSettings();
     res.json({
       success: true,
       data: serviceRequests.map((doc) =>
-        redactServiceRequestForViewer(doc, req.user),
+        redactServiceRequestForViewer(doc, req.user, settings),
       ),
       count: serviceRequests.length,
     });
@@ -109,7 +111,11 @@ exports.getMyServiceRequestById = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: redactServiceRequestForViewer(serviceRequest, req.user),
+      data: redactServiceRequestForViewer(
+        serviceRequest,
+        req.user,
+        await getContactSettings(),
+      ),
     });
   } catch (error) {
     console.error(`❌ [getMyServiceRequestById] Failed for user ${req.user.uid}:`, error.message);
@@ -250,10 +256,12 @@ exports.createServiceRequest = async (req, res, next) => {
 
     if (targetedProvider) {
       // Specific-provider flow: reserve for this provider until they accept/reject.
-      // Do NOT set providerPhone here — revealed only after accept.
+      // Phone may be stored; API redaction enforces visibility policy.
       serviceRequestData.providerId = targetedProvider._id.toString();
       serviceRequestData.providerName =
         req.body.providerName || targetedProvider.name || '';
+      serviceRequestData.providerPhone =
+        targetedProvider.phone || targetedProvider.phoneNumber || '';
       serviceRequestData.providerSpecialization =
         req.body.providerSpecialization ||
         targetedProvider.specialization ||
@@ -512,7 +520,11 @@ exports.createServiceRequest = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      data: redactServiceRequestForViewer(serviceRequest.toObject(), req.user),
+      data: redactServiceRequestForViewer(
+        serviceRequest.toObject(),
+        req.user,
+        await getContactSettings(),
+      ),
       message: t('serviceRequests.created', lang),
     });
   } catch (error) {
@@ -572,7 +584,11 @@ exports.updateServiceRequest = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: serviceRequest.toObject(),
+      data: redactServiceRequestForViewer(
+        serviceRequest.toObject(),
+        req.user,
+        await getContactSettings(),
+      ),
       message: t('serviceRequests.updated', lang),
     });
   } catch (error) {
@@ -646,7 +662,11 @@ exports.cancelServiceRequest = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: redactServiceRequestForViewer(serviceRequest.toObject(), req.user),
+      data: redactServiceRequestForViewer(
+        serviceRequest.toObject(),
+        req.user,
+        await getContactSettings(),
+      ),
       message: t('serviceRequests.cancelled', lang),
     });
   } catch (error) {

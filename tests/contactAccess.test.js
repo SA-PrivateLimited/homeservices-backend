@@ -39,17 +39,69 @@ describe('canAccessProviderContact', () => {
     providerId: 'prov-1',
     status: 'pending',
     providerPhone: '9000000001',
+    serviceType: 'Plumbing',
+  };
+  const acceptedOnly = {
+    providerContactPolicy: 'ACCEPTED_ONLY',
+    serviceOverrides: {},
+  };
+  const direct = {providerContactPolicy: 'DIRECT', serviceOverrides: {}};
+  const masked = {providerContactPolicy: 'MASKED', serviceOverrides: {}};
+  const activeOnly = {
+    providerContactPolicy: 'ACTIVE_REQUEST_ONLY',
+    serviceOverrides: {},
   };
 
   it('denies guest / unauthenticated', () => {
-    assert.equal(canAccessProviderContact(null, sr), false);
-    assert.equal(canAccessProviderContact({}, sr), false);
+    assert.equal(canAccessProviderContact(null, sr, acceptedOnly), false);
+    assert.equal(canAccessProviderContact({}, sr, acceptedOnly), false);
   });
 
-  it('denies owning customer while pending', () => {
+  it('denies owning customer while pending under ACCEPTED_ONLY', () => {
     assert.equal(
-      canAccessProviderContact({uid: 'cust-1', role: 'customer'}, sr),
+      canAccessProviderContact(
+        {uid: 'cust-1', role: 'customer'},
+        sr,
+        acceptedOnly,
+      ),
       false,
+    );
+  });
+
+  it('allows owning customer while pending under DIRECT', () => {
+    assert.equal(
+      canAccessProviderContact({uid: 'cust-1', role: 'customer'}, sr, direct),
+      true,
+    );
+  });
+
+  it('never allows customer under MASKED', () => {
+    assert.equal(
+      canAccessProviderContact(
+        {uid: 'cust-1', role: 'customer'},
+        {...sr, status: 'accepted'},
+        masked,
+      ),
+      false,
+    );
+  });
+
+  it('ACTIVE_REQUEST_ONLY hides phone after completion', () => {
+    assert.equal(
+      canAccessProviderContact(
+        {uid: 'cust-1', role: 'customer'},
+        {...sr, status: 'completed'},
+        activeOnly,
+      ),
+      false,
+    );
+    assert.equal(
+      canAccessProviderContact(
+        {uid: 'cust-1', role: 'customer'},
+        {...sr, status: 'accepted'},
+        activeOnly,
+      ),
+      true,
     );
   });
 
@@ -58,6 +110,7 @@ describe('canAccessProviderContact', () => {
       canAccessProviderContact(
         {uid: 'cust-1', role: 'customer'},
         {...sr, status: 'accepted'},
+        acceptedOnly,
       ),
       true,
     );
@@ -128,7 +181,7 @@ describe('canAccessCustomerContact', () => {
 });
 
 describe('toPublicProvider', () => {
-  it('strips phone and sensitive fields', () => {
+  it('strips phone and sensitive fields by default', () => {
     const out = toPublicProvider({
       _id: 'p1',
       name: 'Ada',
@@ -156,6 +209,17 @@ describe('toPublicProvider', () => {
     assert.equal(out.location.city, 'Pune');
     assert.equal(out.location.street, undefined);
   });
+
+  it('includes phone when revealPhone is true', () => {
+    const out = toPublicProvider(
+      {_id: 'p1', name: 'Ada', phone: '9111111111'},
+      {revealPhone: true, policy: 'DIRECT'},
+    );
+    assert.equal(out.phone, '9111111111');
+    assert.equal(out.phoneNumber, '9111111111');
+    assert.equal(out.contactAvailable, true);
+    assert.equal(out.providerContactPolicy, 'DIRECT');
+  });
 });
 
 describe('redactServiceRequestForViewer', () => {
@@ -166,27 +230,47 @@ describe('redactServiceRequestForViewer', () => {
     customerPhone: '9000000002',
     providerPhone: '9000000001',
     secondaryPhone: '9000000003',
+    serviceType: 'Plumbing',
     declinedProviders: [
       {providerId: 'x', providerPhone: '999', reason: 'busy'},
     ],
   };
+  const acceptedOnly = {
+    providerContactPolicy: 'ACCEPTED_ONLY',
+    serviceOverrides: {},
+  };
+  const direct = {providerContactPolicy: 'DIRECT', serviceOverrides: {}};
 
-  it('strips provider phone for customer while pending', () => {
+  it('strips provider phone for customer while pending under ACCEPTED_ONLY', () => {
     const out = redactServiceRequestForViewer(
       {...base, status: 'pending'},
       {uid: 'cust-1', role: 'customer'},
+      acceptedOnly,
     );
     assert.equal(out.providerPhone, undefined);
     assert.equal(out.customerPhone, '9000000002');
     assert.equal(out.contact.canCallProvider, false);
     assert.equal(out.contact.providerPhoneAvailable, false);
+    assert.equal(out.contact.providerContactHint, 'waiting_acceptance');
     assert.equal(out.declinedProviders[0].providerPhone, undefined);
+  });
+
+  it('keeps provider phone for customer while pending under DIRECT', () => {
+    const out = redactServiceRequestForViewer(
+      {...base, status: 'pending'},
+      {uid: 'cust-1', role: 'customer'},
+      direct,
+    );
+    assert.equal(out.providerPhone, '9000000001');
+    assert.equal(out.contact.canCallProvider, true);
+    assert.equal(out.contact.providerContactPolicy, 'DIRECT');
   });
 
   it('keeps provider phone for customer after accept', () => {
     const out = redactServiceRequestForViewer(
       {...base, status: 'accepted'},
       {uid: 'cust-1', role: 'customer'},
+      acceptedOnly,
     );
     assert.equal(out.providerPhone, '9000000001');
     assert.equal(out.contact.canCallProvider, true);
