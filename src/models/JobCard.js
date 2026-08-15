@@ -72,6 +72,7 @@ const jobCardSchema = new mongoose.Schema({
     index: true,
   },
   questionnaireAnswers: mongoose.Schema.Types.Mixed,
+  photos: [String],
   /** Thread of comments from customer, provider, and admin */
   comments: [
     {

@@ -352,6 +352,9 @@ exports.createServiceRequest = async (req, res, next) => {
             serviceType,
             problem: serviceRequest.problem || req.body.problem || '',
             questionnaireAnswers: serviceRequest.questionnaireAnswers,
+            photos: Array.isArray(serviceRequest.photos)
+              ? serviceRequest.photos
+              : [],
             bookingId: serviceRequest._id.toString(),
             serviceRequestId: serviceRequest._id.toString(),
             needsAdminAssignment: true,

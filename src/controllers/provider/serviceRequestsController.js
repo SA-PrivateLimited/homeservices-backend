@@ -299,6 +299,10 @@ exports.acceptServiceRequest = async (req, res, next) => {
             ...(serviceRequest.scheduledTime
               ? {scheduledTime: serviceRequest.scheduledTime}
               : {}),
+            ...(Array.isArray(serviceRequest.photos) &&
+            serviceRequest.photos.length
+              ? {photos: serviceRequest.photos}
+              : {}),
           },
         },
       );
