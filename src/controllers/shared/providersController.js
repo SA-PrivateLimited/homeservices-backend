@@ -7,7 +7,8 @@ const Provider = require('../../models/Provider');
 const User = require('../../models/User');
 const {connectDB} = require('../../config/database');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
-const {toPublicProvider} = require('../../utils/contactAccess');
+const {toPublicProviderForSettings} = require('../../utils/contactAccess');
+const {getContactSettings} = require('../../services/contactPolicyService');
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -168,8 +169,8 @@ exports.getProviders = async (req, res, next) => {
         console.warn('Could not enrich providers with PIN status:', e.message);
       }
     } else {
-      // Public / non-admin browse — never expose private contact fields
-      enriched = providers.map((p) => toPublicProvider(p));
+      const settings = await getContactSettings();
+      enriched = providers.map((p) => toPublicProviderForSettings(p, settings));
     }
 
     res.json({
@@ -304,12 +305,15 @@ exports.getProviderById = async (req, res, next) => {
       req.user.role === 'provider' &&
       String(req.user.uid) === String(providerId);
 
+    let payload = providerData;
+    if (!isAdmin && !isSelfProvider) {
+      const settings = await getContactSettings();
+      payload = toPublicProviderForSettings(providerData, settings);
+    }
+
     res.json({
       success: true,
-      data:
-        isAdmin || isSelfProvider
-          ? providerData
-          : toPublicProvider(providerData),
+      data: payload,
     });
   } catch (error) {
     next(error);

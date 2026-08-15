@@ -21,6 +21,20 @@ const systemConfigSchema = new mongoose.Schema(
       type: String,
       default: 'homeservices',
     },
+    /**
+     * How provider phone numbers are revealed to customers.
+     * DIRECT | MASKED | ACCEPTED_ONLY | ACTIVE_REQUEST_ONLY
+     */
+    providerContactPolicy: {
+      type: String,
+      enum: ['DIRECT', 'MASKED', 'ACCEPTED_ONLY', 'ACTIVE_REQUEST_ONLY'],
+      default: 'DIRECT',
+    },
+    /** Optional per-service overrides keyed by normalized service type. */
+    providerContactPolicyServiceOverrides: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
     updatedAt: {
       type: Date,
       default: Date.now,

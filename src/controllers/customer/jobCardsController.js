@@ -7,6 +7,7 @@ const JobCard = require('../../models/JobCard');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
 const {t} = require('../../utils/translations');
 const {redactJobCardForViewer} = require('../../utils/contactAccess');
+const {getContactSettings} = require('../../services/contactPolicyService');
 
 /**
  * Get customer's job cards
@@ -33,9 +34,10 @@ exports.getMyJobCards = async (req, res, next) => {
     const duration = Date.now() - startTime;
     logPerformance('getMyJobCards', duration);
 
+    const settings = await getContactSettings();
     res.json({
       success: true,
-      data: jobCards.map((job) => redactJobCardForViewer(job, req.user)),
+      data: jobCards.map((job) => redactJobCardForViewer(job, req.user, settings)),
       count: jobCards.length,
     });
   } catch (error) {
@@ -66,7 +68,7 @@ exports.getMyJobCardById = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: redactJobCardForViewer(jobCard, req.user),
+      data: redactJobCardForViewer(jobCard, req.user, await getContactSettings()),
     });
   } catch (error) {
     next(error);
@@ -149,7 +151,11 @@ exports.cancelJobCard = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: redactJobCardForViewer(updatedJobCard, req.user),
+      data: redactJobCardForViewer(
+        updatedJobCard,
+        req.user,
+        await getContactSettings(),
+      ),
       message: t('jobCards.cancelledSuccessfully', lang),
     });
   } catch (error) {

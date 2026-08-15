@@ -112,6 +112,7 @@ app.use('/api/admin/jobCards', adminJobCardsRoutes);
 app.use('/api/admin/clients', adminClientsRoutes);
 app.use('/api/admin/geography', adminGeographyRoutes);
 app.use('/api/admin/overview', require('./routes/admin/overview'));
+app.use('/api/admin/settings/contact-privacy', require('./routes/admin/contactPrivacy'));
 app.use('/api/admins', require('./routes/admin/admins'));
 app.use(
   '/api/admin/area-provider-demands',

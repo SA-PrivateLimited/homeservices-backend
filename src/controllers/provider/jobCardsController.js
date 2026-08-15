@@ -7,9 +7,10 @@ const JobCard = require('../../models/JobCard');
 const ServiceRequest = require('../../models/ServiceRequest');
 const {onServiceRequestStatusChange} = require('../../services/activeServiceRequestService');
 const {redactJobCardForViewer} = require('../../utils/contactAccess');
+const {getContactSettings} = require('../../services/contactPolicyService');
 
 /** Providers must not see the customer verification PIN; phones follow contact rules. */
-function sanitizeJobCardForProvider(job, viewer) {
+function sanitizeJobCardForProvider(job, viewer, settings) {
   if (!job) return job;
   const obj = job.toObject ? job.toObject() : {...job};
   const hasPin = Boolean(obj.taskPIN);
@@ -17,6 +18,7 @@ function sanitizeJobCardForProvider(job, viewer) {
   return redactJobCardForViewer(
     {...obj, hasVerificationPin: hasPin},
     viewer,
+    settings,
   );
 }
 
@@ -38,9 +40,12 @@ exports.getMyJobCards = async (req, res, next) => {
       .skip(parseInt(offset))
       .lean();
 
+    const settings = await getContactSettings();
     res.json({
       success: true,
-      data: jobCards.map((job) => sanitizeJobCardForProvider(job, req.user)),
+      data: jobCards.map((job) =>
+        sanitizeJobCardForProvider(job, req.user, settings),
+      ),
       count: jobCards.length,
     });
   } catch (error) {
@@ -68,7 +73,11 @@ exports.getMyJobCardById = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: sanitizeJobCardForProvider(jobCard, req.user),
+      data: sanitizeJobCardForProvider(
+        jobCard,
+        req.user,
+        await getContactSettings(),
+      ),
     });
   } catch (error) {
     next(error);
@@ -117,7 +126,11 @@ exports.createJobCard = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      data: sanitizeJobCardForProvider(jobCard, req.user),
+      data: sanitizeJobCardForProvider(
+        jobCard,
+        req.user,
+        await getContactSettings(),
+      ),
       message: 'Job card created successfully',
     });
   } catch (error) {
@@ -330,7 +343,11 @@ exports.updateJobCardStatus = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: sanitizeJobCardForProvider(updatedJobCard, req.user),
+      data: sanitizeJobCardForProvider(
+        updatedJobCard,
+        req.user,
+        await getContactSettings(),
+      ),
       message: 'Job card updated successfully',
     });
   } catch (error) {

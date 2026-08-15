@@ -6,6 +6,14 @@
  * Derive from authenticated viewer + persisted job/SR records.
  */
 
+const {
+  resolveProviderContactPolicy,
+  customerMaySeeProviderPhone,
+  providerContactHint,
+  providerServiceType,
+} = require('./providerContactPolicy');
+const {getContactSettingsSync} = require('../services/contactPolicyService');
+
 const CONTACT_ALLOWED_STATUSES = new Set([
   'accepted',
   'in-progress',
@@ -69,9 +77,10 @@ function partyId(record, ...keys) {
 }
 
 /**
- * Customer may see provider phone only when they own the job and status allows.
+ * Customer may see provider phone only when policy + ownership allow it.
+ * Admin always sees phones. Assigned providers see their own listed number.
  */
-function canAccessProviderContact(viewer, jobOrSr) {
+function canAccessProviderContact(viewer, jobOrSr, settings) {
   if (!viewer || !jobOrSr) return false;
   if (viewerRole(viewer) === 'admin') return true;
 
@@ -80,15 +89,19 @@ function canAccessProviderContact(viewer, jobOrSr) {
 
   const customerId = partyId(jobOrSr, 'customerId', 'customer_id');
   const providerId = partyId(jobOrSr, 'providerId', 'provider_id');
-  if (!customerId || !providerId) return false;
 
-  if (viewerRole(viewer) === 'customer' && uid === customerId) {
-    return statusAllowsContact(jobOrSr.status);
-  }
-
-  // Assigned provider may see their own listed contact (rarely needed)
   if (viewerRole(viewer) === 'provider' && uid === providerId) {
     return true;
+  }
+
+  if (viewerRole(viewer) === 'customer' && uid === customerId) {
+    const cfg = settings || getContactSettingsSync();
+    const policy = resolveProviderContactPolicy(cfg, jobOrSr.serviceType);
+    return customerMaySeeProviderPhone(policy, {
+      status: jobOrSr.status,
+      hasProvider: Boolean(providerId),
+      hasJob: true,
+    });
   }
 
   return false;
@@ -130,13 +143,16 @@ function stripFields(obj, fields) {
 }
 
 /**
- * Public browse/detail provider payload — no private contact.
+ * Public browse/detail provider payload — private fields stripped.
+ * Phone is included only when revealPhone is true (DIRECT policy).
  */
-function toPublicProvider(provider) {
+function toPublicProvider(provider, {revealPhone = false, policy} = {}) {
   if (!provider) return provider;
   const raw = provider.toObject ? provider.toObject() : {...provider};
+  const phone = revealPhone
+    ? pickPhone(raw.phone, raw.phoneNumber)
+    : '';
   const out = stripFields(raw, PUBLIC_PROVIDER_STRIP_FIELDS);
-  // Public location: district/city/state only — drop exact street if present
   if (out.location && typeof out.location === 'object') {
     out.location = {
       city: out.location.city,
@@ -144,7 +160,6 @@ function toPublicProvider(provider) {
       state: out.location.state,
       stateId: out.location.stateId,
       districtId: out.location.districtId,
-      // Keep coarse coords optional for map; omit street address
       latitude: out.location.latitude,
       longitude: out.location.longitude,
     };
@@ -158,8 +173,49 @@ function toPublicProvider(provider) {
       districtId: out.address.districtId,
     };
   }
-  out.contactAvailable = false;
+  if (phone) {
+    out.phone = phone;
+    out.phoneNumber = phone;
+    out.contactAvailable = true;
+  } else {
+    out.contactAvailable = false;
+  }
+  if (policy) {
+    out.providerContactPolicy = policy;
+  }
   return out;
+}
+
+/**
+ * Browse/detail redaction using admin contact settings (per-service override aware).
+ */
+function toPublicProviderForSettings(provider, settings) {
+  const policy = resolveProviderContactPolicy(
+    settings,
+    providerServiceType(provider),
+  );
+  const revealPhone = customerMaySeeProviderPhone(policy, {
+    hasJob: false,
+    hasProvider: false,
+  });
+  return toPublicProvider(provider, {revealPhone, policy});
+}
+
+/**
+ * Real provider phone for customer-facing notify/FCM/socket, or '' when hidden.
+ */
+function customerFacingProviderPhone(settings, meta, ...phoneCandidates) {
+  const policy = resolveProviderContactPolicy(settings, meta?.serviceType);
+  if (
+    !customerMaySeeProviderPhone(policy, {
+      status: meta?.status,
+      hasProvider: meta?.hasProvider !== false,
+      hasJob: true,
+    })
+  ) {
+    return '';
+  }
+  return pickPhone(...phoneCandidates);
 }
 
 function redactDeclinedProviders(list) {
@@ -174,14 +230,18 @@ function redactDeclinedProviders(list) {
 }
 
 /**
- * Redact SR/job for a viewer based on contact rules.
+ * Redact SR/job for a viewer based on contact policy + ownership.
  */
-function redactServiceRequestForViewer(doc, viewer) {
+function redactServiceRequestForViewer(doc, viewer, settings) {
   if (!doc) return doc;
   const obj = doc.toObject ? doc.toObject() : {...doc};
   if (obj._id != null) obj._id = String(obj._id);
 
-  const allowProvider = canAccessProviderContact(viewer, obj);
+  const cfg = settings || getContactSettingsSync();
+  const policy = resolveProviderContactPolicy(cfg, obj.serviceType);
+  const hasProvider = Boolean(partyId(obj, 'providerId', 'provider_id'));
+
+  const allowProvider = canAccessProviderContact(viewer, obj, cfg);
   const allowCustomer = canAccessCustomerContact(viewer, obj);
 
   if (!allowProvider) {
@@ -197,24 +257,27 @@ function redactServiceRequestForViewer(doc, viewer) {
     obj.declinedProviders = redactDeclinedProviders(obj.declinedProviders);
   }
 
-  obj.contact = {
-    providerPhoneAvailable: allowProvider && Boolean(
-      (obj.providerPhone && allowProvider) || allowProvider,
-    ),
-    customerPhoneAvailable: allowCustomer,
-    canCallProvider: allowProvider,
-    canCallCustomer: allowCustomer && viewerRole(viewer) === 'provider',
-  };
+  const hint = providerContactHint(policy, {
+    status: obj.status,
+    hasProvider,
+    hasJob: true,
+    revealed: allowProvider && viewerRole(viewer) === 'customer',
+  });
 
-  // Recompute availability flags after possible deletion
-  obj.contact.providerPhoneAvailable = allowProvider && Boolean(obj.providerPhone);
-  obj.contact.customerPhoneAvailable = allowCustomer && Boolean(obj.customerPhone);
+  obj.contact = {
+    providerPhoneAvailable: allowProvider && Boolean(obj.providerPhone),
+    customerPhoneAvailable: allowCustomer && Boolean(obj.customerPhone),
+    canCallProvider: allowProvider && Boolean(obj.providerPhone),
+    canCallCustomer: allowCustomer && viewerRole(viewer) === 'provider',
+    providerContactPolicy: policy,
+    providerContactHint: hint,
+  };
 
   return obj;
 }
 
-function redactJobCardForViewer(doc, viewer) {
-  return redactServiceRequestForViewer(doc, viewer);
+function redactJobCardForViewer(doc, viewer, settings) {
+  return redactServiceRequestForViewer(doc, viewer, settings);
 }
 
 /**
@@ -277,6 +340,9 @@ module.exports = {
   canAccessProviderContact,
   canAccessCustomerContact,
   toPublicProvider,
+  toPublicProviderForSettings,
+  customerFacingProviderPhone,
+  redactDeclinedProviders,
   redactServiceRequestForViewer,
   redactJobCardForViewer,
   sanitizeBookingNotifyPayload,

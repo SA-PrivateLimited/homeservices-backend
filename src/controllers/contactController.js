@@ -12,6 +12,7 @@ const {
   pickPhone,
   viewerId,
 } = require('../utils/contactAccess');
+const {getContactSettings} = require('../services/contactPolicyService');
 const {
   findServiceRequestFlexible,
 } = require('../utils/findServiceRequestFlexible');
@@ -68,7 +69,8 @@ exports.getProviderContactForServiceRequest = async (req, res, next) => {
     const sr = await loadServiceRequestForViewer(serviceRequestId, req.user);
     if (!sr) return deny(res, 'not_found', 404);
 
-    if (!canAccessProviderContact(req.user, sr)) {
+    const settings = await getContactSettings();
+    if (!canAccessProviderContact(req.user, sr, settings)) {
       if (!statusAllowsContact(sr.status)) {
         const blocked = ['cancelled', 'canceled', 'rejected'].includes(
           String(sr.status || '').toLowerCase(),
@@ -144,7 +146,8 @@ exports.getProviderContactForJobCard = async (req, res, next) => {
     const job = await loadJobCardForViewer(jobCardId, req.user);
     if (!job) return deny(res, 'not_found', 404);
 
-    if (!canAccessProviderContact(req.user, job)) {
+    const settings = await getContactSettings();
+    if (!canAccessProviderContact(req.user, job, settings)) {
       if (!statusAllowsContact(job.status)) {
         const blocked = ['cancelled', 'canceled', 'rejected'].includes(
           String(job.status || '').toLowerCase(),
