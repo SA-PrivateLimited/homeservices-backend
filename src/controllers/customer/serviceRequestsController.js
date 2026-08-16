@@ -571,11 +571,20 @@ exports.updateServiceRequest = async (req, res, next) => {
       });
     }
 
-    // Update fields
-    Object.keys(req.body).forEach(key => {
-      if (req.body[key] !== undefined) {
-        serviceRequest[key] = req.body[key];
+    const ALLOWED_UPDATE_FIELDS = new Set([
+      'problem',
+      'customerAddress',
+      'photos',
+      'secondaryPhone',
+      'questionnaireAnswers',
+      'scheduledTime',
+    ]);
+
+    Object.keys(req.body || {}).forEach((key) => {
+      if (!ALLOWED_UPDATE_FIELDS.has(key) || req.body[key] === undefined) {
+        return;
       }
+      serviceRequest[key] = req.body[key];
     });
 
     serviceRequest.updatedAt = new Date();
@@ -649,6 +658,16 @@ exports.cancelServiceRequest = async (req, res, next) => {
         success: false,
         error: t('serviceRequests.alreadyCancelled', lang),
         message: t('serviceRequests.alreadyCancelled', lang),
+      });
+    }
+
+    if (serviceRequest.status === 'completed') {
+      return res.status(400).json({
+        success: false,
+        error: t('serviceRequests.cannotCancelCompleted', lang) ||
+          'Cannot cancel a completed request',
+        message: t('serviceRequests.cannotCancelCompleted', lang) ||
+          'Cannot cancel a completed request',
       });
     }
 

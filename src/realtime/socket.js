@@ -22,6 +22,7 @@
  */
 
 const {Server} = require('socket.io');
+const {verifyAccessToken} = require('../utils/jwtAuth');
 
 let io = null;
 
@@ -170,6 +171,38 @@ function emitNewServiceRequest(payload) {
   return emitToAdmins('new-service-request', payload);
 }
 
+function emitSecret() {
+  return process.env.WEBSOCKET_EMIT_SECRET || process.env.JWT_SECRET || '';
+}
+
+function emitAuthHeaders() {
+  const secret = emitSecret();
+  return secret ? {'x-emit-secret': secret} : {};
+}
+
+function allowEmitRequest(req) {
+  const secret = emitSecret();
+  if (secret && req.headers['x-emit-secret'] === secret) {
+    return true;
+  }
+  const auth = String(req.headers.authorization || '');
+  if (!auth.startsWith('Bearer ')) return false;
+  try {
+    verifyAccessToken(auth.slice(7).trim());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function rejectUnauthorizedEmit(res) {
+  return res.status(401).json({
+    success: false,
+    error: 'Unauthorized',
+    message: 'Authentication required',
+  });
+}
+
 async function notifyBooking(payload) {
   const {providerId, customerId, bookingData} = payload || {};
   const localOk = emitBooking({providerId, customerId, bookingData});
@@ -184,7 +217,7 @@ async function notifyBooking(payload) {
     await axios.post(
       `${remote.replace(/\/$/, '')}/emit-booking`,
       {providerId, customerId, bookingData},
-      {timeout: 5000},
+      {timeout: 5000, headers: emitAuthHeaders()},
     );
     return {ok: true, via: 'remote'};
   } catch (err) {
@@ -205,7 +238,7 @@ async function notifyServiceCompleted(payload) {
     await axios.post(
       `${remote.replace(/\/$/, '')}/emit-service-completed`,
       payload,
-      {timeout: 5000},
+      {timeout: 5000, headers: emitAuthHeaders()},
     );
     return {ok: true, via: 'remote'};
   } catch (err) {
@@ -221,6 +254,7 @@ async function notifyAdminsRealtime(payload) {
 
 function mountEmitHttpRoutes(app) {
   app.post('/emit-booking', (req, res) => {
+    if (!allowEmitRequest(req)) return rejectUnauthorizedEmit(res);
     try {
       const {providerId, doctorId, customerId, bookingData} = req.body || {};
       const targetProviderId = providerId || doctorId;
@@ -249,6 +283,7 @@ function mountEmitHttpRoutes(app) {
   });
 
   app.post('/emit-service-completed', (req, res) => {
+    if (!allowEmitRequest(req)) return rejectUnauthorizedEmit(res);
     try {
       const ok = emitServiceCompleted(req.body || {});
       return res.json({

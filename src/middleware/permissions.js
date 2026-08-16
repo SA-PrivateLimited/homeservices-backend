@@ -49,30 +49,51 @@ exports.checkJobCardOwnership = async (req, res, next) => {
   }
 };
 
+async function loadCustomerJobCard(req, res) {
+  const {jobCardId} = req.params;
+  const jobCard = await JobCard.findById(jobCardId);
+
+  if (!jobCard) {
+    res.status(404).json({
+      success: false,
+      error: 'Job card not found',
+    });
+    return null;
+  }
+
+  if (jobCard.customerId !== req.user.uid) {
+    res.status(403).json({
+      success: false,
+      error: 'Forbidden',
+      message: 'You do not own this job card',
+    });
+    return null;
+  }
+
+  return jobCard;
+}
+
 /**
- * Check if user is the customer of the job card
+ * Check if user is the customer of the job card (any status, including history).
  */
 exports.checkJobCardCustomer = async (req, res, next) => {
   try {
-    const {jobCardId} = req.params;
-    const jobCard = await JobCard.findById(jobCardId);
+    const jobCard = await loadCustomerJobCard(req, res);
+    if (!jobCard) return;
+    req.jobCard = jobCard;
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
 
-    if (!jobCard) {
-      return res.status(404).json({
-        success: false,
-        error: 'Job card not found',
-      });
-    }
-
-    if (jobCard.customerId !== req.user.uid) {
-      return res.status(403).json({
-        success: false,
-        error: 'Forbidden',
-        message: 'You do not own this job card',
-      });
-    }
-
-    // Check if job card can be cancelled
+/**
+ * Customer may cancel only while the job is still active.
+ */
+exports.checkJobCardCustomerCancellable = async (req, res, next) => {
+  try {
+    const jobCard = await loadCustomerJobCard(req, res);
+    if (!jobCard) return;
     if (jobCard.status === 'cancelled') {
       return res.status(400).json({
         success: false,
@@ -80,7 +101,6 @@ exports.checkJobCardCustomer = async (req, res, next) => {
         message: 'Job card is already cancelled',
       });
     }
-
     if (jobCard.status === 'completed') {
       return res.status(400).json({
         success: false,
@@ -88,7 +108,6 @@ exports.checkJobCardCustomer = async (req, res, next) => {
         message: 'Cannot cancel a completed job',
       });
     }
-
     req.jobCard = jobCard;
     next();
   } catch (error) {
