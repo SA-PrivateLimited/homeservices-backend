@@ -9,7 +9,12 @@ const {
   normalizeServiceTypeKey,
   lockId,
   isActiveServiceStatus,
+  decideDuplicateLockAction,
 } = require('../utils/activeServiceRequest');
+
+function isDuplicateKeyError(err) {
+  return Boolean(err && (err.code === 11000 || err.code === 'E11000'));
+}
 
 async function findActiveServiceRequest(customerId, serviceType) {
   const uid = String(customerId || '').trim();
@@ -43,6 +48,69 @@ async function findActiveServiceRequest(customerId, serviceType) {
   );
 }
 
+async function findRequestByLockId(serviceRequestId) {
+  const id = String(serviceRequestId || '').trim();
+  if (!id) return null;
+  return ServiceRequest.findOne({
+    $or: [{_id: id}, {consultationId: id}],
+  }).lean();
+}
+
+async function insertActiveLock({
+  id,
+  uid,
+  key,
+  displayType,
+  provisionalRequestId,
+}) {
+  await ActiveServiceRequestLock.create({
+    _id: id,
+    customerId: uid,
+    serviceTypeKey: key,
+    serviceType: displayType,
+    serviceRequestId: provisionalRequestId || '',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+}
+
+/**
+ * Duplicate lock key with no matching active ServiceRequest is leftover
+ * (cancel/create failure). Delete it so the customer can request again.
+ */
+async function resolveDuplicateLock(uid, displayType, key, id) {
+  const active = await findActiveServiceRequest(uid, displayType);
+  const lock = await ActiveServiceRequestLock.findById(id).lean();
+  let linked = null;
+  if (lock && lock.serviceRequestId) {
+    linked = await findRequestByLockId(lock.serviceRequestId);
+  }
+  const linkedRequestActive = Boolean(
+    linked &&
+      isActiveServiceStatus(linked.status) &&
+      String(linked.customerId) === uid,
+  );
+  const action = decideDuplicateLockAction({
+    activeRequest: active,
+    lock,
+    linkedRequestActive,
+  });
+
+  if (action === 'conflict-active') {
+    return {ok: false, existing: active, code: 'ACTIVE_SERVICE_REQUEST_EXISTS'};
+  }
+  if (action === 'conflict-linked') {
+    return {ok: false, existing: linked, code: 'ACTIVE_SERVICE_REQUEST_EXISTS'};
+  }
+  if (action === 'conflict-inflight') {
+    return {ok: false, existing: null, code: 'ACTIVE_SERVICE_REQUEST_EXISTS'};
+  }
+  if (action === 'reclaim') {
+    await releaseActiveRequestLock(uid, displayType);
+  }
+  return {ok: 'retry'};
+}
+
 /**
  * Acquire lock before create. Returns { ok: true } or { ok: false, existing }.
  */
@@ -64,28 +132,43 @@ async function acquireActiveRequestLock({
   }
 
   const id = lockId(uid, key);
-  try {
-    await ActiveServiceRequestLock.create({
-      _id: id,
-      customerId: uid,
-      serviceTypeKey: key,
-      serviceType: displayType,
-      serviceRequestId: provisionalRequestId || '',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    return {ok: true, lockId: id, serviceTypeKey: key};
-  } catch (err) {
-    if (err && (err.code === 11000 || err.code === 'E11000')) {
-      const again = await findActiveServiceRequest(uid, displayType);
-      return {
-        ok: false,
-        existing: again,
-        code: 'ACTIVE_SERVICE_REQUEST_EXISTS',
-      };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await insertActiveLock({
+        id,
+        uid,
+        key,
+        displayType,
+        provisionalRequestId,
+      });
+      return {ok: true, lockId: id, serviceTypeKey: key};
+    } catch (err) {
+      if (!isDuplicateKeyError(err)) throw err;
+      const resolved = await resolveDuplicateLock(uid, displayType, key, id);
+      if (resolved.ok === false) return resolved;
     }
-    throw err;
   }
+
+  const again = await findActiveServiceRequest(uid, displayType);
+  return {
+    ok: false,
+    existing: again,
+    code: 'ACTIVE_SERVICE_REQUEST_EXISTS',
+  };
+}
+
+/**
+ * If a lock remains after every request for this type is terminal, drop it.
+ * Used by GET /active so the UI does not claim a ghost active request.
+ */
+async function sweepStaleActiveRequestLock(customerId, serviceType) {
+  const uid = String(customerId || '').trim();
+  const displayType = String(serviceType || '').trim();
+  const key = normalizeServiceTypeKey(displayType);
+  if (!uid || !key) return;
+  const id = lockId(uid, key);
+  const resolved = await resolveDuplicateLock(uid, displayType, key, id);
+  return resolved;
 }
 
 async function bindLockToRequest(customerId, serviceType, serviceRequestId) {
@@ -107,7 +190,9 @@ async function releaseActiveRequestLock(customerId, serviceType) {
   const uid = String(customerId || '').trim();
   const key = normalizeServiceTypeKey(serviceType);
   if (!uid || !key) return;
-  await ActiveServiceRequestLock.deleteOne({_id: lockId(uid, key)});
+  await ActiveServiceRequestLock.deleteMany({
+    $or: [{_id: lockId(uid, key)}, {customerId: uid, serviceTypeKey: key}],
+  });
 }
 
 async function releaseActiveRequestLockForRequest(serviceRequest) {
@@ -115,11 +200,8 @@ async function releaseActiveRequestLockForRequest(serviceRequest) {
   const uid = serviceRequest.customerId;
   const type = serviceRequest.serviceType;
   await releaseActiveRequestLock(uid, type);
-  // Also release by key if stored
   if (serviceRequest.serviceTypeKey) {
-    await ActiveServiceRequestLock.deleteOne({
-      _id: lockId(uid, serviceRequest.serviceTypeKey),
-    });
+    await releaseActiveRequestLock(uid, serviceRequest.serviceTypeKey);
   }
 }
 
@@ -157,6 +239,7 @@ function activeRequestConflictPayload(existing, lang, t) {
 module.exports = {
   findActiveServiceRequest,
   acquireActiveRequestLock,
+  sweepStaleActiveRequestLock,
   bindLockToRequest,
   releaseActiveRequestLock,
   releaseActiveRequestLockForRequest,

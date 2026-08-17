@@ -39,6 +39,11 @@ const providerSchema = new mongoose.Schema({
   specialization: String,
   serviceType: String,
   serviceCategories: [String],
+  /** Services temporarily not accepting new jobs */
+  inactiveServiceCategories: {
+    type: [String],
+    default: [],
+  },
   experience: Number,
   serviceFee: Number,
   approvalStatus: {

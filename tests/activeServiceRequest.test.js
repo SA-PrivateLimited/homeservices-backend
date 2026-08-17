@@ -10,6 +10,7 @@ const {
   isActiveServiceStatus,
   ACTIVE_SERVICE_STATUSES,
   lockId,
+  decideDuplicateLockAction,
 } = require('../src/utils/activeServiceRequest');
 const {activeRequestConflictPayload} = require('../src/services/activeServiceRequestService');
 const {t} = require('../src/utils/translations');
@@ -68,6 +69,53 @@ describe('activeRequestConflictPayload', () => {
   it('returns Hindi message when lang=hi', () => {
     const payload = activeRequestConflictPayload(null, 'hi', t);
     assert.match(payload.message, /सक्रिय/);
+  });
+});
+
+describe('decideDuplicateLockAction', () => {
+  it('reclaims a lock whose request is gone or terminal', () => {
+    assert.equal(
+      decideDuplicateLockAction({
+        activeRequest: null,
+        lock: {serviceRequestId: 'sr1', createdAt: new Date(0)},
+        linkedRequestActive: false,
+      }),
+      'reclaim',
+    );
+  });
+
+  it('keeps an in-flight lock without a request id', () => {
+    assert.equal(
+      decideDuplicateLockAction({
+        activeRequest: null,
+        lock: {serviceRequestId: '', createdAt: new Date()},
+        linkedRequestActive: false,
+        now: Date.now(),
+      }),
+      'conflict-inflight',
+    );
+  });
+
+  it('reclaims a lock with no request id after the in-flight window', () => {
+    assert.equal(
+      decideDuplicateLockAction({
+        activeRequest: null,
+        lock: {serviceRequestId: '', createdAt: new Date(Date.now() - 60_000)},
+        linkedRequestActive: false,
+      }),
+      'reclaim',
+    );
+  });
+
+  it('conflicts when a live request still exists', () => {
+    assert.equal(
+      decideDuplicateLockAction({
+        activeRequest: {_id: 'sr1', status: 'pending'},
+        lock: {serviceRequestId: 'sr1'},
+        linkedRequestActive: true,
+      }),
+      'conflict-active',
+    );
   });
 });
 

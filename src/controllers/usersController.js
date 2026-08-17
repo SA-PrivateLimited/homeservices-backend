@@ -138,6 +138,16 @@ exports.getMe = async (req, res, next) => {
     delete userData.passwordHash;
     delete userData.totpSecretEncrypted;
     delete userData.activationTokenHash;
+
+    const jwtRole = req.accessTokenPayload?.role;
+    if (
+      jwtRole === 'customer' &&
+      user.role === 'provider' &&
+      user.customerProfileEnabled
+    ) {
+      userData.role = 'customer';
+    }
+
     if (userData.role === 'admin') {
       userData.permissions = resolveAdminPermissions(user);
       userData.id = userData._id;

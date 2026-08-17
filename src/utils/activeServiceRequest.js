@@ -38,10 +38,37 @@ function lockId(customerId, serviceTypeKey) {
   return `${String(customerId)}::${String(serviceTypeKey)}`;
 }
 
+/** Locks newer than this with no serviceRequestId are treated as an in-flight create. */
+const IN_FLIGHT_LOCK_MS = 20_000;
+
+/**
+ * After a duplicate-key on the active lock, decide whether the lock is a real
+ * conflict or leftover from a cancelled/failed request.
+ *
+ * @returns {'conflict-active' | 'conflict-linked' | 'conflict-inflight' | 'reclaim' | 'retry'}
+ */
+function decideDuplicateLockAction({
+  activeRequest,
+  lock,
+  linkedRequestActive = false,
+  now = Date.now(),
+  inFlightMs = IN_FLIGHT_LOCK_MS,
+}) {
+  if (activeRequest) return 'conflict-active';
+  if (linkedRequestActive) return 'conflict-linked';
+  if (!lock) return 'retry';
+  if (lock.serviceRequestId) return 'reclaim';
+  const createdAt = lock.createdAt ? new Date(lock.createdAt).getTime() : 0;
+  if (createdAt && now - createdAt < inFlightMs) return 'conflict-inflight';
+  return 'reclaim';
+}
+
 module.exports = {
   ACTIVE_SERVICE_STATUSES,
   TERMINAL_SERVICE_STATUSES,
+  IN_FLIGHT_LOCK_MS,
   normalizeServiceTypeKey,
   isActiveServiceStatus,
   lockId,
+  decideDuplicateLockAction,
 };

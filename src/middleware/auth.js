@@ -100,8 +100,24 @@ function requireRole(...allowedRoles) {
       }
 
       const userRole = userDoc.role || 'customer';
+      const jwtRole = decoded.role || userRole;
 
-      if (!allowedRoles.includes(userRole)) {
+      const customerContextSwitch =
+        jwtRole === 'customer' &&
+        userRole === 'provider' &&
+        userDoc.customerProfileEnabled === true;
+
+      const effectiveRole = customerContextSwitch ? 'customer' : userRole;
+
+      if (jwtRole !== userRole && !customerContextSwitch) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden',
+          message: `Access denied. Required role: ${allowedRoles.join(' or ')}`,
+        });
+      }
+
+      if (!allowedRoles.includes(effectiveRole)) {
         return res.status(403).json({
           success: false,
           error: 'Forbidden',
@@ -110,7 +126,8 @@ function requireRole(...allowedRoles) {
       }
 
       req.userDoc = userDoc;
-      req.user.role = userRole;
+      req.user.role = customerContextSwitch ? 'customer' : userRole;
+      req.user.activeRole = jwtRole;
       if (userRole === 'admin' && !Array.isArray(decoded.permissions)) {
         req.user.permissions = resolveAdminPermissions(userDoc);
       }

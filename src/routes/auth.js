@@ -19,13 +19,15 @@ const {
   loginPin,
   resetPin,
   registerWithOtp,
+  createCustomerContextHandoff,
+  exchangeContextHandoff,
 } = require('../controllers/authController');
 const {
   validateActivation,
   activationSetPassword,
   activationVerifyMfa,
 } = require('../controllers/adminActivationController');
-const {optionalAuth} = require('../middleware/auth');
+const {optionalAuth, verifyAuth} = require('../middleware/auth');
 const {logRequest} = require('../middleware/logger');
 
 router.get('/health', (req, res) => {
@@ -71,6 +73,15 @@ router.post('/phone/register-pin', registerPin);
 router.post('/phone/register-with-otp', registerWithOtp);
 router.post('/phone/login-pin', loginPin);
 router.post('/phone/reset-pin', resetPin);
+
+// Cross-app context handoff (Partner → Customer)
+router.post(
+  '/context/customer-handoff',
+  verifyAuth,
+  logRequest,
+  createCustomerContextHandoff,
+);
+router.post('/context/exchange', logRequest, exchangeContextHandoff);
 
 // OTP — Firebase Phone Auth (client) or Twilio (AUTH_OTP_PROVIDER=twilio)
 router.post('/phone/send-otp', sendPhoneOtp);

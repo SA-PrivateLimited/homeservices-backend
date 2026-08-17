@@ -7,6 +7,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
+const {connectDB} = require('../config/database');
 const {signAccessToken, signMfaToken, verifyMfaToken} = require('../utils/jwtAuth');
 const {encryptToken} = require('../utils/tokenEncryption');
 const twilioVerify = require('../services/twilioVerify');
@@ -98,8 +99,8 @@ function normalizeEmail(email) {
   return (email || '').trim().toLowerCase();
 }
 
-async function issueSessionForUser(user, {includePin} = {}) {
-  const role = user.role || 'customer';
+async function issueSessionForUser(user, {includePin, activeRole} = {}) {
+  const role = activeRole || user.role || 'customer';
   const permissions =
     role === 'admin' ? resolveAdminPermissions(user) : undefined;
 
@@ -154,13 +155,14 @@ async function issueSessionForUser(user, {includePin} = {}) {
   delete safe.activationTokenHash;
   safe.hasPin = true;
   safe.phoneVerified = true;
+  safe.role = role;
   if (role === 'admin') {
     safe.permissions = permissions;
     // Shape expected by Admin Web: admin + token
     safe.id = safe._id;
   }
 
-  if ((safe.role || user.role) === 'provider') {
+  if (role === 'provider') {
     try {
       const Provider = require('../models/Provider');
       const provider = await Provider.findById(user._id).lean();
@@ -220,6 +222,21 @@ async function ensureProviderProfile(user, fullName) {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+}
+
+async function ensureCustomerProfileAccess(user) {
+  if (user.role === 'customer') return user;
+  if (user.role !== 'provider') {
+    const err = new Error('Only partners and customers can use customer services.');
+    err.statusCode = 403;
+    throw err;
+  }
+  if (!user.customerProfileEnabled) {
+    user.customerProfileEnabled = true;
+    user.updatedAt = new Date();
+    await user.save();
+  }
+  return user;
 }
 
 function isValidPin(pin) {
@@ -1332,6 +1349,181 @@ exports.resetPin = async (req, res, next) => {
       return res.status(err.statusCode).json({
         success: false,
         error: 'Bad Request',
+        message: err.message,
+      });
+    }
+    next(err);
+  }
+};
+
+const {
+  createHandoffCode,
+  DEFAULT_TTL_MS,
+  consumeHandoffCode,
+  cacheHandoffReplay,
+} = require('../utils/contextHandoffStore');
+
+/**
+ * POST /api/auth/context/customer-handoff
+ * Authenticated partner → one-time code for CustomerWeb (no token in URL).
+ */
+exports.createCustomerContextHandoff = async (req, res, next) => {
+  try {
+    await connectDB();
+    const user = await User.findById(req.user.uid);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'User not found.',
+      });
+    }
+    if (user.role !== 'provider') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Partner access required.',
+      });
+    }
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'This account has been deactivated.',
+      });
+    }
+
+    await ensureCustomerProfileAccess(user);
+    const code = await createHandoffCode(user._id, 'customer', DEFAULT_TTL_MS);
+
+    res.json({
+      success: true,
+      data: {
+        code,
+        expiresInMs: DEFAULT_TTL_MS,
+      },
+      message: 'Customer handoff code created.',
+    });
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        success: false,
+        error: 'Bad Request',
+        message: err.message,
+      });
+    }
+    next(err);
+  }
+};
+
+/**
+ * POST /api/auth/context/exchange
+ * Body: { code } — exchange one-time handoff code for customer session JWT.
+ */
+exports.exchangeContextHandoff = async (req, res, next) => {
+  try {
+    await connectDB();
+    const code = String(req.body?.code || '').trim();
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: 'CODE_MISSING',
+        message: 'Handoff code is required.',
+      });
+    }
+
+    const result = await consumeHandoffCode(code);
+
+    if (result.status === 'REPLAY' && result.session) {
+      return res.json({
+        success: true,
+        data: result.session,
+        message: 'Signed in to Customer.',
+      });
+    }
+
+    if (result.status === 'CODE_EXPIRED') {
+      return res.status(401).json({
+        success: false,
+        error: 'CODE_EXPIRED',
+        message: 'Handoff code has expired.',
+      });
+    }
+
+    if (result.status === 'CODE_ALREADY_USED') {
+      return res.status(401).json({
+        success: false,
+        error: 'CODE_ALREADY_USED',
+        message: 'Handoff code was already used.',
+      });
+    }
+
+    if (result.status !== 'OK' || !result.entry) {
+      return res.status(401).json({
+        success: false,
+        error: 'CODE_NOT_FOUND',
+        message: 'Handoff code is invalid or expired.',
+      });
+    }
+
+    const entry = result.entry;
+    if (entry.purpose !== 'customer' || entry.audience !== 'customer') {
+      return res.status(403).json({
+        success: false,
+        error: 'INVALID_AUDIENCE',
+        message: 'Handoff is not valid for CustomerWeb.',
+      });
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[handoff] exchange', result.status, entry?.userId || '');
+    }
+
+    const user = await User.findById(entry.userId);
+    if (!user || user.isActive === false) {
+      return res.status(401).json({
+        success: false,
+        error: 'USER_NOT_FOUND',
+        message: 'Account not available.',
+      });
+    }
+
+    if (user.role === 'customer') {
+      const session = await issueSessionForUser(user, {activeRole: 'customer'});
+      cacheHandoffReplay(code, entry, session);
+      return res.json({
+        success: true,
+        data: session,
+        message: 'Signed in to Customer.',
+      });
+    }
+
+    if (user.role !== 'provider') {
+      return res.status(403).json({
+        success: false,
+        error: 'INVALID_SOURCE',
+        message: 'Handoff source is not a Partner account.',
+      });
+    }
+
+    if (!user.customerProfileEnabled) {
+      user.customerProfileEnabled = true;
+      user.updatedAt = new Date();
+      await user.save();
+    }
+
+    const session = await issueSessionForUser(user, {activeRole: 'customer'});
+    cacheHandoffReplay(code, entry, session);
+    res.json({
+      success: true,
+      data: session,
+      message: 'Signed in to Customer.',
+    });
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        success: false,
+        error: 'SESSION_CREATION_FAILED',
         message: err.message,
       });
     }

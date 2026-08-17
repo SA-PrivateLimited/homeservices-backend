@@ -9,6 +9,14 @@ const {connectDB} = require('../../config/database');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 const {toPublicProviderForSettings} = require('../../utils/contactAccess');
 const {getContactSettings} = require('../../services/contactPolicyService');
+const {
+  allServicesForProvider,
+  primaryServiceForProvider,
+} = require('../../utils/providerServiceAvailability');
+const {
+  excludeSelfProviderClause,
+  normalizeUserId,
+} = require('../../utils/excludeSelfProvider');
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -123,6 +131,12 @@ exports.getProviders = async (req, res, next) => {
     if (minRating) query.rating = {$gte: parseFloat(minRating)};
     if (String(includeInactive) !== 'true') {
       query.isActive = {$ne: false};
+    }
+
+    // Customer discovery: never show the viewer's own Partner profile.
+    const viewerId = normalizeUserId(req.user?.uid);
+    if (viewerId && !isAdmin) {
+      Object.assign(query, excludeSelfProviderClause(viewerId));
     }
 
     if (andClauses.length === 1) {
@@ -433,6 +447,76 @@ exports.updateMyProfile = async (req, res, next) => {
       success: true,
       data: provider,
       message: 'Provider profile updated successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Toggle per-service availability (provider only).
+ * PUT /api/providers/me/service-availability
+ * Body: { serviceName: string, active: boolean }
+ */
+exports.updateMyServiceAvailability = async (req, res, next) => {
+  try {
+    await connectDB();
+    const {serviceName, active} = req.body || {};
+    const name = String(serviceName || '').trim();
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'Service name is required.',
+      });
+    }
+    if (typeof active !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'active must be true or false.',
+      });
+    }
+
+    const provider = await Provider.findById(req.user.uid);
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'Provider profile not found.',
+      });
+    }
+
+    const known = allServicesForProvider(provider);
+    const match = known.find((s) => s.toLowerCase() === name.toLowerCase());
+    if (!match) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'This service is not on your profile.',
+      });
+    }
+
+    const inactive = Array.isArray(provider.inactiveServiceCategories)
+      ? [...provider.inactiveServiceCategories]
+      : [];
+    const key = match.toLowerCase();
+    const without = inactive.filter((s) => String(s).toLowerCase() !== key);
+
+    if (active) {
+      provider.inactiveServiceCategories = without;
+    } else {
+      provider.inactiveServiceCategories = [...without, match];
+    }
+    provider.updatedAt = new Date();
+    await provider.save();
+
+    res.json({
+      success: true,
+      data: provider,
+      message: active
+        ? 'Service is now active for new jobs.'
+        : 'Service is now inactive for new jobs.',
     });
   } catch (error) {
     next(error);

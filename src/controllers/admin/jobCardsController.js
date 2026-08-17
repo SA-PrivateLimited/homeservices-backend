@@ -11,6 +11,7 @@ const {notifyBooking} = require('../../realtime/socket');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 const {getContactSettings} = require('../../services/contactPolicyService');
 const {customerFacingProviderPhone} = require('../../utils/contactAccess');
+const {onServiceRequestStatusChange} = require('../../services/activeServiceRequestService');
 
 function isUnassigned(job) {
   if ((job.status || '') === 'unassigned') return true;
@@ -550,6 +551,22 @@ exports.assignProviderToJobCard = async (req, res, next) => {
             updatedAt: now,
           };
           await ServiceRequest.findByIdAndUpdate(linkedSrId, {$set: srPatch});
+          if (
+            nextStatus === 'cancelled' ||
+            nextStatus === 'canceled' ||
+            nextStatus === 'completed' ||
+            nextStatus === 'rejected'
+          ) {
+            await onServiceRequestStatusChange(
+              {
+                customerId: jobCard.customerId,
+                serviceType: jobCard.serviceType,
+                serviceTypeKey: jobCard.serviceTypeKey,
+                _id: linkedSrId,
+              },
+              nextStatus === 'canceled' ? 'cancelled' : nextStatus,
+            );
+          }
           if (nextStatus === 'accepted') {
             await ServiceRequest.updateOne(
               {
