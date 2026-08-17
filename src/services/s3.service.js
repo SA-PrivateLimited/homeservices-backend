@@ -48,11 +48,24 @@ function localFallbackForced() {
   return String(process.env.AWS_S3_LOCAL_FALLBACK || '').toLowerCase() === 'true';
 }
 
+function isLoopbackUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '::1' ||
+      parsed.hostname === '0.0.0.0'
+    );
+  } catch {
+    return false;
+  }
+}
+
 function publicApiBase() {
   const fromEnv = (process.env.PUBLIC_API_BASE_URL || '').replace(/\/+$/, '');
-  if (fromEnv) return fromEnv;
-  const port = process.env.PORT || 3001;
-  return `http://127.0.0.1:${port}`;
+  if (fromEnv && !isLoopbackUrl(fromEnv)) return fromEnv;
+  return '';
 }
 
 /**
@@ -96,7 +109,11 @@ function generateCloudFrontUrl(key) {
 
 function generateLocalUrl(key) {
   const normalized = normalizeObjectKey(key);
-  return `${publicApiBase()}/uploads/${normalized}`;
+  const base = publicApiBase();
+  // Prefer a public API host. Never persist loopback URLs — those break
+  // production admin/customer apps that share the same Mongo document.
+  if (base) return `${base}/uploads/${normalized}`;
+  return `/uploads/${normalized}`;
 }
 
 function logS3(operation, meta = {}) {

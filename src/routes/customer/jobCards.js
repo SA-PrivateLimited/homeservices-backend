@@ -4,9 +4,12 @@
 
 const express = require('express');
 const router = express.Router();
-const {verifyAuth} = require('../../middleware/auth');
+const {verifyAuth, requireRole} = require('../../middleware/auth');
 const {validatePagination, validateCancellationReason, validateObjectId} = require('../../middleware/validate');
-const {checkJobCardCustomer} = require('../../middleware/permissions');
+const {
+  checkJobCardCustomer,
+  checkJobCardCustomerCancellable,
+} = require('../../middleware/permissions');
 const {logRequest} = require('../../middleware/logger');
 const {detectLanguage} = require('../../utils/translations');
 const {
@@ -27,6 +30,7 @@ router.get(
   '/',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   validatePagination,
   logRequest,
   getMyJobCards,
@@ -40,6 +44,7 @@ router.get(
   '/:jobCardId/provider-contact',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   validateObjectId,
   checkJobCardCustomer,
   logRequest,
@@ -54,6 +59,7 @@ router.get(
   '/:jobCardId',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   validateObjectId,
   checkJobCardCustomer,
   logRequest,
@@ -68,9 +74,10 @@ router.put(
   '/:jobCardId/cancel',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   validateObjectId,
   validateCancellationReason,
-  checkJobCardCustomer,
+  checkJobCardCustomerCancellable,
   logRequest,
   cancelJobCard,
 );
@@ -82,6 +89,7 @@ router.post(
   '/:jobCardId/comments',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   validateObjectId,
   checkJobCardCustomer,
   logRequest,

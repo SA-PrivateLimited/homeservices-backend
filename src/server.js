@@ -32,6 +32,7 @@ const customerServiceRequestsRoutes = require('./routes/customer/serviceRequests
 // Provider app routes
 const providerJobCardsRoutes = require('./routes/provider/jobCards');
 const providerServiceRequestsRoutes = require('./routes/provider/serviceRequests');
+const providerCollaborationRoutes = require('./routes/provider/partnerCollaboration');
 
 // Admin app routes
 const adminJobCardsRoutes = require('./routes/admin/jobCards');
@@ -106,6 +107,7 @@ app.use('/api/customer/serviceRequests', customerServiceRequestsRoutes);
 // Provider app routes
 app.use('/api/provider/jobCards', providerJobCardsRoutes);
 app.use('/api/provider/serviceRequests', providerServiceRequestsRoutes);
+app.use('/api/provider', providerCollaborationRoutes);
 
 // Admin app routes
 app.use('/api/admin/jobCards', adminJobCardsRoutes);

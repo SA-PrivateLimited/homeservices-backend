@@ -3,6 +3,7 @@
  * Handles contact recommendation operations
  */
 
+const Provider = require('../../models/Provider');
 const ContactRecommendation = require('../../models/ContactRecommendation');
 const User = require('../../models/User');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
@@ -57,6 +58,59 @@ exports.createContactRecommendation = async (req, res, next) => {
         error: 'Validation Error',
         message: 'Service type is required',
       });
+    }
+
+    const phoneRaw = recommendedProviderPhone.trim();
+    const phoneDigits = phoneRaw.replace(/\D/g, '');
+    const phoneTail = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : '';
+
+    if (phoneTail.length === 10) {
+      const phoneRegex = new RegExp(`${phoneTail}$`);
+      const [existingProvider, existingProviderUser, existingCustomer, existingSuggestion] =
+        await Promise.all([
+          Provider.findOne({
+            $or: [{phone: phoneRegex}, {phoneNumber: phoneRegex}],
+          }).lean(),
+          User.findOne({
+            role: 'provider',
+            $or: [{phone: phoneRegex}, {phoneNumber: phoneRegex}],
+          }).lean(),
+          User.findOne({
+            role: 'customer',
+            $or: [{phone: phoneRegex}, {phoneNumber: phoneRegex}],
+          }).lean(),
+          ContactRecommendation.findOne({
+            recommendedProviderPhone: phoneRegex,
+            status: {$in: ['pending', 'contacted']},
+          }).lean(),
+        ]);
+
+      if (existingProvider || existingProviderUser) {
+        return res.status(409).json({
+          success: false,
+          error: 'Conflict',
+          code: 'ALREADY_PARTNER',
+          message: 'This mobile number is already registered as an Akanso Partner.',
+        });
+      }
+
+      if (existingSuggestion) {
+        return res.status(409).json({
+          success: false,
+          error: 'Conflict',
+          code: 'ALREADY_SUGGESTED',
+          message: 'This contact has already been suggested to Akanso.',
+        });
+      }
+
+      if (existingCustomer) {
+        return res.status(409).json({
+          success: false,
+          error: 'Conflict',
+          code: 'ALREADY_CUSTOMER',
+          message: 'This mobile number belongs to an existing Akanso customer.',
+        });
+      }
     }
 
     // Get user details for the recommendation

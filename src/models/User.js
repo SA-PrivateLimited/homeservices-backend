@@ -214,6 +214,11 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  /** Partner may also request services as a customer (same Akanso user). */
+  customerProfileEnabled: {
+    type: Boolean,
+    default: false,
+  },
   /** Soft deactivate — blocks app/admin login when false */
   isActive: {
     type: Boolean,

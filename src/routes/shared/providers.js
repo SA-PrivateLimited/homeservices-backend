@@ -14,6 +14,7 @@ const {
   getProviderById,
   getMyProfile,
   updateMyProfile,
+  updateMyServiceAvailability,
   updateMyStatus,
   updateProviderApproval,
   updateProvider,
@@ -84,6 +85,17 @@ router.post(
   logRequest,
   handleProfileImageUpload,
   uploadProviderProfileImage,
+);
+
+/**
+ * PUT /api/providers/me/service-availability
+ * Toggle whether a service accepts new jobs (provider only)
+ */
+router.put(
+  '/me/service-availability',
+  requireRole('provider'),
+  logRequest,
+  updateMyServiceAvailability,
 );
 
 /**

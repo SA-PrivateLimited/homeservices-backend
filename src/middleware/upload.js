@@ -65,10 +65,15 @@ const uploadClientLogo = multer({
   limits: {fileSize: getMaxImageBytes()},
   fileFilter(_req, file, cb) {
     const mime = file.mimetype === 'image/jpg' ? 'image/jpeg' : file.mimetype;
-    if (!ALLOWED_IMAGE_MIMES.has(mime)) {
-      return cb(new Error('Only JPEG, PNG, WebP, or SVG images are allowed'));
+    if (
+      !mime ||
+      mime === 'application/octet-stream' ||
+      mime.startsWith('image/') ||
+      ALLOWED_IMAGE_MIMES.has(mime)
+    ) {
+      return cb(null, true);
     }
-    cb(null, true);
+    return cb(new Error('Only JPEG, PNG, WebP, or SVG images are allowed'));
   },
 }).single('file');
 

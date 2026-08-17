@@ -4,7 +4,7 @@
 
 const express = require('express');
 const router = express.Router();
-const {verifyAuth} = require('../../middleware/auth');
+const {verifyAuth, requireRole} = require('../../middleware/auth');
 const {validatePagination, validateCancellationReason, validateObjectId} = require('../../middleware/validate');
 const {logRequest} = require('../../middleware/logger');
 const {detectLanguage} = require('../../utils/translations');
@@ -29,6 +29,7 @@ router.get(
   '/',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   validatePagination,
   logRequest,
   getMyServiceRequests,
@@ -42,6 +43,7 @@ router.get(
   '/active',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   logRequest,
   getActiveServiceRequestForType,
 );
@@ -54,6 +56,7 @@ router.post(
   '/',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   logRequest,
   createServiceRequest,
 );
@@ -66,6 +69,7 @@ router.post(
   '/request-area-providers',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   logRequest,
   requestAreaProviders,
 );
@@ -78,6 +82,7 @@ router.get(
   '/:serviceRequestId/provider-contact',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   validateObjectId,
   logRequest,
   getProviderContactForServiceRequest,
@@ -91,6 +96,7 @@ router.get(
   '/:serviceRequestId',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   validateObjectId,
   logRequest,
   getMyServiceRequestById,
@@ -104,6 +110,7 @@ router.put(
   '/:serviceRequestId',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   validateObjectId,
   logRequest,
   updateServiceRequest,
@@ -117,6 +124,7 @@ router.put(
   '/:serviceRequestId/cancel',
   detectLanguage,
   verifyAuth,
+  requireRole('customer'),
   validateObjectId,
   validateCancellationReason,
   logRequest,

@@ -5,6 +5,11 @@
 
 const Provider = require('../models/Provider');
 const User = require('../models/User');
+const {
+  activeServicesForProvider,
+  isServiceInactive,
+} = require('./providerServiceAvailability');
+const {filterOutSelfProvider} = require('./excludeSelfProvider');
 
 function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -26,22 +31,33 @@ function serviceTypeClause(serviceType) {
   };
 }
 
-async function findOnlineMatching(serviceType, geoClause) {
+async function findOnlineMatching(serviceType, geoClause, excludeUserId) {
+  const selfExclude =
+    excludeUserId && String(excludeUserId).trim()
+      ? {_id: {$ne: String(excludeUserId).trim()}}
+      : {};
   const query = {
     approvalStatus: 'approved',
     isOnline: true,
     isAvailable: {$ne: false},
     isActive: {$ne: false},
+    ...selfExclude,
     $and: [serviceTypeClause(serviceType), geoClause],
   };
   return Provider.find(query)
     .select(
-      '_id name fcmToken location address specialization serviceType serviceCategories',
+      '_id name fcmToken location address specialization serviceType serviceCategories inactiveServiceCategories',
     )
-    .lean();
+    .lean()
+    .then((rows) =>
+      filterOutSelfProvider(
+        rows.filter((p) => !isServiceInactive(p, serviceType)),
+        excludeUserId,
+      ),
+    );
 }
 
-async function findByDistrict(serviceType, {districtId, district}) {
+async function findByDistrict(serviceType, {districtId, district}, excludeUserId) {
   const districtParts = [];
   if (districtId) {
     const id = String(districtId).trim();
@@ -57,10 +73,10 @@ async function findByDistrict(serviceType, {districtId, district}) {
     districtParts.push({'address.city': re});
   }
   if (!districtParts.length) return [];
-  return findOnlineMatching(serviceType, {$or: districtParts});
+  return findOnlineMatching(serviceType, {$or: districtParts}, excludeUserId);
 }
 
-async function findByPincode(serviceType, pincode) {
+async function findByPincode(serviceType, pincode, excludeUserId) {
   if (!pincode) return [];
   const pin = String(pincode).trim();
   const usersWithPin = await User.find({
@@ -71,19 +87,28 @@ async function findByPincode(serviceType, pincode) {
     .lean();
   const userIds = usersWithPin.map(u => u._id);
 
-  return findOnlineMatching(serviceType, {
-    $or: [
-      {'location.pincode': pin},
-      {'address.pincode': pin},
-      {_id: {$in: userIds}},
-    ],
-  });
+  return findOnlineMatching(
+    serviceType,
+    {
+      $or: [
+        {'location.pincode': pin},
+        {'address.pincode': pin},
+        {_id: {$in: userIds}},
+      ],
+    },
+    excludeUserId,
+  );
 }
 
 /**
  * @returns {{providers: Array, matchBy: 'district'|'pincode'|'none'}}
  */
-async function findProvidersInArea(serviceType, customerAddress = {}) {
+async function findProvidersInArea(
+  serviceType,
+  customerAddress = {},
+  options = {},
+) {
+  const excludeUserId = options.excludeUserId || options.customerUserId || null;
   const districtId = customerAddress.districtId || customerAddress.district_id;
   const district =
     customerAddress.district ||
@@ -93,14 +118,18 @@ async function findProvidersInArea(serviceType, customerAddress = {}) {
   const pincode = customerAddress.pincode;
 
   if (districtId || district) {
-    const byDistrict = await findByDistrict(serviceType, {districtId, district});
+    const byDistrict = await findByDistrict(
+      serviceType,
+      {districtId, district},
+      excludeUserId,
+    );
     if (byDistrict.length > 0) {
       return {providers: byDistrict, matchBy: 'district'};
     }
   }
 
   if (pincode) {
-    const byPin = await findByPincode(serviceType, pincode);
+    const byPin = await findByPincode(serviceType, pincode, excludeUserId);
     if (byPin.length > 0) {
       return {providers: byPin, matchBy: 'pincode'};
     }
@@ -114,13 +143,8 @@ async function findProvidersInArea(serviceType, customerAddress = {}) {
  */
 async function findNearbyOpenPendingForProvider(provider) {
   const ServiceRequest = require('../models/ServiceRequest');
-  const serviceType =
-    provider.specialization ||
-    provider.specialty ||
-    provider.serviceType ||
-    (Array.isArray(provider.serviceCategories) &&
-      provider.serviceCategories[0]) ||
-    '';
+  const activeTypes = activeServicesForProvider(provider);
+  if (!activeTypes.length) return [];
 
   const districtId =
     provider.location?.districtId || provider.address?.districtId;
@@ -143,9 +167,11 @@ async function findNearbyOpenPendingForProvider(provider) {
   if (pincode) {
     geoOr.push({'customerAddress.pincode': String(pincode).trim()});
   }
-  if (!geoOr.length || !serviceType) return [];
+  if (!geoOr.length) return [];
 
-  const typeRe = new RegExp(`^${escapeRegex(String(serviceType).trim())}$`, 'i');
+  const typeOr = activeTypes.map((s) => ({
+    serviceType: new RegExp(`^${escapeRegex(String(s).trim())}$`, 'i'),
+  }));
 
   return ServiceRequest.find({
     status: 'pending',
@@ -157,13 +183,10 @@ async function findNearbyOpenPendingForProvider(provider) {
           {providerId: ''},
         ],
       },
-      {serviceType: typeRe},
+      {$or: typeOr},
       {$or: geoOr},
-      // Skip requests this provider already declined
       {
-        $nor: [
-          {'declinedProviders.providerId': String(provider._id)},
-        ],
+        $nor: [{'declinedProviders.providerId': String(provider._id)}],
       },
     ],
   })

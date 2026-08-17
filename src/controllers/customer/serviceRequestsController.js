@@ -18,6 +18,7 @@ const {
   acquireActiveRequestLock,
   bindLockToRequest,
   releaseActiveRequestLock,
+  sweepStaleActiveRequestLock,
   onServiceRequestStatusChange,
   activeRequestConflictPayload,
   normalizeServiceTypeKey,
@@ -171,6 +172,8 @@ exports.createServiceRequest = async (req, res, next) => {
       );
     }
 
+    let keepLock = false;
+    try {
     // Generate ID if not provided (Firestore-style 20 character alphanumeric)
     const generateId = () => {
       const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -198,6 +201,18 @@ exports.createServiceRequest = async (req, res, next) => {
           success: false,
           error: t('serviceRequests.providerNotFound', lang) || 'Provider not found or not approved',
           message: t('serviceRequests.providerNotFound', lang) || 'Provider not found or not approved',
+        });
+      }
+
+      if (String(targetedProvider._id) === String(userId)) {
+        return res.status(400).json({
+          success: false,
+          error:
+            t('serviceRequests.cannotRequestSelf', lang) ||
+            'You cannot request a service from your own provider profile',
+          message:
+            t('serviceRequests.cannotRequestSelf', lang) ||
+            'You cannot request a service from your own provider profile',
         });
       }
     }
@@ -285,9 +300,7 @@ exports.createServiceRequest = async (req, res, next) => {
     const serviceRequest = new ServiceRequest(serviceRequestData);
     try {
       await serviceRequest.save();
-      await bindLockToRequest(userId, serviceType, serviceRequest._id);
     } catch (saveErr) {
-      await releaseActiveRequestLock(userId, serviceType);
       if (saveErr && (saveErr.code === 11000 || saveErr.code === 'E11000')) {
         const existing = await findActiveServiceRequest(userId, serviceType);
         return res.status(409).json(
@@ -295,6 +308,15 @@ exports.createServiceRequest = async (req, res, next) => {
         );
       }
       throw saveErr;
+    }
+    keepLock = true;
+    try {
+      await bindLockToRequest(userId, serviceType, serviceRequest._id);
+    } catch (bindErr) {
+      console.warn(
+        '⚠️ [createServiceRequest] Failed to bind active lock:',
+        bindErr?.message || bindErr,
+      );
     }
 
     const duration = Date.now() - startTime;
@@ -308,7 +330,9 @@ exports.createServiceRequest = async (req, res, next) => {
       if (targetedProvider) {
         providersToNotify = [targetedProvider];
       } else {
-        const areaResult = await findProvidersInArea(serviceType, customerAddress);
+        const areaResult = await findProvidersInArea(serviceType, customerAddress, {
+          excludeUserId: userId,
+        });
         providersToNotify = areaResult.providers;
         matchBy = areaResult.matchBy;
         if (providersToNotify.length === 0) {
@@ -527,6 +551,18 @@ exports.createServiceRequest = async (req, res, next) => {
       ),
       message: t('serviceRequests.created', lang),
     });
+    } finally {
+      if (!keepLock) {
+        try {
+          await releaseActiveRequestLock(userId, serviceType);
+        } catch (releaseErr) {
+          console.warn(
+            '⚠️ [createServiceRequest] Failed to release active lock:',
+            releaseErr?.message || releaseErr,
+          );
+        }
+      }
+    }
   } catch (error) {
     console.error(`❌ [createServiceRequest] Failed for user ${req.user.uid}:`, error.message);
     next(error);
@@ -571,11 +607,20 @@ exports.updateServiceRequest = async (req, res, next) => {
       });
     }
 
-    // Update fields
-    Object.keys(req.body).forEach(key => {
-      if (req.body[key] !== undefined) {
-        serviceRequest[key] = req.body[key];
+    const ALLOWED_UPDATE_FIELDS = new Set([
+      'problem',
+      'customerAddress',
+      'photos',
+      'secondaryPhone',
+      'questionnaireAnswers',
+      'scheduledTime',
+    ]);
+
+    Object.keys(req.body || {}).forEach((key) => {
+      if (!ALLOWED_UPDATE_FIELDS.has(key) || req.body[key] === undefined) {
+        return;
       }
+      serviceRequest[key] = req.body[key];
     });
 
     serviceRequest.updatedAt = new Date();
@@ -649,6 +694,16 @@ exports.cancelServiceRequest = async (req, res, next) => {
         success: false,
         error: t('serviceRequests.alreadyCancelled', lang),
         message: t('serviceRequests.alreadyCancelled', lang),
+      });
+    }
+
+    if (serviceRequest.status === 'completed') {
+      return res.status(400).json({
+        success: false,
+        error: t('serviceRequests.cannotCancelCompleted', lang) ||
+          'Cannot cancel a completed request',
+        message: t('serviceRequests.cannotCancelCompleted', lang) ||
+          'Cannot cancel a completed request',
       });
     }
 
@@ -840,6 +895,7 @@ exports.getActiveServiceRequestForType = async (req, res, next) => {
     }
     const existing = await findActiveServiceRequest(req.user.uid, serviceType);
     if (!existing) {
+      await sweepStaleActiveRequestLock(req.user.uid, serviceType);
       return res.json({success: true, data: null});
     }
     return res.json({
