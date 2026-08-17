@@ -137,10 +137,12 @@ function validateImageBuffer(buffer, claimedMime) {
   }
 
   // If client sent a MIME, it must agree with detection (when claimed is an image)
+  const normalizedClaimed =
+    claimedMime === 'image/jpg' ? 'image/jpeg' : claimedMime;
   if (
-    claimedMime &&
-    ALLOWED_IMAGE_MIMES.has(claimedMime) &&
-    claimedMime !== detected
+    normalizedClaimed &&
+    ALLOWED_IMAGE_MIMES.has(normalizedClaimed) &&
+    normalizedClaimed !== detected
   ) {
     throw createHttpError(
       400,

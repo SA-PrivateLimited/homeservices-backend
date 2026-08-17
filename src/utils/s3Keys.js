@@ -222,6 +222,20 @@ function keyFromUrlOrKey(urlOrKey) {
       return normalizeObjectKey(raw.slice(uploadsPrefix.length));
     }
   }
+  // Loopback local-fallback URLs (http://127.0.0.1:3001/uploads/...)
+  try {
+    const parsed = new URL(raw);
+    const loopback =
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '::1' ||
+      parsed.hostname === '0.0.0.0';
+    if (loopback && parsed.pathname.startsWith('/uploads/')) {
+      return normalizeObjectKey(parsed.pathname.slice('/uploads/'.length));
+    }
+  } catch {
+    /* not a URL */
+  }
   // Relative /uploads/... paths (legacy)
   if (raw.startsWith('/uploads/')) {
     return normalizeObjectKey(raw.slice('/uploads/'.length));
