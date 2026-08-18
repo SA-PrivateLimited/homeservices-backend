@@ -13,6 +13,10 @@ const {syncPhoneFields} = require('../../utils/phone');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
+const {
+  summarizePartnerServices,
+  serviceMembershipBreakdown,
+} = require('../../utils/providerServiceAvailability');
 
 const PASSWORD_SALT_ROUNDS = 10;
 
@@ -194,7 +198,9 @@ exports.listDistrictsByState = async (req, res, next) => {
         {'location.state': new RegExp(`^${escapeRegex(state.name)}$`, 'i')},
       ],
     })
-      .select('_id location.districtId location.district location.city rating totalReviews')
+      .select(
+        '_id location.districtId location.district location.city rating totalReviews serviceType specialization serviceCategories',
+      )
       .lean();
 
     const byDistrictId = new Map();
@@ -238,6 +244,7 @@ exports.listDistrictsByState = async (req, res, next) => {
         stateId: district.stateId,
         stateName: district.stateName || state.name,
         providerCount: group.length,
+        serviceBreakdown: serviceMembershipBreakdown(group),
         avgRating: avgRating(group),
         totalReviews: totalReviewsSum(group),
         createdAt: district.createdAt,
@@ -314,6 +321,7 @@ exports.listProvidersByDistrict = async (req, res, next) => {
         name: p.businessName || p.name || p.displayName || 'Provider',
         phone: p.phone || p.phoneNumber || '',
         serviceType: p.serviceType || p.specialization || '',
+        services: summarizePartnerServices(p),
         approvalStatus: p.approvalStatus || 'pending',
         rating: p.rating || 0,
         totalReviews: p.totalReviews || 0,
@@ -328,6 +336,7 @@ exports.listProvidersByDistrict = async (req, res, next) => {
       success: true,
       data: {
         providers: data,
+        serviceBreakdown: serviceMembershipBreakdown(providers),
         district: {
           _id: district._id,
           name: district.name,
@@ -500,6 +509,15 @@ exports.addProviderToDistrict = async (req, res, next) => {
       serviceType: serviceType || undefined,
       specialization: serviceType || undefined,
       serviceCategories: serviceType ? [serviceType] : [],
+      serviceQualifications: serviceType
+        ? [
+            {
+              name: serviceType,
+              verificationStatus: 'approved',
+              updatedAt: new Date(),
+            },
+          ]
+        : [],
       experience: Number.isFinite(experience) ? experience : undefined,
       rating: Number.isFinite(rating) ? rating : 0,
       location,

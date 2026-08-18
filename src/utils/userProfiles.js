@@ -19,8 +19,49 @@ function canEnterAppContext(user, requestedRole) {
   return false;
 }
 
+/** Mongo match for anyone with a Customer profile (including dual-role Partners). */
+const CUSTOMER_PROFILE_MATCH = {
+  $or: [{role: 'customer'}, {customerProfileEnabled: true}],
+};
+
+function isCustomerAccessActive(user) {
+  if (!hasCustomerProfile(user)) return false;
+  if (user.customerAccessActive === false) return false;
+  if (user.isActive === false && user.customerAccessActive !== true) {
+    return false;
+  }
+  return true;
+}
+
+function isPartnerAccessActive(user, provider) {
+  if (!hasPartnerProfile(user)) return false;
+  if (provider && provider.isActive === false) return false;
+  if (!provider && user.isActive === false) return false;
+  if (
+    user.isActive === false &&
+    !hasCustomerProfile(user) &&
+    (!provider || provider.isActive !== true)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function adminProfileFlags(user, provider) {
+  return {
+    hasCustomerProfile: hasCustomerProfile(user),
+    hasPartnerProfile: hasPartnerProfile(user),
+    customerAccessActive: isCustomerAccessActive(user),
+    partnerAccessActive: isPartnerAccessActive(user, provider),
+  };
+}
+
 module.exports = {
   hasCustomerProfile,
   hasPartnerProfile,
   canEnterAppContext,
+  CUSTOMER_PROFILE_MATCH,
+  isCustomerAccessActive,
+  isPartnerAccessActive,
+  adminProfileFlags,
 };

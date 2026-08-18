@@ -32,6 +32,19 @@ const serviceCategorySchema = new mongoose.Schema({
     type: Array,
     default: [],
   },
+  /** Partner onboarding docs for this professional service (optional). */
+  partnerDocuments: {
+    type: [
+      {
+        _id: false,
+        key: {type: String, trim: true},
+        label: {type: String, trim: true},
+        labelHi: {type: String, trim: true},
+        required: {type: Boolean, default: false},
+      },
+    ],
+    default: [],
+  },
   createdAt: {
     type: Date,
     default: Date.now,

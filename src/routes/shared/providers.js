@@ -15,6 +15,13 @@ const {
   getMyProfile,
   updateMyProfile,
   updateMyServiceAvailability,
+  addMyService,
+  getMyServiceDetails,
+  updateMyServiceDetails,
+  submitMyServiceForReview,
+  addProviderService,
+  updateProviderServiceQualification,
+  updateProviderServiceProfile,
   updateMyStatus,
   updateProviderApproval,
   updateProvider,
@@ -99,6 +106,38 @@ router.put(
 );
 
 /**
+ * POST /api/providers/me/services
+ * Add another professional service to this Partner (provider only)
+ */
+router.post(
+  '/me/services',
+  requireRole('provider'),
+  logRequest,
+  addMyService,
+);
+
+router.get(
+  '/me/services/:serviceName',
+  requireRole('provider'),
+  logRequest,
+  getMyServiceDetails,
+);
+
+router.put(
+  '/me/services/:serviceName',
+  requireRole('provider'),
+  logRequest,
+  updateMyServiceDetails,
+);
+
+router.post(
+  '/me/services/:serviceName/submit',
+  requireRole('provider'),
+  logRequest,
+  submitMyServiceForReview,
+);
+
+/**
  * PUT /api/providers/me/status
  * Update provider online/offline status (provider only)
  */
@@ -147,6 +186,45 @@ router.put(
   validateObjectId,
   logRequest,
   updateProvider,
+);
+
+/**
+ * POST /api/providers/:providerId/services
+ * Admin adds a professional service to an existing Partner account
+ */
+router.post(
+  '/:providerId/services',
+  requireRole('admin'),
+  requirePermission(PERMISSIONS.PROVIDERS_UPDATE),
+  validateObjectId,
+  logRequest,
+  addProviderService,
+);
+
+/**
+ * PUT /api/providers/:providerId/service-qualifications
+ * Admin updates per-service verification (does not change account approval)
+ */
+router.put(
+  '/:providerId/service-qualifications',
+  requireRole('admin'),
+  requirePermission(PERMISSIONS.PROVIDERS_UPDATE),
+  validateObjectId,
+  logRequest,
+  updateProviderServiceQualification,
+);
+
+/**
+ * PATCH /api/providers/:providerId/service-profile
+ * Admin updates per-service profile (experience, notes) without changing verification
+ */
+router.patch(
+  '/:providerId/service-profile',
+  requireRole('admin'),
+  requirePermission(PERMISSIONS.PROVIDERS_UPDATE),
+  validateObjectId,
+  logRequest,
+  updateProviderServiceProfile,
 );
 
 module.exports = router;

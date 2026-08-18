@@ -5,22 +5,79 @@
 
 const Provider = require('../../models/Provider');
 const User = require('../../models/User');
+const ServiceCategory = require('../../models/ServiceCategory');
 const {connectDB} = require('../../config/database');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 const {toPublicProviderForSettings} = require('../../utils/contactAccess');
 const {getContactSettings} = require('../../services/contactPolicyService');
 const {
   allServicesForProvider,
-  primaryServiceForProvider,
+  isServiceVerified,
+  isServiceCustomerVisible,
+  addServiceToProvider,
+  upsertQualification,
+  setInactive,
+  ensureQualifications,
+  ensureServiceOnProfile,
+  applyCustomerServiceView,
+  hasAnyCustomerVisibleService,
+  VERIFICATION_STATUSES,
+  qualificationForService,
+  canEditServiceQualification,
+  documentsForCategory,
+  providerOwnsDocumentUrl,
+  summarizePartnerServices,
 } = require('../../utils/providerServiceAvailability');
 const {
   excludeSelfProviderClause,
   filterOutSelfProvider,
   normalizeUserId,
 } = require('../../utils/excludeSelfProvider');
+const {adminProfileFlags} = require('../../utils/userProfiles');
+const {hasPinForPurpose, PIN_SELECT} = require('../../utils/rolePins');
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function serviceDocStorageKey(serviceName, docKey) {
+  const svc = String(serviceName || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  const doc = String(docKey || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24);
+  return `service-${svc || 'unknown'}-${doc || 'doc'}`;
+}
+
+function serviceInfoText(q) {
+  const raw = q?.serviceInfo;
+  if (typeof raw === 'string') return raw.trim();
+  if (raw && typeof raw === 'object') {
+    if (typeof raw.text === 'string') return raw.text.trim();
+    if (typeof raw.description === 'string') return raw.description.trim();
+  }
+  return String(q?.notes || '').trim();
+}
+
+async function resolveActiveCategoryName(raw) {
+  const name = String(raw || '').trim();
+  if (!name) return null;
+  const re = new RegExp(`^${escapeRegex(name)}$`, 'i');
+  const cat = await ServiceCategory.findOne({name: re, isActive: true}).lean();
+  return cat?.name || null;
+}
+
+function publicProviderRow(provider, settings, serviceQuery) {
+  return toPublicProviderForSettings(
+    applyCustomerServiceView(provider, serviceQuery),
+    settings,
+  );
 }
 
 /**
@@ -162,22 +219,26 @@ exports.getProviders = async (req, res, next) => {
       try {
         const ids = providers.map((p) => p._id);
         const users = await User.find({_id: {$in: ids}})
-          .select('+encryptedPin +pinHash')
+          .select(PIN_SELECT + ' customerProfileEnabled customerAccessActive role isActive')
           .lean();
         const byId = new Map(users.map((u) => [u._id, u]));
         enriched = providers.map((p) => {
           const u = byId.get(p._id);
+          const flags = adminProfileFlags(u || {role: 'provider'}, p);
           return {
             ...p,
             phone: p.phone || p.phoneNumber || u?.phone || u?.phoneNumber,
             phoneNumber:
               p.phoneNumber || p.phone || u?.phoneNumber || u?.phone,
             location: p.location || u?.location || undefined,
-            hasPin: Boolean(u?.pinHash || u?.encryptedPin),
-            isActive:
-              p.isActive !== false && (u ? u.isActive !== false : true),
+            hasPin: hasPinForPurpose(u, 'partner'),
+            hasPartnerPin: hasPinForPurpose(u, 'partner'),
+            hasCustomerPin: hasPinForPurpose(u, 'customer'),
+            ...flags,
+            isActive: p.isActive !== false,
             deactivationReason:
               p.deactivationReason || u?.deactivationReason || undefined,
+            services: summarizePartnerServices(p),
           };
         });
       } catch (e) {
@@ -185,7 +246,14 @@ exports.getProviders = async (req, res, next) => {
       }
     } else {
       const settings = await getContactSettings();
-      enriched = providers.map((p) => toPublicProviderForSettings(p, settings));
+      const serviceQuery = serviceType ? String(serviceType).trim() : '';
+      enriched = providers
+        .filter((p) =>
+          serviceQuery
+            ? isServiceCustomerVisible(p, serviceQuery)
+            : hasAnyCustomerVisibleService(p),
+        )
+        .map((p) => publicProviderRow(p, settings, serviceQuery));
     }
 
     if (viewerId && !isAdmin) {
@@ -268,12 +336,17 @@ exports.getProviderById = async (req, res, next) => {
     if (req.user?.role === 'admin') {
       try {
         const linkedUser = await User.findById(providerId).select(
-          '+encryptedPin +pinHash',
+          PIN_SELECT + ' customerProfileEnabled customerAccessActive role isActive',
         );
-        providerData.hasPin = Boolean(
-          linkedUser?.pinHash || linkedUser?.encryptedPin,
+        providerData.hasPin = hasPinForPurpose(linkedUser, 'partner');
+        providerData.hasPartnerPin = hasPinForPurpose(linkedUser, 'partner');
+        providerData.hasCustomerPin = hasPinForPurpose(linkedUser, 'customer');
+        Object.assign(
+          providerData,
+          adminProfileFlags(linkedUser || {role: 'provider'}, providerData),
         );
         providerData.userId = linkedUser?._id || providerId;
+        providerData.services = summarizePartnerServices(providerData);
         const userLoc = linkedUser?.location;
         if (userLoc && typeof userLoc === 'object') {
           const existing = providerData.location || {};
@@ -308,7 +381,7 @@ exports.getProviderById = async (req, res, next) => {
           };
         }
         if (providerData.isActive === undefined || providerData.isActive === null) {
-          providerData.isActive = linkedUser?.isActive !== false;
+          providerData.isActive = true;
         }
         if (!providerData.deactivationReason && linkedUser?.deactivationReason) {
           providerData.deactivationReason = linkedUser.deactivationReason;
@@ -327,7 +400,8 @@ exports.getProviderById = async (req, res, next) => {
     let payload = providerData;
     if (!isAdmin && !isSelfProvider) {
       const settings = await getContactSettings();
-      payload = toPublicProviderForSettings(providerData, settings);
+      const serviceQuery = String(req.query.serviceType || '').trim();
+      payload = publicProviderRow(providerData, settings, serviceQuery);
     }
 
     res.json({
@@ -354,6 +428,11 @@ exports.getMyProfile = async (req, res, next) => {
       });
     }
 
+    ensureQualifications(provider);
+    if (provider.isModified()) {
+      await provider.save();
+    }
+
     res.json({
       success: true,
       data: provider,
@@ -377,6 +456,10 @@ exports.updateMyProfile = async (req, res, next) => {
     // Prevent changing approval status or role directly
     delete updateData.approvalStatus;
     delete updateData.role;
+    delete updateData.verified;
+    delete updateData.serviceCategories;
+    delete updateData.serviceQualifications;
+    delete updateData.inactiveServiceCategories;
 
     // Keep location + address in sync when either is sent
     if (updateData.address && typeof updateData.address === 'object') {
@@ -413,11 +496,34 @@ exports.updateMyProfile = async (req, res, next) => {
       }
     }
 
+    const requestedPrimary = String(
+      updateData.serviceType || updateData.specialization || '',
+    ).trim();
+    delete updateData.serviceType;
+    delete updateData.specialization;
+    delete updateData.specialty;
+
     const provider = await Provider.findByIdAndUpdate(
       req.user.uid,
       {$set: updateData},
       {new: true, runValidators: false, upsert: true},
     );
+
+    if (provider && requestedPrimary) {
+      const known = allServicesForProvider(provider);
+      const existing = known.find(
+        (s) => s.toLowerCase() === requestedPrimary.toLowerCase(),
+      );
+      if (existing) {
+        provider.serviceType = existing;
+        provider.specialization = existing;
+        await provider.save();
+      } else if (!known.length) {
+        const canonical = (await resolveActiveCategoryName(requestedPrimary)) || requestedPrimary;
+        addServiceToProvider(provider, canonical, {source: 'self'});
+        await provider.save();
+      }
+    }
 
     // Sync linked user profile address fields (incl. landmark)
     try {
@@ -502,6 +608,15 @@ exports.updateMyServiceAvailability = async (req, res, next) => {
       });
     }
 
+    if (active && !isServiceVerified(provider, match)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message:
+          'This service cannot receive new jobs until verification is complete.',
+      });
+    }
+
     const inactive = Array.isArray(provider.inactiveServiceCategories)
       ? [...provider.inactiveServiceCategories]
       : [];
@@ -522,6 +637,472 @@ exports.updateMyServiceAvailability = async (req, res, next) => {
       message: active
         ? 'Service is now active for new jobs.'
         : 'Service is now inactive for new jobs.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+async function addServiceToExistingProvider(provider, rawName, source) {
+  const canonical = await resolveActiveCategoryName(rawName);
+  if (!canonical) {
+    return {
+      error: {
+        status: 400,
+        body: {
+          success: false,
+          error: 'Validation Error',
+          message: 'This service is not available.',
+        },
+      },
+    };
+  }
+  const result = addServiceToProvider(provider, canonical, {source});
+  if (result.duplicate) {
+    return {
+      error: {
+        status: 409,
+        body: {
+          success: false,
+          error: 'Conflict',
+          message: 'This service is already added.',
+        },
+      },
+    };
+  }
+  provider.updatedAt = new Date();
+  await provider.save();
+  return {provider};
+}
+
+/**
+ * Add another professional service to the same Partner profile.
+ * POST /api/providers/me/services
+ * Body: { serviceName: string }
+ */
+exports.addMyService = async (req, res, next) => {
+  try {
+    await connectDB();
+    const provider = await Provider.findById(req.user.uid);
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'Provider profile not found.',
+      });
+    }
+    const result = await addServiceToExistingProvider(
+      provider,
+      req.body?.serviceName || req.body?.name,
+      'self',
+    );
+    if (result.error) {
+      return res.status(result.error.status).json(result.error.body);
+    }
+    res.status(201).json({
+      success: true,
+      data: result.provider,
+      message: 'Service added. Complete this service information for verification.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+function findOwnedService(provider, raw) {
+  const name = decodeURIComponent(String(raw || '')).trim();
+  if (!name) return null;
+  return allServicesForProvider(provider).find(
+    (s) => s.toLowerCase() === name.toLowerCase(),
+  );
+}
+
+function sanitizeServiceDocuments(providerId, docs) {
+  if (!Array.isArray(docs)) return null;
+  const out = [];
+  const seen = new Set();
+  for (const d of docs) {
+    const key = String(d?.key || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 40);
+    const url = String(d?.url || '').trim();
+    if (!key || !url || seen.has(key)) continue;
+    if (!providerOwnsDocumentUrl(providerId, url)) continue;
+    seen.add(key);
+    out.push({
+      key,
+      label: String(d.label || '').trim().slice(0, 80),
+      url,
+      fileName: String(d.fileName || '').trim().slice(0, 120),
+      uploadedAt: d.uploadedAt ? new Date(d.uploadedAt) : new Date(),
+    });
+  }
+  return out;
+}
+
+function applyServiceDetailsBody(provider, match, body) {
+  const extra = {};
+  if (body?.experience !== undefined) {
+    const n = Number(body.experience);
+    extra.experience = Number.isFinite(n) ? Math.max(0, Math.min(60, n)) : 0;
+  }
+  if (body?.notes !== undefined) {
+    extra.notes = String(body.notes || '').trim().slice(0, 1000);
+  }
+  if (body?.serviceInfo && typeof body.serviceInfo === 'object') {
+    extra.serviceInfo = body.serviceInfo;
+  }
+  const docs = sanitizeServiceDocuments(provider._id, body?.documents);
+  if (docs) extra.documents = docs;
+  const current = qualificationForService(provider, match);
+  upsertQualification(
+    provider,
+    match,
+    current?.verificationStatus === 'rejected' ? 'rejected' : 'required',
+    extra,
+  );
+}
+
+/**
+ * GET /api/providers/me/services/:serviceName
+ */
+exports.getMyServiceDetails = async (req, res, next) => {
+  try {
+    await connectDB();
+    const provider = await Provider.findById(req.user.uid);
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'Provider profile not found.',
+      });
+    }
+    const match = findOwnedService(provider, req.params.serviceName);
+    if (!match) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'This service is not on your profile.',
+      });
+    }
+    const category = await ServiceCategory.findOne({
+      name: new RegExp(`^${escapeRegex(match)}$`, 'i'),
+    }).lean();
+    const docs = provider.documents || {};
+    res.json({
+      success: true,
+      data: {
+        serviceName: match,
+        qualification: qualificationForService(provider, match),
+        requiredDocuments: documentsForCategory(category),
+        identityReady: Boolean(docs.idProof),
+        addressReady: Boolean(docs.addressProof),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/providers/me/services/:serviceName
+ * Save service-specific draft (experience, notes, documents).
+ */
+exports.updateMyServiceDetails = async (req, res, next) => {
+  try {
+    await connectDB();
+    const provider = await Provider.findById(req.user.uid);
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'Provider profile not found.',
+      });
+    }
+    const match = findOwnedService(provider, req.params.serviceName);
+    if (!match) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'This service is not on your profile.',
+      });
+    }
+    const current = qualificationForService(provider, match);
+    if (!canEditServiceQualification(current?.verificationStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'This service information cannot be edited right now.',
+      });
+    }
+    applyServiceDetailsBody(provider, match, req.body || {});
+    provider.updatedAt = new Date();
+    await provider.save();
+    res.json({
+      success: true,
+      data: provider,
+      message: 'Service information saved.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/providers/me/services/:serviceName/submit
+ */
+exports.submitMyServiceForReview = async (req, res, next) => {
+  try {
+    await connectDB();
+    const provider = await Provider.findById(req.user.uid);
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'Provider profile not found.',
+      });
+    }
+    const match = findOwnedService(provider, req.params.serviceName);
+    if (!match) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'This service is not on your profile.',
+      });
+    }
+    const current = qualificationForService(provider, match);
+    if (!canEditServiceQualification(current?.verificationStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'This service is already under review or verified.',
+      });
+    }
+    applyServiceDetailsBody(provider, match, req.body || {});
+    const next = qualificationForService(provider, match);
+    if (next?.experience == null || Number(next.experience) < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'Please enter your experience for this service.',
+      });
+    }
+    const category = await ServiceCategory.findOne({
+      name: new RegExp(`^${escapeRegex(match)}$`, 'i'),
+    }).lean();
+    const required = documentsForCategory(category).filter((d) => d.required);
+    const uploaded = next?.documents || [];
+    const missing = required.find(
+      (d) => !uploaded.some((u) => u.key === d.key && u.url),
+    );
+    if (missing) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'Please upload the required documents for this service.',
+      });
+    }
+    upsertQualification(provider, match, 'pending', {
+      submittedAt: new Date(),
+      rejectionReason: '',
+    });
+    setInactive(provider, match, true);
+    provider.updatedAt = new Date();
+    await provider.save();
+    res.json({
+      success: true,
+      data: provider,
+      message: 'Service information submitted for review.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Admin: add a service to an existing Partner (same account).
+ * POST /api/providers/:providerId/services
+ */
+exports.addProviderService = async (req, res, next) => {
+  try {
+    await connectDB();
+    const provider = await Provider.findById(req.params.providerId);
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'Provider not found.',
+      });
+    }
+    const result = await addServiceToExistingProvider(
+      provider,
+      req.body?.serviceName || req.body?.name,
+      'admin',
+    );
+    if (result.error) {
+      return res.status(result.error.status).json(result.error.body);
+    }
+    res.status(201).json({
+      success: true,
+      data: result.provider,
+      message: 'Service added to this Partner.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Admin: update verification for one professional service.
+ * PUT /api/providers/:providerId/service-qualifications
+ * Body: { serviceName, verificationStatus, rejectionReason? }
+ */
+exports.updateProviderServiceQualification = async (req, res, next) => {
+  try {
+    await connectDB();
+    const name = String(req.body?.serviceName || req.body?.name || '').trim();
+    const verificationStatus = String(req.body?.verificationStatus || '')
+      .trim()
+      .toLowerCase();
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'Service name is required.',
+      });
+    }
+    if (!VERIFICATION_STATUSES.includes(verificationStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'Invalid verification status.',
+      });
+    }
+    if (verificationStatus === 'rejected' && !String(req.body?.rejectionReason || '').trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'Please provide a reason for rejecting this service.',
+      });
+    }
+
+    const provider = await Provider.findById(req.params.providerId);
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'Provider not found.',
+      });
+    }
+
+    const match = allServicesForProvider(provider).find(
+      (s) => s.toLowerCase() === name.toLowerCase(),
+    );
+    if (!match) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'This service is not on the Partner profile.',
+      });
+    }
+
+    upsertQualification(provider, match, verificationStatus, {
+      rejectionReason: req.body?.rejectionReason,
+      reviewedAt: new Date(),
+      reviewedBy: req.user.uid,
+    });
+    if (verificationStatus !== 'approved') {
+      setInactive(provider, match, true);
+    }
+    provider.updatedAt = new Date();
+    await provider.save();
+
+    res.json({
+      success: true,
+      data: provider,
+      message: 'Service verification updated.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PATCH /api/providers/:providerId/service-profile
+ * Admin updates per-service profile fields (experience, notes) without
+ * changing the service verification status or other services.
+ */
+exports.updateProviderServiceProfile = async (req, res, next) => {
+  try {
+    await connectDB();
+    const name = String(req.body?.serviceName || req.body?.name || '').trim();
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'Service name is required.',
+      });
+    }
+
+    const provider = await Provider.findById(req.params.providerId);
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'Provider not found.',
+      });
+    }
+
+    const match = allServicesForProvider(provider).find(
+      (s) => s.toLowerCase() === name.toLowerCase(),
+    );
+    if (!match) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'This service is not on the Partner profile.',
+      });
+    }
+
+    // Only update the profile fields — preserve verificationStatus as-is
+    const list = (provider.serviceQualifications || []).map((q) => ({...q}));
+    let idx = list.findIndex(
+      (q) => String(q.name || '').toLowerCase() === name.toLowerCase(),
+    );
+    if (idx < 0) {
+      list.push({name: match});
+      idx = list.length - 1;
+    }
+    const existing = list[idx];
+    const body = req.body || {};
+    if (body.experience !== undefined) {
+      existing.experience =
+        body.experience === null || body.experience === ''
+          ? undefined
+          : Number(body.experience);
+    }
+    const nextServiceInfo =
+      body.serviceInfo !== undefined
+        ? String(body.serviceInfo || '')
+        : body.notes !== undefined
+          ? String(body.notes || '')
+          : undefined;
+    if (body.notes !== undefined) existing.notes = String(body.notes || '');
+    if (nextServiceInfo !== undefined) {
+      existing.notes = nextServiceInfo;
+      existing.serviceInfo = nextServiceInfo;
+    }
+    existing.updatedAt = new Date();
+    list[idx] = existing;
+    provider.serviceQualifications = list;
+    provider.updatedAt = new Date();
+    await provider.save();
+
+    res.json({
+      success: true,
+      data: provider,
+      message: 'Service profile updated.',
     });
   } catch (error) {
     next(error);
@@ -652,6 +1233,24 @@ exports.updateProvider = async (req, res, next) => {
     // Prevent changing critical fields that should use specific endpoints
     delete updateData._id;
     delete updateData.createdAt;
+    delete updateData.serviceQualifications;
+
+    const existing = await Provider.findById(providerId);
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        error: 'Provider not found',
+        message: 'Provider not found',
+      });
+    }
+
+    const incomingCats = updateData.serviceCategories;
+    if (Array.isArray(incomingCats) && incomingCats.length === 1) {
+      const existingNames = allServicesForProvider(existing);
+      if (existingNames.length > 1) {
+        delete updateData.serviceCategories;
+      }
+    }
 
     if (updateData.phone !== undefined || updateData.phoneNumber !== undefined) {
       const {syncPhoneFields} = require('../../utils/phone');
@@ -676,6 +1275,27 @@ exports.updateProvider = async (req, res, next) => {
         error: 'Provider not found',
         message: 'Provider not found',
       });
+    }
+
+    const primaryName = String(
+      updateData.serviceType || updateData.specialization || '',
+    ).trim();
+    if (primaryName) {
+      const known = allServicesForProvider(provider);
+      const match = known.find(
+        (s) => s.toLowerCase() === primaryName.toLowerCase(),
+      );
+      if (match) {
+        provider.serviceType = match;
+        provider.specialization = match;
+        ensureServiceOnProfile(provider, match);
+      } else {
+        addServiceToProvider(provider, primaryName, {source: 'admin'});
+        provider.serviceType = primaryName;
+        provider.specialization = primaryName;
+      }
+      ensureQualifications(provider);
+      await provider.save();
     }
 
     console.log(`✅ Admin ${adminId} updated provider ${providerId}`);
@@ -746,6 +1366,16 @@ exports.updateProviderApproval = async (req, res, next) => {
       updateData.verified = true;
     }
 
+    const existing = await Provider.findById(providerId);
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        error: 'Provider not found',
+      });
+    }
+
+    const previouslyApproved = String(existing.approvalStatus || '') === 'approved';
+
     const provider = await Provider.findByIdAndUpdate(
       providerId,
       {$set: updateData},
@@ -757,6 +1387,14 @@ exports.updateProviderApproval = async (req, res, next) => {
         success: false,
         error: 'Provider not found',
       });
+    }
+
+    if (approvalStatus === 'approved' && !previouslyApproved) {
+      for (const name of allServicesForProvider(provider)) {
+        upsertQualification(provider, name, 'approved');
+      }
+      provider.updatedAt = new Date();
+      await provider.save();
     }
 
     res.json({
@@ -787,8 +1425,11 @@ exports.uploadProviderDocument = async (req, res, next) => {
 
     await connectDB();
     const {providerId, docKey} = req.params;
+    const requestedServiceName = String(
+      req.body?.serviceName || req.query?.serviceName || '',
+    ).trim();
 
-    if (!ALLOWED_DOC_KEYS.includes(docKey)) {
+    if (!requestedServiceName && !ALLOWED_DOC_KEYS.includes(docKey)) {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
@@ -812,15 +1453,116 @@ exports.uploadProviderDocument = async (req, res, next) => {
       });
     }
 
-    const validated = validateDocumentBuffer(
-      req.file.buffer,
-      req.file.mimetype,
-    );
-    const key = buildProviderDocumentKey(
-      providerId,
-      docKey,
-      validated.extension,
-    );
+    const validated = validateDocumentBuffer(req.file.buffer, req.file.mimetype);
+
+    if (requestedServiceName) {
+      const match = allServicesForProvider(provider).find(
+        (s) => s.toLowerCase() === requestedServiceName.toLowerCase(),
+      );
+      if (!match) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation Error',
+          message: 'This service is not on the Partner profile.',
+        });
+      }
+
+      const category = await ServiceCategory.findOne({
+        name: new RegExp(`^${escapeRegex(match)}$`, 'i'),
+      }).lean();
+      const allowedDocs = documentsForCategory(category);
+      const allowedDoc = allowedDocs.find(
+        (d) => String(d.key || '').trim() === String(docKey || '').trim(),
+      );
+      if (!allowedDoc) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: 'Invalid service document key for this category.',
+        });
+      }
+
+      const storageKey = buildProviderDocumentKey(
+        providerId,
+        serviceDocStorageKey(match, docKey),
+        validated.extension,
+      );
+      const uploaded = await s3.uploadFile({
+        body: req.file.buffer,
+        key: storageKey,
+        contentType: validated.contentType,
+        userId: req.user?.uid,
+      });
+
+      const list = Array.isArray(provider.serviceQualifications)
+        ? provider.serviceQualifications.map((q) => ({
+            ...q.toObject?.(),
+            ...q,
+            documents: Array.isArray(q.documents)
+              ? q.documents.map((d) => ({...d}))
+              : [],
+          }))
+        : [];
+      let idx = list.findIndex(
+        (q) => String(q.name || '').toLowerCase() === match.toLowerCase(),
+      );
+      if (idx < 0) {
+        list.push({name: match, documents: []});
+        idx = list.length - 1;
+      }
+      const existing = list[idx] || {name: match, documents: []};
+      const previousDoc = (existing.documents || []).find(
+        (d) => String(d.key || '') === String(docKey || ''),
+      );
+      existing.documents = [
+        ...(existing.documents || []).filter(
+          (d) => String(d.key || '') !== String(docKey || ''),
+        ),
+        {
+          key: String(docKey),
+          label: allowedDoc.label || String(docKey),
+          url: uploaded.url,
+          fileName:
+            String(req.file.originalname || '').trim() ||
+            uploaded.key.split('/').pop(),
+          uploadedAt: new Date(),
+        },
+      ];
+      existing.updatedAt = new Date();
+      if (!existing.serviceInfo || serviceInfoText(existing) === '') {
+        existing.serviceInfo = existing.serviceInfo || '';
+      }
+      list[idx] = existing;
+      provider.serviceQualifications = list;
+      provider.updatedAt = new Date();
+      await provider.save();
+
+      if (previousDoc?.url && previousDoc.url !== uploaded.url) {
+        try {
+          const oldKey = keyFromUrlOrKey(previousDoc.url);
+          normalizeObjectKey(oldKey);
+          await s3.deleteObject(oldKey, {userId: req.user?.uid});
+        } catch {
+          /* ignore legacy disk URLs */
+        }
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          url: uploaded.url,
+          key: uploaded.key,
+          contentType: uploaded.contentType,
+          size: uploaded.size,
+          serviceName: match,
+          serviceDocuments: existing.documents,
+          provider,
+        },
+        message: 'Service document uploaded successfully',
+      });
+    }
+
+    const key = buildProviderDocumentKey(providerId, docKey, validated.extension);
     const uploaded = await s3.uploadFile({
       body: req.file.buffer,
       key,

@@ -35,6 +35,11 @@ const systemConfigSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    /** One-time branding theme migration marker for default clients. */
+    brandingPaletteVersion: {
+      type: String,
+      default: '',
+    },
     updatedAt: {
       type: Date,
       default: Date.now,

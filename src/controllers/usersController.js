@@ -6,9 +6,27 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const User = require('../models/User');
-const {encryptToken, decryptToken} = require('../utils/tokenEncryption');
+const {decryptToken} = require('../utils/tokenEncryption');
 const {syncPhoneFields} = require('../utils/phone');
 const {verifySuperAdminToken} = require('../utils/jwtAuth');
+const {
+  hasCustomerProfile,
+  hasPartnerProfile,
+  CUSTOMER_PROFILE_MATCH,
+  isCustomerAccessActive,
+  adminProfileFlags,
+} = require('../utils/userProfiles');
+const {
+  PIN_SELECT,
+  isValidPin,
+  assertPinGloballyUnique,
+  generateUniquePin,
+  resolvePinPurpose,
+  applyRolePin,
+  encryptedPinForPurpose,
+  hasPinForPurpose,
+  hashAndEncryptPin,
+} = require('../utils/rolePins');
 const {
   createPendingAdmin,
   resolveAdminStatus,
@@ -23,7 +41,6 @@ const ADMIN_LIST_SORT = require('../utils/adminListSort');
 
 const PASSWORD_SALT_ROUNDS = 12;
 const MIN_PASSWORD_LENGTH = 8;
-const PIN_SALT_ROUNDS = 12;
 
 function assertSuperAdminElevation(req) {
   const token = (
@@ -60,15 +77,6 @@ function assertSuperAdminElevation(req) {
   return decoded;
 }
 
-function isValidPin(pin) {
-  return typeof pin === 'string' && /^\d{6}$/.test(pin);
-}
-
-function pinHmacKey(pin) {
-  const secret = process.env.JWT_SECRET || process.env.HMAC_JWT_SECRET || 'pin';
-  return crypto.createHmac('sha256', secret).update(`pin:${pin}`).digest('hex');
-}
-
 function revealLoginPin(encryptedPin) {
   if (!encryptedPin) return null;
   try {
@@ -78,7 +86,7 @@ function revealLoginPin(encryptedPin) {
   }
 }
 
-function withAdminPinFields(userDoc, isAdmin) {
+function withAdminPinFields(userDoc, isAdmin, pinPurpose) {
   const raw =
     typeof userDoc.toObject === 'function' ? userDoc.toObject() : {...userDoc};
   delete raw.passwordHash;
@@ -86,12 +94,26 @@ function withAdminPinFields(userDoc, isAdmin) {
   delete raw.pinKey;
   delete raw.encryptedPin;
   delete raw.encryptedAuthToken;
+  delete raw.customerPinHash;
+  delete raw.customerPinKey;
+  delete raw.customerEncryptedPin;
+  delete raw.partnerPinHash;
+  delete raw.partnerPinKey;
+  delete raw.partnerEncryptedPin;
   delete raw.fcmToken;
   delete raw.totpSecretEncrypted;
   delete raw.activationTokenHash;
 
+  Object.assign(raw, adminProfileFlags(userDoc));
+
   if (isAdmin) {
-    raw.hasPin = Boolean(userDoc.pinHash || userDoc.encryptedPin || raw.hasPin);
+    raw.hasCustomerPin = hasPinForPurpose(userDoc, 'customer');
+    raw.hasPartnerPin = hasPinForPurpose(userDoc, 'partner');
+    const purpose = pinPurpose || (hasPartnerProfile(userDoc) && !hasCustomerProfile(userDoc)
+      ? 'partner'
+      : 'customer');
+    raw.hasPin = hasPinForPurpose(userDoc, purpose);
+    raw.pinPurpose = purpose;
     // Never bulk-return plaintext PIN — use GET /api/users/:id/pin to reveal
   }
 
@@ -140,6 +162,9 @@ exports.getMe = async (req, res, next) => {
     delete userData.activationTokenHash;
 
     const jwtRole = req.accessTokenPayload?.role;
+    if (user.role === 'provider') {
+      userData.canSwitchToPartner = true;
+    }
     if (
       jwtRole === 'customer' &&
       user.role === 'provider' &&
@@ -173,7 +198,7 @@ exports.getUserById = async (req, res, next) => {
     const isOwnProfile = userId === req.user.uid;
 
     const user = await User.findById(userId).select(
-      isAdmin ? '+encryptedPin +pinHash' : undefined,
+      isAdmin ? PIN_SELECT : undefined,
     );
 
     if (!user) {
@@ -633,21 +658,36 @@ exports.getAllUsers = async (req, res, next) => {
     const off = Math.max(parseInt(offset, 10) || 0, 0);
 
     const query = {};
+    const listingCustomers =
+      String(role || '').toLowerCase() === 'customer' && !roles;
     if (roles) {
       const list = String(roles)
         .split(',')
         .map((s) => s.trim().toLowerCase())
         .filter(Boolean);
       if (list.length) query.role = {$in: list};
-    } else if (role) {
+    } else if (role && !listingCustomers) {
       query.role = String(role).toLowerCase();
     }
 
-    if (String(includeInactive) !== 'true') {
-      query.isActive = {$ne: false};
+    const andClauses = [];
+    if (listingCustomers) {
+      andClauses.push(CUSTOMER_PROFILE_MATCH);
     }
 
-    const andClauses = [];
+    if (String(includeInactive) !== 'true') {
+      if (listingCustomers) {
+        andClauses.push({
+          $or: [
+            {customerAccessActive: true},
+            {customerAccessActive: {$ne: false}, isActive: {$ne: false}},
+          ],
+        });
+      } else {
+        query.isActive = {$ne: false};
+      }
+    }
+
     const escapeRegex = (s) =>
       String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -711,7 +751,7 @@ exports.getAllUsers = async (req, res, next) => {
 
     const [users, total] = await Promise.all([
       User.find(query)
-        .select('+encryptedPin +pinHash')
+        .select(PIN_SELECT)
         .sort(ADMIN_LIST_SORT)
         .limit(lim)
         .skip(off)
@@ -719,7 +759,14 @@ exports.getAllUsers = async (req, res, next) => {
       User.countDocuments(query),
     ]);
 
-    const sanitizedUsers = users.map((user) => withAdminPinFields(user, true));
+    const pinPurpose = listingCustomers ? 'customer' : undefined;
+    const sanitizedUsers = users.map((user) => {
+      const row = withAdminPinFields(user, true, pinPurpose);
+      if (listingCustomers) {
+        row.isActive = isCustomerAccessActive(user);
+      }
+      return row;
+    });
 
     res.json({
       success: true,
@@ -737,12 +784,12 @@ exports.getAllUsers = async (req, res, next) => {
 /**
  * GET /api/users/:userId/pin
  * One-shot reveal of recoverable login PIN (admin only).
- * Admin-role targets require Super Admin elevation.
+ * Query: purpose=customer|partner
  */
 exports.revealUserPinByAdmin = async (req, res, next) => {
   try {
     const {userId} = req.params;
-    const user = await User.findById(userId).select('+encryptedPin +pinHash');
+    const user = await User.findById(userId).select(PIN_SELECT);
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -760,8 +807,12 @@ exports.revealUserPinByAdmin = async (req, res, next) => {
       });
     }
 
-    const hasPin = Boolean(user.pinHash || user.encryptedPin);
-    const loginPin = revealLoginPin(user.encryptedPin);
+    const purpose = resolvePinPurpose(
+      req.query.purpose || req.body?.purpose,
+      user,
+    );
+    const hasPin = hasPinForPurpose(user, purpose);
+    const loginPin = revealLoginPin(encryptedPinForPurpose(user, purpose));
 
     res.json({
       success: true,
@@ -770,6 +821,9 @@ exports.revealUserPinByAdmin = async (req, res, next) => {
         hasPin,
         loginPin,
         recoverable: Boolean(loginPin),
+        purpose,
+        hasCustomerPin: hasPinForPurpose(user, 'customer'),
+        hasPartnerPin: hasPinForPurpose(user, 'partner'),
       },
     });
   } catch (error) {
@@ -779,7 +833,7 @@ exports.revealUserPinByAdmin = async (req, res, next) => {
 
 /**
  * Set / reset a user's login PIN (admin only).
- * Body: { pin? } — if omitted, a unique 6-digit PIN is generated.
+ * Body: { pin?, purpose?: 'customer' | 'partner' }
  * Returns plaintext loginPin so admin can share it with the user.
  */
 exports.setUserPinByAdmin = async (req, res, next) => {
@@ -788,7 +842,7 @@ exports.setUserPinByAdmin = async (req, res, next) => {
     let pin =
       req.body.pin != null ? String(req.body.pin).trim() : '';
 
-    const user = await User.findById(userId).select('+pinHash +pinKey +encryptedPin');
+    const user = await User.findById(userId).select(PIN_SELECT);
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -815,26 +869,16 @@ exports.setUserPinByAdmin = async (req, res, next) => {
       });
     }
 
+    const purpose = resolvePinPurpose(req.body.purpose || req.query.purpose, user);
+
     if (!pin) {
-      for (let i = 0; i < 40; i++) {
-        const candidate = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
-        const key = pinHmacKey(candidate);
-        const clash = await User.findOne({
-          pinKey: key,
-          _id: {$ne: userId},
-        })
-          .select('_id')
-          .lean();
-        if (!clash) {
-          pin = candidate;
-          break;
-        }
-      }
-      if (!pin) {
-        return res.status(503).json({
+      try {
+        pin = await generateUniquePin(User);
+      } catch (e) {
+        return res.status(e.statusCode || 503).json({
           success: false,
           error: 'Service Unavailable',
-          message: 'Could not allocate a unique PIN',
+          message: e.message || 'Could not allocate a unique PIN',
         });
       }
     }
@@ -847,34 +891,33 @@ exports.setUserPinByAdmin = async (req, res, next) => {
       });
     }
 
-    const pinKey = pinHmacKey(pin);
-    const clash = await User.findOne({
-      pinKey,
-      _id: {$ne: userId},
-    })
-      .select('_id')
-      .lean();
-    if (clash) {
-      return res.status(409).json({
+    let pinKey;
+    try {
+      pinKey = await assertPinGloballyUnique(User, pin, userId);
+    } catch (e) {
+      return res.status(e.statusCode || 409).json({
         success: false,
-        error: 'Conflict',
-        message: 'This PIN is already in use. Choose a different 6-digit PIN.',
+        error: e.statusCode === 409 ? 'Conflict' : 'Bad Request',
+        message: e.message,
       });
     }
 
-    user.pinHash = await bcrypt.hash(pin, PIN_SALT_ROUNDS);
-    user.pinKey = pinKey;
+    let hashed;
     try {
-      user.encryptedPin = encryptToken(pin);
+      hashed = await hashAndEncryptPin(pin);
     } catch (e) {
-      return res.status(500).json({
+      return res.status(e.statusCode || 500).json({
         success: false,
         error: 'Server Error',
-        message:
-          e.message ||
-          'TOKEN_ENCRYPTION_KEY is required to store recoverable PINs',
+        message: e.message,
       });
     }
+
+    applyRolePin(
+      user,
+      {hash: hashed.hash, key: pinKey, encrypted: hashed.encrypted},
+      purpose,
+    );
     user.updatedAt = new Date();
     await user.save();
 
@@ -884,10 +927,16 @@ exports.setUserPinByAdmin = async (req, res, next) => {
         _id: user._id,
         loginPin: pin,
         hasPin: true,
+        purpose,
         role: user.role,
         phone: user.phone || user.phoneNumber,
+        hasCustomerPin: hasPinForPurpose(user, 'customer'),
+        hasPartnerPin: hasPinForPurpose(user, 'partner'),
       },
-      message: 'Login PIN updated',
+      message:
+        purpose === 'partner'
+          ? 'Partner login PIN updated'
+          : 'Customer login PIN updated',
     });
   } catch (error) {
     next(error);
@@ -1179,6 +1228,14 @@ exports.createUserByAdmin = async (req, res, next) => {
             serviceType: serviceType || undefined,
             specialization: serviceType || undefined,
             serviceCategories,
+            serviceQualifications: serviceCategories.map((name) => ({
+              name,
+              verificationStatus:
+                (req.body.approvalStatus || '').toLowerCase() === 'pending'
+                  ? 'pending'
+                  : 'approved',
+              updatedAt: new Date(),
+            })),
             experience: Number.isFinite(experience) ? experience : undefined,
             rating: Number.isFinite(rating) ? rating : 0,
             location,
@@ -1221,12 +1278,14 @@ exports.createUserByAdmin = async (req, res, next) => {
 };
 
 /**
- * Admin soft-deactivate user (blocks login). Body: { reason }
+ * Admin soft-deactivate user. Body: { reason, scope?: 'customer' | 'partner' | 'account' }
+ * Customer scope does not deactivate Partner access, and vice versa.
  */
 exports.deactivateUserByAdmin = async (req, res, next) => {
   try {
     const {userId} = req.params;
     const reason = (req.body.reason || '').trim();
+    const scope = String(req.body.scope || 'account').toLowerCase();
     if (!reason) {
       return res.status(400).json({
         success: false,
@@ -1262,26 +1321,48 @@ exports.deactivateUserByAdmin = async (req, res, next) => {
       }
     }
 
-    user.isActive = false;
-    user.deactivatedAt = new Date();
-    user.deactivationReason = reason;
-    user.deactivatedBy = req.user?.uid || '';
+    const now = new Date();
+    const actor = req.user?.uid || '';
+    const deactivatePartner = scope === 'partner' || scope === 'account';
+    const deactivateCustomer = scope === 'customer' || scope === 'account';
+
+    if (deactivateCustomer) {
+      user.customerAccessActive = false;
+      if (!hasPartnerProfile(user) || scope === 'account') {
+        user.isActive = false;
+        user.deactivatedAt = now;
+        user.deactivationReason = reason;
+        user.deactivatedBy = actor;
+      }
+    }
+
+    if (deactivatePartner && !hasCustomerProfile(user)) {
+      user.isActive = false;
+      user.deactivatedAt = now;
+      user.deactivationReason = reason;
+      user.deactivatedBy = actor;
+    }
+
     if (user.role === 'admin') {
       user.adminStatus = 'DISABLED';
+      user.isActive = false;
+      user.deactivatedAt = now;
+      user.deactivationReason = reason;
+      user.deactivatedBy = actor;
     }
-    user.updatedAt = new Date();
+    user.updatedAt = now;
     await user.save();
 
-    if (user.role === 'provider') {
+    if (deactivatePartner && hasPartnerProfile(user)) {
       try {
         const Provider = require('../models/Provider');
         await Provider.findByIdAndUpdate(userId, {
           $set: {
             isActive: false,
-            deactivatedAt: user.deactivatedAt,
+            deactivatedAt: now,
             deactivationReason: reason,
-            deactivatedBy: user.deactivatedBy,
-            updatedAt: new Date(),
+            deactivatedBy: actor,
+            updatedAt: now,
           },
         });
       } catch (_) {
@@ -1292,7 +1373,12 @@ exports.deactivateUserByAdmin = async (req, res, next) => {
     res.json({
       success: true,
       data: withAdminPinFields(user, true),
-      message: 'Account deactivated',
+      message:
+        scope === 'customer'
+          ? 'Customer access deactivated'
+          : scope === 'partner'
+            ? 'Partner access deactivated'
+            : 'Account deactivated',
     });
   } catch (error) {
     next(error);
@@ -1300,11 +1386,12 @@ exports.deactivateUserByAdmin = async (req, res, next) => {
 };
 
 /**
- * Admin restore soft-deactivated user
+ * Admin restore soft-deactivated access. Body: { scope?: 'customer' | 'partner' | 'account' }
  */
 exports.restoreUserByAdmin = async (req, res, next) => {
   try {
     const {userId} = req.params;
+    const scope = String(req.body.scope || 'account').toLowerCase();
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({
@@ -1325,10 +1412,26 @@ exports.restoreUserByAdmin = async (req, res, next) => {
       }
     }
 
-    user.isActive = true;
-    user.deactivatedAt = undefined;
-    user.deactivationReason = undefined;
-    user.deactivatedBy = undefined;
+    const restorePartner = scope === 'partner' || scope === 'account';
+    const restoreCustomer = scope === 'customer' || scope === 'account';
+
+    if (restoreCustomer) {
+      user.customerAccessActive = true;
+      if (!hasPartnerProfile(user) || scope === 'account') {
+        user.isActive = true;
+        user.deactivatedAt = undefined;
+        user.deactivationReason = undefined;
+        user.deactivatedBy = undefined;
+      }
+    }
+
+    if (restorePartner && !hasCustomerProfile(user)) {
+      user.isActive = true;
+      user.deactivatedAt = undefined;
+      user.deactivationReason = undefined;
+      user.deactivatedBy = undefined;
+    }
+
     if (user.role === 'admin') {
       if (user.adminStatus === 'PENDING') {
         // Keep PENDING — they still need activation link
@@ -1336,11 +1439,12 @@ exports.restoreUserByAdmin = async (req, res, next) => {
         user.adminStatus = 'ACTIVE';
         user.adminApprovalStatus = 'approved';
       }
+      user.isActive = true;
     }
     user.updatedAt = new Date();
     await user.save();
 
-    if (user.role === 'provider') {
+    if (restorePartner && hasPartnerProfile(user)) {
       try {
         const Provider = require('../models/Provider');
         await Provider.findByIdAndUpdate(userId, {
@@ -1362,7 +1466,12 @@ exports.restoreUserByAdmin = async (req, res, next) => {
     res.json({
       success: true,
       data: withAdminPinFields(user, true),
-      message: 'Account restored',
+      message:
+        scope === 'customer'
+          ? 'Customer access restored'
+          : scope === 'partner'
+            ? 'Partner access restored'
+            : 'Account restored',
     });
   } catch (error) {
     next(error);

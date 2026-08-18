@@ -21,6 +21,7 @@ const {
   registerWithOtp,
   enableCustomerProfile,
   createCustomerContextHandoff,
+  createPartnerContextHandoff,
   exchangeContextHandoff,
 } = require('../controllers/authController');
 const {
@@ -83,6 +84,12 @@ router.post(
   verifyAuth,
   logRequest,
   createCustomerContextHandoff,
+);
+router.post(
+  '/context/partner-handoff',
+  verifyAuth,
+  logRequest,
+  createPartnerContextHandoff,
 );
 router.post('/context/exchange', logRequest, exchangeContextHandoff);
 
