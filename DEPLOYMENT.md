@@ -15,10 +15,9 @@
 |----------|--------|
 | Local long-lived process | **Primary** — `npm run start` / `npm run dev` → `src/server.js` on `0.0.0.0:PORT` |
 | Vercel serverless | **Configured** — `vercel.json` + `api/index.js` exports Express `app` |
-| Docker / Compose | **Not present** |
-| AWS (ECS/EKS/EC2/Lambda) IaC | **Not present** |
-| NGINX configs | **Not present** |
-| CI/CD (GitHub Actions, etc.) | **Not present** |
+| CI/CD (GitHub Actions, etc.) | **Present** — `.github/workflows/deploy.yml` deploys on `main` |
+| Docker / Compose | **Dockerfile** present (ECS/ECR). Compose not present |
+| AWS (ECS/EKS/EC2/Lambda) IaC | **Deploy pipeline** present; cluster/service created once in AWS |
 | `engines` in `package.json` | **Not declared** |
 
 ### Local / persistent host (recommended for production sockets)
@@ -267,7 +266,54 @@ Copy template: `.env.example`. Never commit `.env` (listed in `.gitignore`).
 
 ## CI/CD
 
-**No pipeline files** (`.github/workflows`, GitLab CI, etc.) exist today.
+Production deploys on **push to `main`** (same trigger as CustomerWeb / PartnerWeb).
+
+Workflow: `.github/workflows/deploy.yml`
+
+```
+GitHub main
+    ↓
+npm ci + npm test
+    ↓
+OIDC → AWS (eu-north-1)
+    ↓
+Docker image → Amazon ECR
+    ↓
+Update ECS service (keep existing env/secrets)
+    ↓
+Wait until stable
+    ↓
+GET https://api.akanso.in/health
+```
+
+Manual run: **Actions → Deploy production → Run workflow**.
+
+### GitHub configuration
+
+| Setting | Value |
+|---------|--------|
+| Environment variables | Optional overrides: `AWS_REGION`, `AWS_API_DEPLOY_ROLE_ARN`, `ECR_REPOSITORY`, `ECS_CLUSTER`, `ECS_SERVICE`, `ECS_CONTAINER_NAME` |
+| OIDC | Same GitHub ↔ AWS OIDC provider as the web apps |
+
+Defaults (AWS account `715831355325`):
+
+| Resource | Default name |
+|----------|----------------|
+| IAM role | `AkansoApiDeployRole` |
+| ECR repository | `akanso-api` (created on first deploy if missing) |
+| ECS cluster | `akanso` |
+| ECS service / container | `akanso-api` |
+| Health URL | `https://api.akanso.in/health` |
+
+The workflow **does not bake `.env` into the image**. MongoDB, JWT, Twilio, and other secrets stay on the existing ECS task definition (Secrets Manager / SSM / task env), the same way CustomerWeb keeps production `config.json` on S3.
+
+### One-time AWS bootstrap (before the first successful deploy)
+
+1. Create GitHub OIDC trust on `AkansoApiDeployRole` for `SA-PrivateLimited/homeservices-backend` (same pattern as `AkansoWebDeployRole`).
+2. Grant the role: ECR push, `ecs:Describe*`, `ecs:RegisterTaskDefinition`, `ecs:UpdateService`, `iam:PassRole` for the task execution role.
+3. Create an ECS Fargate cluster `akanso`, service `akanso-api`, ALB + ACM cert for **api.akanso.in**, target group health check `/health` on port `3001`.
+4. Put production secrets on that first task definition.
+5. Merge to `main` (or run the workflow manually).
 
 `package.json` scripts:
 
@@ -276,16 +322,7 @@ Copy template: `.env.example`. Never commit `.env` (listed in `.gitignore`).
 | `npm run start` | Production-style local start |
 | `npm run dev` | Nodemon |
 | `npm run check:api` | Smoke against `API_BASE` (default `http://127.0.0.1:3001`) |
-| `npm test` | Placeholder — exits 1 (“no test specified”) |
-
-### Recommended minimal GitHub Actions shape
-
-1. **On PR:** `npm ci` → lint (when added) → `npm test` (when real tests exist).
-2. **On main:** build Docker image → push to ECR → deploy ECS service **or** `vercel deploy --prod` for serverless API-only.
-3. Inject secrets from GitHub Environments / OIDC to AWS — never store production secrets in the repo.
-4. Post-deploy: `curl -f https://api.example.com/health` and optionally `npm run check:api` with `API_BASE` set.
-
-Until that exists, deploys are **manual** (`git pull` + restart, or Vercel CLI/dashboard).
+| `npm test` | Node test runner (`tests/**/*.test.js`) |
 
 ---
 
@@ -423,4 +460,4 @@ curl -sS https://api.example.com/health
 
 ---
 
-*As-implemented: local Node + optional Vercel. Docker, AWS, NGINX, and CI/CD sections describe recommended production patterns not yet checked into this repository.*
+*As-implemented: local Node, optional Vercel, and GitHub Actions production deploy to ECR + ECS on merge to `main`. Docker image is in the repo; the ECS cluster/service/ALB for api.akanso.in is one-time AWS bootstrap.*
