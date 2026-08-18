@@ -148,9 +148,9 @@ exports.getMe = async (req, res, next) => {
       userData.role = 'customer';
     }
 
+    userData.id = userData._id;
     if (userData.role === 'admin') {
       userData.permissions = resolveAdminPermissions(user);
-      userData.id = userData._id;
     }
 
     res.json({
