@@ -15,6 +15,7 @@ const {
 } = require('../../utils/providerServiceAvailability');
 const {
   excludeSelfProviderClause,
+  filterOutSelfProvider,
   normalizeUserId,
 } = require('../../utils/excludeSelfProvider');
 
@@ -185,6 +186,10 @@ exports.getProviders = async (req, res, next) => {
     } else {
       const settings = await getContactSettings();
       enriched = providers.map((p) => toPublicProviderForSettings(p, settings));
+    }
+
+    if (viewerId && !isAdmin) {
+      enriched = filterOutSelfProvider(enriched, viewerId);
     }
 
     res.json({

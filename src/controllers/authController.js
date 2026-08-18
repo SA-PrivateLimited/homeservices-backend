@@ -27,6 +27,11 @@ const {
 } = require('../utils/totp');
 const {assertCanLoginAsAdmin} = require('../services/adminActivationService');
 const {resolveAdminPermissions} = require('../constants/permissions');
+const {
+  hasCustomerProfile,
+  hasPartnerProfile,
+  canEnterAppContext,
+} = require('../utils/userProfiles');
 
 const SALT_ROUNDS = 12;
 
@@ -156,10 +161,9 @@ async function issueSessionForUser(user, {includePin, activeRole} = {}) {
   safe.hasPin = true;
   safe.phoneVerified = true;
   safe.role = role;
+  safe.id = safe._id;
   if (role === 'admin') {
     safe.permissions = permissions;
-    // Shape expected by Admin Web: admin + token
-    safe.id = safe._id;
   }
 
   if (role === 'provider') {
@@ -915,7 +919,15 @@ exports.lookupPhone = async (req, res, next) => {
       .select('+pinHash')
       .lean();
 
-    const roleMatch = !user || user.role === requestedRole;
+    const customerProfile = hasCustomerProfile(user);
+    const partnerProfile = hasPartnerProfile(user);
+    const roleMatch =
+      !user ||
+      (requestedRole === 'customer'
+        ? customerProfile
+        : requestedRole === 'provider'
+          ? partnerProfile
+          : user.role === requestedRole);
 
     res.json({
       success: true,
@@ -927,6 +939,8 @@ exports.lookupPhone = async (req, res, next) => {
         role: user?.role || null,
         roleMatch,
         requestedRole,
+        customerProfile,
+        partnerProfile,
       },
     });
   } catch (err) {
@@ -1076,14 +1090,108 @@ exports.loginPin = async (req, res, next) => {
       });
     }
 
-    if (user.role !== requestedRole) {
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message:
+          user.deactivationReason ||
+          'This account has been deactivated. Contact support.',
+      });
+    }
+
+    const match = await bcrypt.compare(pin, user.pinHash);
+    if (!match) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Incorrect PIN',
+      });
+    }
+
+    if (!canEnterAppContext(user, requestedRole)) {
+      if (requestedRole === 'customer' && hasPartnerProfile(user)) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden',
+          code: 'CUSTOMER_PROFILE_REQUIRED',
+          message:
+            'This number is registered as a Partner. Create a Customer account to continue as a customer.',
+        });
+      }
       return res.status(403).json({
         success: false,
         error: 'Forbidden',
         message:
           requestedRole === 'provider'
             ? 'This number is not registered as a provider. Sign up as a provider first.'
-            : 'This number is registered as a provider. Use the provider app to sign in.',
+            : 'No Customer account exists for this number.',
+      });
+    }
+
+    user.phoneVerified = true;
+    user.updatedAt = new Date();
+    await user.save();
+
+    if (requestedRole === 'provider') {
+      await ensureProviderProfile(user, user.name || user.displayName);
+    }
+
+    const session = await issueSessionForUser(user, {
+      activeRole: requestedRole,
+    });
+    res.json({
+      success: true,
+      data: session,
+      message: 'Logged in successfully',
+    });
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        success: false,
+        error: 'Bad Request',
+        message: err.message,
+      });
+    }
+    next(err);
+  }
+};
+
+/**
+ * POST /api/auth/phone/enable-customer-profile
+ * Partner-only user already authenticated with Mobile + PIN.
+ * Creates a Customer profile on the same Akanso User. No OTP.
+ * Body: { phoneNumber, pin }
+ */
+exports.enableCustomerProfile = async (req, res, next) => {
+  try {
+    const {ten, e164} = assertTenDigitMobile(
+      req.body.phoneNumber || req.body.phone,
+    );
+    const pin = String(req.body.pin || '').trim();
+
+    if (!isValidPin(pin)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'PIN must be exactly 6 digits',
+      });
+    }
+
+    const user = await User.findOne({
+      $or: [
+        {phoneNumber: e164},
+        {phone: e164},
+        {phoneNumber: ten},
+        {phone: ten},
+      ],
+    }).select('+pinHash');
+
+    if (!user || !user.pinHash) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'No PIN set for this number. Create a PIN first.',
       });
     }
 
@@ -1106,25 +1214,19 @@ exports.loginPin = async (req, res, next) => {
       });
     }
 
-    user.phoneVerified = true;
-    user.updatedAt = new Date();
-    await user.save();
+    await ensureCustomerProfileAccess(user);
 
-    if (requestedRole === 'provider') {
-      await ensureProviderProfile(user, user.name || user.displayName);
-    }
-
-    const session = await issueSessionForUser(user);
+    const session = await issueSessionForUser(user, {activeRole: 'customer'});
     res.json({
       success: true,
       data: session,
-      message: 'Logged in successfully',
+      message: 'Customer account is ready.',
     });
   } catch (err) {
     if (err.statusCode) {
       return res.status(err.statusCode).json({
         success: false,
-        error: 'Bad Request',
+        error: err.statusCode === 403 ? 'Forbidden' : 'Bad Request',
         message: err.message,
       });
     }
@@ -1177,6 +1279,22 @@ exports.registerWithOtp = async (req, res, next) => {
     }).select('+pinHash +pinKey +encryptedPin');
 
     if (user?.pinHash) {
+      if (requestedRole === 'customer' && hasCustomerProfile(user)) {
+        return res.status(409).json({
+          success: false,
+          error: 'Conflict',
+          message: 'Account already exists. Log in with your PIN.',
+        });
+      }
+      if (requestedRole === 'customer' && hasPartnerProfile(user)) {
+        return res.status(409).json({
+          success: false,
+          error: 'Conflict',
+          code: 'CUSTOMER_PROFILE_REQUIRED',
+          message:
+            'This number is registered as a Partner. Create a Customer account to continue as a customer.',
+        });
+      }
       if (user.role !== requestedRole) {
         return res.status(409).json({
           success: false,
@@ -1184,7 +1302,7 @@ exports.registerWithOtp = async (req, res, next) => {
           message:
             requestedRole === 'provider'
               ? 'This number is already registered as a customer. Use a different number for provider signup.'
-              : 'This number is already registered as a provider. Use the provider app.',
+              : 'Account already exists. Log in with your PIN.',
         });
       }
       return res.status(409).json({
@@ -1194,14 +1312,19 @@ exports.registerWithOtp = async (req, res, next) => {
       });
     }
 
-    if (user && user.role && user.role !== requestedRole) {
+    if (
+      user &&
+      user.role &&
+      user.role !== requestedRole &&
+      !(requestedRole === 'customer' && hasPartnerProfile(user))
+    ) {
       return res.status(409).json({
         success: false,
         error: 'Conflict',
         message:
           requestedRole === 'provider'
             ? 'This number is already registered as a customer. Use a different number for provider signup.'
-            : 'This number is already registered as a provider.',
+            : 'This number is already registered as a Partner.',
       });
     }
 
@@ -1238,7 +1361,11 @@ exports.registerWithOtp = async (req, res, next) => {
       user.pinHash = pinHash;
       user.pinKey = pinKey;
       if (encryptedPin) user.encryptedPin = encryptedPin;
-      user.role = requestedRole;
+      if (requestedRole === 'customer' && hasPartnerProfile(user)) {
+        user.customerProfileEnabled = true;
+      } else {
+        user.role = requestedRole;
+      }
       if (!user.name) {
         user.name = fullName;
         user.displayName = fullName;
@@ -1251,7 +1378,10 @@ exports.registerWithOtp = async (req, res, next) => {
       await ensureProviderProfile(user, fullName);
     }
 
-    const session = await issueSessionForUser(user, {includePin: pin});
+    const session = await issueSessionForUser(user, {
+      includePin: pin,
+      activeRole: requestedRole,
+    });
     res.status(201).json({
       success: true,
       data: session,

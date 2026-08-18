@@ -17,6 +17,7 @@ const {
   newId,
   pickPhone,
 } = require('../../utils/partnerCollaborationPublic');
+const {excludeSelfProviderClause} = require('../../utils/excludeSelfProvider');
 
 function viewerId(req) {
   return String(req.user?.uid || req.user?.id || '');
@@ -67,8 +68,8 @@ exports.listCollaborationPartners = async (req, res, next) => {
     const query = {
       approvalStatus: 'approved',
       isActive: {$ne: false},
+      ...excludeSelfProviderClause(uid),
     };
-    if (uid) query._id = {$ne: uid};
 
     const andClauses = [];
     if (serviceType) {
@@ -115,7 +116,9 @@ exports.listCollaborationPartners = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: rows.map(toCollaborationPartner).filter((p) => p && p.id),
+      data: rows
+        .map(toCollaborationPartner)
+        .filter((p) => p && p.id && (!uid || p.id !== uid)),
       count: rows.length,
       total,
       limit: lim,

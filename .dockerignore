@@ -1,0 +1,17 @@
+.git
+.github
+.idea
+.vscode
+agent-context
+coverage
+logs
+node_modules
+tests
+uploads
+*.md
+.env
+.env.*
+!.env.example
+config/firebase-admin.json
+.DS_Store
+npm-debug.log*
