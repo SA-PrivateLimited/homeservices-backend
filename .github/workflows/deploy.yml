@@ -70,7 +70,8 @@ jobs:
             "git fetch origin main",
             "git checkout main",
             "git reset --hard origin/main",
-            "npm ci --omit=dev",
+            "git clean -fd",
+            "npm install --omit=dev",
             os.environ["RESTART_COMMAND"],
             "pm2 list",
           ]
