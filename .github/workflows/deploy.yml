@@ -51,8 +51,13 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Debug GitHub OIDC claims
+        uses: github/actions-oidc-debugger@main
+        with:
+          audience: sts.amazonaws.com
+
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           role-session-name: github-actions-akanso-api
