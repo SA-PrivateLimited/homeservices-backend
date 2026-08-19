@@ -52,9 +52,20 @@ jobs:
         run: npm test
 
       - name: Debug GitHub OIDC claims
-        uses: github/actions-oidc-debugger@main
-        with:
-          audience: sts.amazonaws.com
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "OIDC request env vars are missing."
+            exit 1
+          fi
+          resp="$(curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")"
+          token="$(echo "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          payload="$(echo "$token" | cut -d '.' -f2 | tr '_-' '/+' | python3 -c 'import base64,sys; s=sys.stdin.read().strip(); s += "=" * (-len(s)%4); print(base64.b64decode(s).decode())')"
+          echo "OIDC sub: $(echo "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sub",""))')"
+          echo "OIDC aud: $(echo "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("aud",""))')"
+          echo "OIDC ref: $(echo "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("ref",""))')"
+          echo "OIDC repository: $(echo "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("repository",""))')"
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6.2.3
