@@ -1,5 +1,4 @@
-# Production deploy: GitHub main → tests → Docker → ECR → ECS
-# Auth: GitHub Actions OIDC → IAM role (same AWS account as the web apps)
+# Production deploy: GitHub main → tests → SSH deploy on EC2
 
 name: Deploy production
 
@@ -13,18 +12,14 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  id-token: write
   contents: read
 
 env:
   NODE_VERSION: '24'
-  AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
-  AWS_ACCOUNT_ID: '715831355325'
-  AWS_ROLE_ARN: ${{ vars.AWS_API_DEPLOY_ROLE_ARN || 'arn:aws:iam::715831355325:role/AkansoApiDeployRole' }}
-  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'akanso-api' }}
-  ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'akanso' }}
-  ECS_SERVICE: ${{ vars.ECS_SERVICE || 'akanso-api' }}
-  ECS_CONTAINER_NAME: ${{ vars.ECS_CONTAINER_NAME || 'akanso-api' }}
+  EC2_HOST: ${{ vars.EC2_HOST || '13.50.87.176' }}
+  EC2_USER: ${{ vars.EC2_USER || 'ec2-user' }}
+  DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/home/ec2-user/homeServicesBackend' }}
+  RESTART_COMMAND: ${{ vars.RESTART_COMMAND || 'pm2 restart all' }}
   SITE_HOST: api.akanso.in
   HEALTH_URL: https://api.akanso.in/health
 
@@ -51,153 +46,21 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Debug GitHub OIDC claims
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-            echo "OIDC request env vars are missing."
-            exit 1
-          fi
-          resp="$(curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")"
-          token="$(echo "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
-          payload="$(echo "$token" | cut -d '.' -f2 | tr '_-' '/+' | python3 -c 'import base64,sys; s=sys.stdin.read().strip(); s += "=" * (-len(s)%4); print(base64.b64decode(s).decode())')"
-          echo "OIDC sub: $(echo "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sub",""))')"
-          echo "OIDC aud: $(echo "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("aud",""))')"
-          echo "OIDC ref: $(echo "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("ref",""))')"
-          echo "OIDC repository: $(echo "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("repository",""))')"
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6.2.3
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.2.0
         with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          role-session-name: github-actions-akanso-api
-          aws-region: ${{ env.AWS_REGION }}
-          audience: sts.amazonaws.com
-
-      - name: Login to Amazon ECR
-        id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Ensure ECR repository exists
-        run: |
-          set -euo pipefail
-          if ! aws ecr describe-repositories --repository-names "${ECR_REPOSITORY}" >/dev/null 2>&1; then
-            aws ecr create-repository \
-              --repository-name "${ECR_REPOSITORY}" \
-              --image-scanning-configuration scanOnPush=true \
-              --encryption-configuration encryptionType=AES256
-            echo "Created ECR repository ${ECR_REPOSITORY}"
-          fi
-
-      - name: Build and push image
-        id: image
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
-        run: |
-          set -euo pipefail
-          IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}"
-          SHA_TAG="${GITHUB_SHA::12}"
-          docker build --platform linux/amd64 \
-            -t "${IMAGE_URI}:${SHA_TAG}" \
-            -t "${IMAGE_URI}:latest" .
-          docker push "${IMAGE_URI}:${SHA_TAG}"
-          docker push "${IMAGE_URI}:latest"
-          echo "uri=${IMAGE_URI}:${SHA_TAG}" >> "$GITHUB_OUTPUT"
-          echo "Pushed ${IMAGE_URI}:${SHA_TAG}"
-
-      - name: Deploy image to ECS
-        id: ecs
-        env:
-          IMAGE_URI: ${{ steps.image.outputs.uri }}
-        run: |
-          python3 <<'PY'
-          import json, os, subprocess, sys
-
-          cluster = os.environ["ECS_CLUSTER"]
-          service = os.environ["ECS_SERVICE"]
-          image = os.environ["IMAGE_URI"]
-          container = (os.environ.get("ECS_CONTAINER_NAME") or "").strip()
-
-          def aws_json(args):
-              return json.loads(
-                  subprocess.check_output(["aws", *args], text=True)
-              )
-
-          listed = aws_json(
-              ["ecs", "describe-services", "--cluster", cluster, "--services", service]
-          )
-          services = listed.get("services") or []
-          if not services or services[0].get("status") == "INACTIVE":
-              sys.exit(
-                  f"ECS service '{service}' was not found in cluster '{cluster}'. "
-                  "Create the production cluster/service/ALB for api.akanso.in once, "
-                  "then re-run this workflow. Secrets stay on the existing task definition."
-              )
-
-          td_arn = services[0]["taskDefinition"]
-          td = aws_json(
-              ["ecs", "describe-task-definition", "--task-definition", td_arn]
-          )["taskDefinition"]
-
-          for key in (
-              "taskDefinitionArn",
-              "revision",
-              "status",
-              "requiresAttributes",
-              "compatibilities",
-              "registeredAt",
-              "registeredBy",
-              "deregisteredAt",
-          ):
-              td.pop(key, None)
-
-          replaced = False
-          for item in td.get("containerDefinitions") or []:
-              if not container or item.get("name") == container:
-                  item["image"] = image
-                  replaced = True
-                  if not container:
-                      break
-          if not replaced:
-              sys.exit(
-                  f"Container '{container}' was not found on the current task definition."
-              )
-
-          path = "/tmp/ecs-task-definition.json"
-          with open(path, "w", encoding="utf-8") as fh:
-              json.dump(td, fh)
-
-          registered = aws_json(
-              ["ecs", "register-task-definition", "--cli-input-json", f"file://{path}"]
-          )
-          new_arn = registered["taskDefinition"]["taskDefinitionArn"]
-          subprocess.check_call(
-              [
-                  "aws",
-                  "ecs",
-                  "update-service",
-                  "--cluster",
-                  cluster,
-                  "--service",
-                  service,
-                  "--task-definition",
-                  new_arn,
-                  "--force-new-deployment",
-              ]
-          )
-          print(f"Updating {cluster}/{service} -> {new_arn}")
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-              fh.write(f"task_definition={new_arn}\n")
-          PY
-
-      - name: Wait for ECS service to stabilize
-        run: |
-          set -euo pipefail
-          aws ecs wait services-stable \
-            --cluster "${ECS_CLUSTER}" \
-            --services "${ECS_SERVICE}"
-          echo "ECS service ${ECS_SERVICE} is stable"
+          host: ${{ env.EC2_HOST }}
+          username: ${{ env.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${DEPLOY_PATH}"
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
+            npm ci --omit=dev
+            ${RESTART_COMMAND}
 
       - name: Production health check
         run: |
@@ -216,7 +79,7 @@ jobs:
 
       - name: Deployment summary
         run: |
-          echo "Image: ${{ steps.image.outputs.uri }}"
-          echo "ECS: ${ECS_CLUSTER}/${ECS_SERVICE}"
-          echo "Task definition: ${{ steps.ecs.outputs.task_definition }}"
+          echo "Host: ${EC2_HOST}"
+          echo "Path: ${DEPLOY_PATH}"
+          echo "Restart command: ${RESTART_COMMAND}"
           echo "Production: https://${SITE_HOST}"
