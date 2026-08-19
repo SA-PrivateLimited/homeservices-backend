@@ -33,6 +33,15 @@ const serviceCategorySchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  /**
+   * Show this category in the "Popular services" section on CustomerWeb.
+   * Admin controls which services appear in the main grid.
+   */
+  isPopular: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
   questionnaire: {
     type: Array,
     default: [],
