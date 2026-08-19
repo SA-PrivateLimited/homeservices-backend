@@ -12,6 +12,31 @@ const {
   normalizeThemeColors,
 } = require('../../utils/defaultThemeColors');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
+const s3 = require('../../services/s3.service');
+const {keyFromUrlOrKey} = require('../../utils/s3Keys');
+
+function resolvePublicLogoUrl(logoUrl) {
+  const raw = String(logoUrl || '').trim();
+  if (!raw) return '';
+  if (/^https:\/\/assets\.akanso\.in\//i.test(raw)) return raw;
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      if (parsed.pathname.startsWith('/uploads/')) {
+        const key = parsed.pathname.slice('/uploads/'.length);
+        return s3.generateCloudFrontUrl(key);
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    const key = keyFromUrlOrKey(raw);
+    return s3.generateCloudFrontUrl(key);
+  } catch {
+    return raw;
+  }
+}
 
 function slugifyId(raw) {
   return String(raw || '')
@@ -33,7 +58,7 @@ function brandingPayload(activeClientId, client) {
     clientName: client.name,
     customerProductName,
     providerProductName,
-    logoUrl: (client.logoUrl || '').trim(),
+    logoUrl: resolvePublicLogoUrl(client.logoUrl || ''),
     themeColors: client.themeColors,
   };
 }
