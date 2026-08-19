@@ -1,4 +1,4 @@
-# Production deploy: GitHub main → tests → SSH deploy on EC2
+# Production deploy: GitHub main → tests → SSM deploy on EC2
 
 name: Deploy production
 
@@ -12,12 +12,14 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  id-token: write
   contents: read
 
 env:
   NODE_VERSION: '24'
-  EC2_HOST: ${{ vars.EC2_HOST || '13.50.87.176' }}
-  EC2_USER: ${{ vars.EC2_USER || 'ec2-user' }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+  AWS_ROLE_ARN: ${{ vars.AWS_API_DEPLOY_ROLE_ARN || 'arn:aws:iam::715831355325:role/AkansoApiDeployRole' }}
+  EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID || 'i-09f649d0d393471b6' }}
   DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/home/ec2-user/homeServicesBackend' }}
   RESTART_COMMAND: ${{ vars.RESTART_COMMAND || 'pm2 restart all' }}
   SITE_HOST: api.akanso.in
@@ -46,21 +48,70 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Deploy to EC2 via SSH
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
-          host: ${{ env.EC2_HOST }}
-          username: ${{ env.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          script_stop: true
-          script: |
-            set -euo pipefail
-            cd "${DEPLOY_PATH}"
-            git fetch origin main
-            git checkout main
-            git reset --hard origin/main
-            npm ci --omit=dev
-            ${RESTART_COMMAND}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: github-actions-akanso-api
+          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+
+      - name: Deploy to EC2 via SSM
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY' > /tmp/ssm-params.json
+          import json, os
+          commands = [
+            "set -euo pipefail",
+            f"cd '{os.environ['DEPLOY_PATH']}'",
+            "git fetch origin main",
+            "git checkout main",
+            "git reset --hard origin/main",
+            "npm ci --omit=dev",
+            os.environ["RESTART_COMMAND"],
+          ]
+          print(json.dumps({"commands": commands}))
+          PY
+
+          COMMAND_ID="$(aws ssm send-command \
+            --instance-ids "${EC2_INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "GitHub Actions backend deploy" \
+            --parameters "file:///tmp/ssm-params.json" \
+            --query "Command.CommandId" \
+            --output text)"
+
+          echo "SSM command id: ${COMMAND_ID}"
+
+          aws ssm wait command-executed \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${EC2_INSTANCE_ID}"
+
+          STATUS="$(aws ssm list-command-invocations \
+            --command-id "${COMMAND_ID}" \
+            --details \
+            --query "CommandInvocations[0].Status" \
+            --output text)"
+
+          echo "SSM status: ${STATUS}"
+          echo "---- SSM stdout ----"
+          aws ssm list-command-invocations \
+            --command-id "${COMMAND_ID}" \
+            --details \
+            --query "CommandInvocations[0].CommandPlugins[0].Output" \
+            --output text || true
+
+          if [ "${STATUS}" != "Success" ]; then
+            echo "---- SSM stderr ----"
+            aws ssm list-command-invocations \
+              --command-id "${COMMAND_ID}" \
+              --details \
+              --query "CommandInvocations[0].CommandPlugins[0].StandardErrorContent" \
+              --output text || true
+            exit 1
+          fi
 
       - name: Production health check
         run: |
@@ -79,7 +130,7 @@ jobs:
 
       - name: Deployment summary
         run: |
-          echo "Host: ${EC2_HOST}"
+          echo "Instance: ${EC2_INSTANCE_ID}"
           echo "Path: ${DEPLOY_PATH}"
           echo "Restart command: ${RESTART_COMMAND}"
           echo "Production: https://${SITE_HOST}"
