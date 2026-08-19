@@ -16,15 +16,16 @@ const POINTS_PER_RECOMMENDATION = 5;
  */
 exports.createContactRecommendation = async (req, res, next) => {
   try {
-    const userId = req.user.uid; // From verified auth token
-    const userRole = req.user.role; // From verified auth token
+    // req.user may be null for unauthenticated visitors (lead-generation flow)
+    const userId = req.user?.uid || null;
+    const userRole = req.user?.role || null;
 
-    // Only customers and providers can create recommendations
-    if (userRole !== 'customer' && userRole !== 'provider') {
+    // Authenticated admins cannot create recommendations via this route
+    if (userRole && userRole !== 'customer' && userRole !== 'provider') {
       return res.status(403).json({
         success: false,
         error: 'Forbidden',
-        message: 'Only customers and providers can create contact recommendations',
+        message: 'Only customers, providers, or unauthenticated visitors can create contact recommendations',
       });
     }
 
@@ -113,14 +114,17 @@ exports.createContactRecommendation = async (req, res, next) => {
       }
     }
 
-    // Get user details for the recommendation
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found',
-        message: 'User not found',
-      });
+    // Get user details for the recommendation (null for unauthenticated visitors)
+    let user = null;
+    if (userId) {
+      user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found',
+          message: 'User not found',
+        });
+      }
     }
 
     // Create recommendation
@@ -129,10 +133,10 @@ exports.createContactRecommendation = async (req, res, next) => {
       recommendedProviderPhone: recommendedProviderPhone.trim(),
       serviceType: serviceType.trim(),
       address: address ? address.trim() : undefined,
-      recommendedBy: userId,
-      recommendedByName: user.name || user.displayName || '',
-      recommendedByPhone: user.phone || user.phoneNumber || '',
-      recommendedByRole: userRole,
+      recommendedBy: userId || undefined,
+      recommendedByName: user ? (user.name || user.displayName || '') : '',
+      recommendedByPhone: user ? (user.phone || user.phoneNumber || '') : '',
+      recommendedByRole: userRole || 'anonymous',
       status: 'pending',
       pointsAwarded: 0,
     });

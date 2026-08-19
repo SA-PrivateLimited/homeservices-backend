@@ -15,6 +15,11 @@ const serviceCategorySchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
+  /** Hindi name for bilingual display (e.g. "प्लंबर") */
+  nameHi: {
+    type: String,
+    trim: true,
+  },
   description: String,
   descriptionHi: String,
   icon: String,

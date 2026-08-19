@@ -252,6 +252,16 @@ const userSchema = new mongoose.Schema({
     default: false,
   },
   /**
+   * Stable 4-digit human-readable display number for incomplete profiles.
+   * Generated once by the backend. Shown as "Customer 4827" / "Provider 7206"
+   * until the user sets a real name. Never regenerated after creation.
+   */
+  customerDisplayId: {
+    type: Number,
+    default: null,
+    index: true,
+  },
+  /**
    * Independent Customer access. False blocks Customer login only.
    * Partner access is Provider.isActive.
    */

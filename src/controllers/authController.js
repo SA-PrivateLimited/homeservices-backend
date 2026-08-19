@@ -173,8 +173,13 @@ async function issueSessionForUser(user, {includePin, activeRole} = {}) {
   safe.phoneVerified = true;
   safe.role = role;
   safe.id = safe._id;
+  safe.customerDisplayId = user.customerDisplayId || null;
+  const hasRealName = !!(user.name || user.displayName || '').trim() &&
+    !/^(Customer|Provider)\s+\d+$/i.test((user.name || user.displayName || '').trim());
+  safe.customerProfileComplete = hasRealName;
   if (user.role === 'provider') {
     safe.canSwitchToPartner = true;
+    safe.canSwitchToCustomer = true;
   }
   if (role === 'admin') {
     safe.permissions = permissions;
@@ -259,6 +264,17 @@ async function ensureCustomerProfileAccess(user) {
 
 async function assertPinGloballyUnique(pin, excludeUserId) {
   return assertPinUniqueForUser(User, pin, excludeUserId);
+}
+
+/** Generate a stable 4-digit display number unique across all users. */
+async function generateCustomerDisplayId(maxAttempts = 50) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const id = crypto.randomInt(1000, 9999);
+    const existing = await User.findOne({customerDisplayId: id}).lean();
+    if (!existing) return id;
+  }
+  // Fallback: use last 4 digits of timestamp
+  return parseInt(String(Date.now()).slice(-4), 10);
 }
 
 async function generateUniquePin(maxAttempts = 40) {
@@ -1372,6 +1388,7 @@ exports.registerWithOtp = async (req, res, next) => {
     }
 
     if (!user) {
+      const displayId = await generateCustomerDisplayId();
       user = await User.create({
         _id: crypto.randomUUID(),
         phoneNumber: e164,
@@ -1384,6 +1401,9 @@ exports.registerWithOtp = async (req, res, next) => {
         name: fullName,
         displayName: fullName,
         role: requestedRole,
+        customerDisplayId: displayId,
+        // Providers always get customer access so switch-to-customer works
+        customerProfileEnabled: requestedRole === 'provider' ? true : false,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -1397,10 +1417,18 @@ exports.registerWithOtp = async (req, res, next) => {
         user.customerAccessActive = true;
       } else {
         user.role = requestedRole;
+        // Ensure existing providers also get customer access
+        if (requestedRole === 'provider') {
+          user.customerProfileEnabled = true;
+        }
       }
       if (!user.name) {
         user.name = fullName;
         user.displayName = fullName;
+      }
+      // Assign stable display ID if missing
+      if (!user.customerDisplayId) {
+        user.customerDisplayId = await generateCustomerDisplayId();
       }
       user.updatedAt = new Date();
     }
@@ -1605,17 +1633,19 @@ exports.createCustomerContextHandoff = async (req, res, next) => {
         message: 'Partner access required.',
       });
     }
+    // Auto-enable customer profile for providers before access check.
+    // This ensures the switch always works for active providers.
+    await ensureCustomerProfileAccess(user);
+
     try {
       await assertRoleAccess(user, 'customer');
     } catch (accessErr) {
       return res.status(accessErr.statusCode || 403).json({
         success: false,
         error: 'Forbidden',
-        message: accessErr.message || 'This account has been deactivated.',
+        message: accessErr.message || 'Customer access has been deactivated.',
       });
     }
-
-    await ensureCustomerProfileAccess(user);
     const code = await createHandoffCode(user._id, 'customer', DEFAULT_TTL_MS);
 
     res.json({

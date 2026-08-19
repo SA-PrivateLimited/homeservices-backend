@@ -164,6 +164,11 @@ exports.getMe = async (req, res, next) => {
     const jwtRole = req.accessTokenPayload?.role;
     if (user.role === 'provider') {
       userData.canSwitchToPartner = true;
+      // Providers always have customer access (auto-enabled on registration)
+      userData.canSwitchToCustomer = true;
+    }
+    if (user.role === 'customer') {
+      userData.canSwitchToCustomer = false;
     }
     if (
       jwtRole === 'customer' &&
@@ -172,6 +177,14 @@ exports.getMe = async (req, res, next) => {
     ) {
       userData.role = 'customer';
     }
+
+    // Stable display ID for incomplete profiles
+    userData.customerDisplayId = user.customerDisplayId || null;
+
+    // Profile completeness for frontend banners
+    const hasRealName = !!(user.name || user.displayName || '').trim() &&
+      !/^(Customer|Provider)\s+\d+$/i.test((user.name || user.displayName || '').trim());
+    userData.customerProfileComplete = hasRealName;
 
     userData.id = userData._id;
     if (userData.role === 'admin') {

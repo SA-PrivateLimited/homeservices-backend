@@ -26,8 +26,9 @@ const contactRecommendationSchema = new mongoose.Schema({
     trim: true,
   },
   recommendedBy: {
-    type: String, // User ID (customer or provider)
-    required: true,
+    type: String, // User ID (customer or provider); null for unauthenticated visitors
+    required: false,
+    default: null,
   },
   recommendedByName: {
     type: String,
@@ -39,7 +40,7 @@ const contactRecommendationSchema = new mongoose.Schema({
   },
   recommendedByRole: {
     type: String,
-    enum: ['customer', 'provider'],
+    enum: ['customer', 'provider', 'anonymous'],
     required: true,
   },
   status: {
