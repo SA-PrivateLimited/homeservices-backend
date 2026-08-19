@@ -7,7 +7,7 @@ const Provider = require('../models/Provider');
 const User = require('../models/User');
 const {
   activeServicesForProvider,
-  isServiceInactive,
+  isServiceCustomerVisible,
 } = require('./providerServiceAvailability');
 const {filterOutSelfProvider} = require('./excludeSelfProvider');
 
@@ -46,12 +46,12 @@ async function findOnlineMatching(serviceType, geoClause, excludeUserId) {
   };
   return Provider.find(query)
     .select(
-      '_id name fcmToken location address specialization serviceType serviceCategories inactiveServiceCategories',
+      '_id name fcmToken location address specialization serviceType serviceCategories inactiveServiceCategories serviceQualifications',
     )
     .lean()
     .then((rows) =>
       filterOutSelfProvider(
-        rows.filter((p) => !isServiceInactive(p, serviceType)),
+        rows.filter((p) => isServiceCustomerVisible(p, serviceType)),
         excludeUserId,
       ),
     );

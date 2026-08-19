@@ -1,5 +1,5 @@
 ---
-description: Always-active project conventions (Home Services Backend)
+description: Always-active project conventions (homeServicesBackend)
 alwaysApply: true
 ---
 
@@ -13,10 +13,15 @@ alwaysApply: true
 `feat/[ticket-id]` · `fix/[ticket-id]` · `chore/[description]`
 
 ## API
-Respect customer/provider/admin route split. Validate inputs. Use errorHandler.
+Respect customer/provider/admin/shared route split. Validate inputs. Use errorHandler.
 
 ## Docs
-Update BACKEND_API.md / Postman when adding endpoints.
+Update `BACKEND_API.md` / Postman when adding endpoints.
+
+## Product expectations
+- The backend is the source of truth for business state.
+- Preserve backward compatibility unless the task explicitly includes a contract change.
+- Be careful with multi-role users, collaboration, and contact privacy.
 
 ## PR size
 Prefer PRs under ~400 lines changed.

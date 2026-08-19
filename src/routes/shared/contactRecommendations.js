@@ -5,7 +5,7 @@
 
 const express = require('express');
 const router = express.Router();
-const {verifyAuth} = require('../../middleware/auth');
+const {verifyAuth, optionalAuth} = require('../../middleware/auth');
 const {requireRole} = require('../../middleware/auth');
 const {requirePermission} = require('../../middleware/requirePermission');
 const {PERMISSIONS} = require('../../constants/permissions');
@@ -21,11 +21,12 @@ const {
 
 /**
  * POST /api/contactRecommendations
- * Create a new contact recommendation (customer/provider)
+ * Create a new contact recommendation.
+ * Unauthenticated visitors may submit (req.user will be null).
  */
 router.post(
   '/',
-  verifyAuth,
+  optionalAuth,
   logRequest,
   createContactRecommendation,
 );

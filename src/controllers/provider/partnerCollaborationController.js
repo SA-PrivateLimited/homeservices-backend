@@ -18,6 +18,7 @@ const {
   pickPhone,
 } = require('../../utils/partnerCollaborationPublic');
 const {excludeSelfProviderClause} = require('../../utils/excludeSelfProvider');
+const {isServiceCustomerVisible} = require('../../utils/providerServiceAvailability');
 
 function viewerId(req) {
   return String(req.user?.uid || req.user?.id || '');
@@ -114,12 +115,26 @@ exports.listCollaborationPartners = async (req, res, next) => {
       Provider.countDocuments(query),
     ]);
 
+    const needed = serviceType ? String(serviceType).trim() : '';
+    const visibleRows = needed
+      ? rows.filter((p) => isServiceCustomerVisible(p, needed))
+      : rows;
+
     res.json({
       success: true,
-      data: rows
-        .map(toCollaborationPartner)
+      data: visibleRows
+        .map((p) => {
+          const row = toCollaborationPartner(p);
+          if (row && needed) {
+            const match = (row.serviceCategories || []).find(
+              (s) => String(s).toLowerCase() === needed.toLowerCase(),
+            );
+            if (match) row.profession = match;
+          }
+          return row;
+        })
         .filter((p) => p && p.id && (!uid || p.id !== uid)),
-      count: rows.length,
+      count: visibleRows.length,
       total,
       limit: lim,
       offset: off,

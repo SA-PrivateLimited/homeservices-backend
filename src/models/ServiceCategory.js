@@ -15,6 +15,11 @@ const serviceCategorySchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
+  /** Hindi name for bilingual display (e.g. "प्लंबर") */
+  nameHi: {
+    type: String,
+    trim: true,
+  },
   description: String,
   descriptionHi: String,
   icon: String,
@@ -28,8 +33,30 @@ const serviceCategorySchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  /**
+   * Show this category in the "Popular services" section on CustomerWeb.
+   * Admin controls which services appear in the main grid.
+   */
+  isPopular: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
   questionnaire: {
     type: Array,
+    default: [],
+  },
+  /** Partner onboarding docs for this professional service (optional). */
+  partnerDocuments: {
+    type: [
+      {
+        _id: false,
+        key: {type: String, trim: true},
+        label: {type: String, trim: true},
+        labelHi: {type: String, trim: true},
+        required: {type: Boolean, default: false},
+      },
+    ],
     default: [],
   },
   createdAt: {

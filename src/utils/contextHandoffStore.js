@@ -24,12 +24,13 @@ async function createHandoffCode(userId, purpose = 'customer', ttlMs = DEFAULT_T
   await connectDB();
   const code = crypto.randomBytes(24).toString('base64url');
   const expiresAt = new Date(Date.now() + ttlMs);
+  const isPartner = purpose === 'partner';
   await AuthContextHandoff.create({
     _id: code,
     userId: String(userId),
     purpose,
-    source: 'partner',
-    audience: 'customer',
+    source: isPartner ? 'customer' : 'partner',
+    audience: isPartner ? 'partner' : 'customer',
     expiresAt,
   });
   return code;

@@ -3,6 +3,7 @@
  * Never include phone, email, Aadhaar, street address, or internal secrets.
  */
 
+const {activeServicesForProvider} = require('./providerServiceAvailability');
 const {pickPhone} = require('./contactAccess');
 
 const PRIVATE_FIELDS = [
@@ -58,13 +59,17 @@ function toCollaborationPartner(provider) {
     typeof raw.totalReviews === 'number' && raw.totalReviews > 0
       ? raw.totalReviews
       : undefined;
+  const visible = activeServicesForProvider(raw);
+  const primary = professionOf(raw);
+  const profession =
+    visible.find((s) => String(s).toLowerCase() === String(primary).toLowerCase()) ||
+    visible[0] ||
+    '';
   return {
     id: String(raw._id || raw.id || ''),
     name: raw.name || raw.displayName || '',
-    profession: professionOf(raw),
-    serviceCategories: Array.isArray(raw.serviceCategories)
-      ? raw.serviceCategories
-      : [],
+    profession,
+    serviceCategories: visible,
     location: locationPublic(loc),
     isOnline: Boolean(raw.isOnline),
     verified:

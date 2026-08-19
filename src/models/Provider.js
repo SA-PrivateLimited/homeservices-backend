@@ -44,6 +44,45 @@ const providerSchema = new mongoose.Schema({
     type: [String],
     default: [],
   },
+  /**
+   * Per-service verification. Independent of account-level approvalStatus.
+   * A Partner can be account-approved while one extra service is still pending.
+   */
+  serviceQualifications: {
+    type: [
+      {
+        _id: false,
+        name: {type: String, trim: true, required: true},
+        verificationStatus: {
+          type: String,
+          enum: ['approved', 'pending', 'required', 'rejected'],
+          default: 'pending',
+        },
+        rejectionReason: {type: String, trim: true, default: ''},
+        experience: {type: Number, min: 0, max: 60},
+        notes: {type: String, trim: true, default: ''},
+        serviceInfo: {type: mongoose.Schema.Types.Mixed, default: {}},
+        documents: {
+          type: [
+            {
+              _id: false,
+              key: {type: String, trim: true},
+              label: {type: String, trim: true},
+              url: {type: String, trim: true},
+              fileName: {type: String, trim: true},
+              uploadedAt: {type: Date},
+            },
+          ],
+          default: [],
+        },
+        submittedAt: Date,
+        reviewedAt: Date,
+        reviewedBy: String,
+        updatedAt: {type: Date, default: Date.now},
+      },
+    ],
+    default: [],
+  },
   experience: Number,
   serviceFee: Number,
   approvalStatus: {

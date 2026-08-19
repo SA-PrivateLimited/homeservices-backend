@@ -17,17 +17,17 @@ const authContextHandoffSchema = new mongoose.Schema(
     },
     purpose: {
       type: String,
-      enum: ['customer'],
+      enum: ['customer', 'partner'],
       required: true,
     },
     source: {
       type: String,
-      enum: ['partner'],
+      enum: ['partner', 'customer'],
       default: 'partner',
     },
     audience: {
       type: String,
-      enum: ['customer'],
+      enum: ['customer', 'partner'],
       default: 'customer',
     },
     expiresAt: {

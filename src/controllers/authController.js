@@ -31,7 +31,18 @@ const {
   hasCustomerProfile,
   hasPartnerProfile,
   canEnterAppContext,
+  isCustomerAccessActive,
+  isPartnerAccessActive,
 } = require('../utils/userProfiles');
+const {
+  PIN_SELECT,
+  isValidPin,
+  assertPinGloballyUnique: assertPinUniqueForUser,
+  pinHashForRole,
+  applyRolePin,
+  snapshotLegacyPins,
+  resolvePinPurpose,
+} = require('../utils/rolePins');
 
 const SALT_ROUNDS = 12;
 
@@ -162,6 +173,14 @@ async function issueSessionForUser(user, {includePin, activeRole} = {}) {
   safe.phoneVerified = true;
   safe.role = role;
   safe.id = safe._id;
+  safe.customerDisplayId = user.customerDisplayId || null;
+  const hasRealName = !!(user.name || user.displayName || '').trim() &&
+    !/^(Customer|Provider)\s+\d+$/i.test((user.name || user.displayName || '').trim());
+  safe.customerProfileComplete = hasRealName;
+  if (user.role === 'provider') {
+    safe.canSwitchToPartner = true;
+    safe.canSwitchToCustomer = true;
+  }
   if (role === 'admin') {
     safe.permissions = permissions;
   }
@@ -243,28 +262,19 @@ async function ensureCustomerProfileAccess(user) {
   return user;
 }
 
-function isValidPin(pin) {
-  return typeof pin === 'string' && /^\d{6}$/.test(pin);
-}
-
-function pinHmacKey(pin) {
-  const secret = process.env.JWT_SECRET || process.env.HMAC_JWT_SECRET || 'pin';
-  return crypto.createHmac('sha256', secret).update(`pin:${pin}`).digest('hex');
-}
-
 async function assertPinGloballyUnique(pin, excludeUserId) {
-  const key = pinHmacKey(pin);
-  const query = {pinKey: key};
-  if (excludeUserId) {
-    query._id = {$ne: excludeUserId};
+  return assertPinUniqueForUser(User, pin, excludeUserId);
+}
+
+/** Generate a stable 4-digit display number unique across all users. */
+async function generateCustomerDisplayId(maxAttempts = 50) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const id = crypto.randomInt(1000, 9999);
+    const existing = await User.findOne({customerDisplayId: id}).lean();
+    if (!existing) return id;
   }
-  const existing = await User.findOne(query).select('_id').lean();
-  if (existing) {
-    const err = new Error('This PIN is already in use. Choose a different 6-digit PIN.');
-    err.statusCode = 409;
-    throw err;
-  }
-  return key;
+  // Fallback: use last 4 digits of timestamp
+  return parseInt(String(Date.now()).slice(-4), 10);
 }
 
 async function generateUniquePin(maxAttempts = 40) {
@@ -280,6 +290,42 @@ async function generateUniquePin(maxAttempts = 40) {
   const err = new Error('Could not allocate a unique PIN. Please try again.');
   err.statusCode = 503;
   throw err;
+}
+
+async function assertRoleAccess(user, requestedRole) {
+  if (requestedRole === 'customer') {
+    if (!isCustomerAccessActive(user)) {
+      const err = new Error(
+        user.deactivationReason ||
+          'Customer access has been deactivated. Contact support.',
+      );
+      err.statusCode = 403;
+      throw err;
+    }
+    return;
+  }
+  if (requestedRole === 'provider') {
+    const Provider = require('../models/Provider');
+    const provider = await Provider.findById(user._id)
+      .select('isActive deactivationReason')
+      .lean();
+    if (!isPartnerAccessActive(user, provider)) {
+      const err = new Error(
+        (provider && provider.deactivationReason) ||
+          'Partner access has been deactivated. Contact support.',
+      );
+      err.statusCode = 403;
+      throw err;
+    }
+  }
+}
+
+function persistRolePin(user, {pinHash, pinKey, encryptedPin}, purpose) {
+  applyRolePin(
+    user,
+    {hash: pinHash, key: pinKey, encrypted: encryptedPin},
+    purpose,
+  );
 }
 
 /** Last 10 digits for India-style mobile matching */
@@ -916,7 +962,7 @@ exports.lookupPhone = async (req, res, next) => {
         {phone: ten},
       ],
     })
-      .select('+pinHash')
+      .select(PIN_SELECT)
       .lean();
 
     const customerProfile = hasCustomerProfile(user);
@@ -935,7 +981,7 @@ exports.lookupPhone = async (req, res, next) => {
         phoneNumber: e164,
         localPhone: ten,
         exists: Boolean(user),
-        hasPin: Boolean(user?.pinHash),
+        hasPin: Boolean(pinHashForRole(user, requestedRole)),
         role: user?.role || null,
         roleMatch,
         requestedRole,
@@ -985,7 +1031,7 @@ exports.registerPin = async (req, res, next) => {
         {phoneNumber: ten},
         {phone: ten},
       ],
-    }).select('+pinHash +pinKey +encryptedPin');
+    }).select(PIN_SELECT);
 
     if (user?.pinHash) {
       return res.status(409).json({
@@ -1023,15 +1069,15 @@ exports.registerPin = async (req, res, next) => {
       user.phoneNumber = e164;
       user.phone = ten;
       user.phoneVerified = true;
-      user.pinHash = pinHash;
-      user.pinKey = pinKey;
-      if (encryptedPin) user.encryptedPin = encryptedPin;
       user.role = user.role || 'customer';
       if (!user.name) {
         user.name = fullName;
         user.displayName = fullName;
       }
       user.updatedAt = new Date();
+    }
+    persistRolePin(user, {pinHash, pinKey, encryptedPin}, 'customer');
+    if (user.isModified && user.isModified()) {
       await user.save();
     }
 
@@ -1080,32 +1126,14 @@ exports.loginPin = async (req, res, next) => {
         {phoneNumber: ten},
         {phone: ten},
       ],
-    }).select('+pinHash');
+    }).select(PIN_SELECT);
 
-    if (!user || !user.pinHash) {
+    const rolePinHash = pinHashForRole(user, requestedRole);
+    if (!user || !rolePinHash) {
       return res.status(401).json({
         success: false,
         error: 'Unauthorized',
         message: 'No PIN set for this number. Create a PIN first.',
-      });
-    }
-
-    if (user.isActive === false) {
-      return res.status(403).json({
-        success: false,
-        error: 'Forbidden',
-        message:
-          user.deactivationReason ||
-          'This account has been deactivated. Contact support.',
-      });
-    }
-
-    const match = await bcrypt.compare(pin, user.pinHash);
-    if (!match) {
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: 'Incorrect PIN',
       });
     }
 
@@ -1126,6 +1154,25 @@ exports.loginPin = async (req, res, next) => {
           requestedRole === 'provider'
             ? 'This number is not registered as a provider. Sign up as a provider first.'
             : 'No Customer account exists for this number.',
+      });
+    }
+
+    try {
+      await assertRoleAccess(user, requestedRole);
+    } catch (accessErr) {
+      return res.status(accessErr.statusCode || 403).json({
+        success: false,
+        error: 'Forbidden',
+        message: accessErr.message,
+      });
+    }
+
+    const match = await bcrypt.compare(pin, rolePinHash);
+    if (!match) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Incorrect PIN',
       });
     }
 
@@ -1185,9 +1232,10 @@ exports.enableCustomerProfile = async (req, res, next) => {
         {phoneNumber: ten},
         {phone: ten},
       ],
-    }).select('+pinHash');
+    }).select(PIN_SELECT);
 
-    if (!user || !user.pinHash) {
+    const partnerHash = pinHashForRole(user, 'provider');
+    if (!user || !partnerHash) {
       return res.status(401).json({
         success: false,
         error: 'Unauthorized',
@@ -1195,17 +1243,17 @@ exports.enableCustomerProfile = async (req, res, next) => {
       });
     }
 
-    if (user.isActive === false) {
-      return res.status(403).json({
+    try {
+      await assertRoleAccess(user, 'provider');
+    } catch (accessErr) {
+      return res.status(accessErr.statusCode || 403).json({
         success: false,
         error: 'Forbidden',
-        message:
-          user.deactivationReason ||
-          'This account has been deactivated. Contact support.',
+        message: accessErr.message,
       });
     }
 
-    const match = await bcrypt.compare(pin, user.pinHash);
+    const match = await bcrypt.compare(pin, partnerHash);
     if (!match) {
       return res.status(401).json({
         success: false,
@@ -1214,6 +1262,8 @@ exports.enableCustomerProfile = async (req, res, next) => {
       });
     }
 
+    snapshotLegacyPins(user);
+    user.customerAccessActive = true;
     await ensureCustomerProfileAccess(user);
 
     const session = await issueSessionForUser(user, {activeRole: 'customer'});
@@ -1276,7 +1326,7 @@ exports.registerWithOtp = async (req, res, next) => {
         {phone: ten},
         ...(verified.firebaseUid ? [{firebaseUid: verified.firebaseUid}] : []),
       ],
-    }).select('+pinHash +pinKey +encryptedPin');
+    }).select(PIN_SELECT);
 
     if (user?.pinHash) {
       if (requestedRole === 'customer' && hasCustomerProfile(user)) {
@@ -1338,6 +1388,7 @@ exports.registerWithOtp = async (req, res, next) => {
     }
 
     if (!user) {
+      const displayId = await generateCustomerDisplayId();
       user = await User.create({
         _id: crypto.randomUUID(),
         phoneNumber: e164,
@@ -1350,6 +1401,9 @@ exports.registerWithOtp = async (req, res, next) => {
         name: fullName,
         displayName: fullName,
         role: requestedRole,
+        customerDisplayId: displayId,
+        // Providers always get customer access so switch-to-customer works
+        customerProfileEnabled: requestedRole === 'provider' ? true : false,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -1358,21 +1412,32 @@ exports.registerWithOtp = async (req, res, next) => {
       user.phone = ten;
       user.phoneVerified = true;
       if (verified.firebaseUid) user.firebaseUid = verified.firebaseUid;
-      user.pinHash = pinHash;
-      user.pinKey = pinKey;
-      if (encryptedPin) user.encryptedPin = encryptedPin;
       if (requestedRole === 'customer' && hasPartnerProfile(user)) {
         user.customerProfileEnabled = true;
+        user.customerAccessActive = true;
       } else {
         user.role = requestedRole;
+        // Ensure existing providers also get customer access
+        if (requestedRole === 'provider') {
+          user.customerProfileEnabled = true;
+        }
       }
       if (!user.name) {
         user.name = fullName;
         user.displayName = fullName;
       }
+      // Assign stable display ID if missing
+      if (!user.customerDisplayId) {
+        user.customerDisplayId = await generateCustomerDisplayId();
+      }
       user.updatedAt = new Date();
-      await user.save();
     }
+    persistRolePin(
+      user,
+      {pinHash, pinKey, encryptedPin},
+      requestedRole === 'provider' ? 'partner' : 'customer',
+    );
+    await user.save();
 
     if (requestedRole === 'provider') {
       await ensureProviderProfile(user, fullName);
@@ -1438,7 +1503,7 @@ exports.resetPin = async (req, res, next) => {
         {phone: ten},
         ...(verified.firebaseUid ? [{firebaseUid: verified.firebaseUid}] : []),
       ],
-    }).select('+pinHash +pinKey +encryptedPin');
+    }).select(PIN_SELECT);
 
     if (!user) {
       return res.status(404).json({
@@ -1461,10 +1526,9 @@ exports.resetPin = async (req, res, next) => {
     user.phone = ten;
     user.phoneVerified = true;
     if (verified.firebaseUid) user.firebaseUid = verified.firebaseUid;
-    user.pinHash = pinHash;
-    user.pinKey = pinKey;
-    if (encryptedPin) user.encryptedPin = encryptedPin;
     user.role = user.role || 'customer';
+    const purpose = resolvePinPurpose(req.body.role, user);
+    persistRolePin(user, {pinHash, pinKey, encryptedPin}, purpose);
     user.updatedAt = new Date();
     await user.save();
 
@@ -1494,6 +1558,60 @@ const {
 } = require('../utils/contextHandoffStore');
 
 /**
+ * POST /api/auth/context/partner-handoff
+ * Authenticated user with a Partner profile → one-time code for PartnerWeb.
+ */
+exports.createPartnerContextHandoff = async (req, res, next) => {
+  try {
+    await connectDB();
+    const user = await User.findById(req.user.uid);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'User not found.',
+      });
+    }
+    if (user.role !== 'provider') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Partner access required.',
+      });
+    }
+    try {
+      await assertRoleAccess(user, 'provider');
+    } catch (accessErr) {
+      return res.status(accessErr.statusCode || 403).json({
+        success: false,
+        error: 'Forbidden',
+        message: accessErr.message || 'This account has been deactivated.',
+      });
+    }
+
+    const code = await createHandoffCode(user._id, 'partner', DEFAULT_TTL_MS);
+
+    res.json({
+      success: true,
+      data: {
+        code,
+        expiresInMs: DEFAULT_TTL_MS,
+      },
+      message: 'Partner handoff code created.',
+    });
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        success: false,
+        error: 'Bad Request',
+        message: err.message,
+      });
+    }
+    next(err);
+  }
+};
+
+/**
  * POST /api/auth/context/customer-handoff
  * Authenticated partner → one-time code for CustomerWeb (no token in URL).
  */
@@ -1515,15 +1633,19 @@ exports.createCustomerContextHandoff = async (req, res, next) => {
         message: 'Partner access required.',
       });
     }
-    if (user.isActive === false) {
-      return res.status(403).json({
+    // Auto-enable customer profile for providers before access check.
+    // This ensures the switch always works for active providers.
+    await ensureCustomerProfileAccess(user);
+
+    try {
+      await assertRoleAccess(user, 'customer');
+    } catch (accessErr) {
+      return res.status(accessErr.statusCode || 403).json({
         success: false,
         error: 'Forbidden',
-        message: 'This account has been deactivated.',
+        message: accessErr.message || 'Customer access has been deactivated.',
       });
     }
-
-    await ensureCustomerProfileAccess(user);
     const code = await createHandoffCode(user._id, 'customer', DEFAULT_TTL_MS);
 
     res.json({
@@ -1597,11 +1719,15 @@ exports.exchangeContextHandoff = async (req, res, next) => {
     }
 
     const entry = result.entry;
-    if (entry.purpose !== 'customer' || entry.audience !== 'customer') {
+    const isPartnerHandoff =
+      entry.purpose === 'partner' && entry.audience === 'partner';
+    const isCustomerHandoff =
+      entry.purpose === 'customer' && entry.audience === 'customer';
+    if (!isPartnerHandoff && !isCustomerHandoff) {
       return res.status(403).json({
         success: false,
         error: 'INVALID_AUDIENCE',
-        message: 'Handoff is not valid for CustomerWeb.',
+        message: 'Handoff is not valid for this app.',
       });
     }
 
@@ -1610,7 +1736,7 @@ exports.exchangeContextHandoff = async (req, res, next) => {
     }
 
     const user = await User.findById(entry.userId);
-    if (!user || user.isActive === false) {
+    if (!user) {
       return res.status(401).json({
         success: false,
         error: 'USER_NOT_FOUND',
@@ -1618,7 +1744,42 @@ exports.exchangeContextHandoff = async (req, res, next) => {
       });
     }
 
+    if (isPartnerHandoff) {
+      if (user.role !== 'provider') {
+        return res.status(403).json({
+          success: false,
+          error: 'INVALID_SOURCE',
+          message: 'Handoff source is not a Partner account.',
+        });
+      }
+      try {
+        await assertRoleAccess(user, 'provider');
+      } catch (accessErr) {
+        return res.status(accessErr.statusCode || 403).json({
+          success: false,
+          error: 'Forbidden',
+          message: accessErr.message,
+        });
+      }
+      const session = await issueSessionForUser(user, {activeRole: 'provider'});
+      cacheHandoffReplay(code, entry, session);
+      return res.json({
+        success: true,
+        data: session,
+        message: 'Signed in to Partner.',
+      });
+    }
+
     if (user.role === 'customer') {
+      try {
+        await assertRoleAccess(user, 'customer');
+      } catch (accessErr) {
+        return res.status(accessErr.statusCode || 403).json({
+          success: false,
+          error: 'Forbidden',
+          message: accessErr.message,
+        });
+      }
       const session = await issueSessionForUser(user, {activeRole: 'customer'});
       cacheHandoffReplay(code, entry, session);
       return res.json({
@@ -1638,8 +1799,19 @@ exports.exchangeContextHandoff = async (req, res, next) => {
 
     if (!user.customerProfileEnabled) {
       user.customerProfileEnabled = true;
+      user.customerAccessActive = true;
       user.updatedAt = new Date();
       await user.save();
+    }
+
+    try {
+      await assertRoleAccess(user, 'customer');
+    } catch (accessErr) {
+      return res.status(accessErr.statusCode || 403).json({
+        success: false,
+        error: 'Forbidden',
+        message: accessErr.message,
+      });
     }
 
     const session = await issueSessionForUser(user, {activeRole: 'customer'});

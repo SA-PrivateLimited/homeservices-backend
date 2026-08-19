@@ -1,26 +1,40 @@
-# .claude/agents — Persona Index
+# `.claude/agents` — homeServicesBackend Agent Suite
 
-Each file defines the role, inputs, outputs, and rules for one stage of the 7-stage pipeline.
+Local personas for the backend repo. Each file is self-sufficient and embeds Akanso backend context.
 
-| File | Stage | Role |
-|------|-------|------|
-| `product-manager.md` | 1 — Spec | Reconciles Jira + Figma into `FEATURE_SPEC.md` |
-| `planner.md` | 2 — Plan | Turns spec into surgical `IMPLEMENTATION_PLAN.md` |
-| `tester.md` | 3 — Test | Writes failing tests (TDD) before implementation |
-| `frontend.md` | 4 — Implement | Writes feature code; makes tests pass |
-| `verifier.md` | 5 — Verify | Runs tests, TypeScript, AC trace, boundary checks |
-| `reviewer.md` | 6 — Review | Full code review → `REVIEW.md` |
-| `reporter.md` | 7 — Report | Final scorecard → `COMPLETION_REPORT.md` |
+## Repo context
 
-## How the pipeline is started
+homeServicesBackend is the Akanso backend API and system of record.
 
-In Cursor Agent mode, paste:
+### Main domains
+- auth and role handling
+- users/customers/providers
+- jobs and service requests
+- partner collaboration
+- service categories/questionnaires
+- geography
+- client branding
+- contact privacy
 
-```
-Read agent-context/[ticket-id]/AGENT_KICKOFF.md and implement [ticket-id] by executing the full 7-stage pipeline it describes. Follow each stage's persona in .claude/agents/.
-```
+## Shared assumptions
 
-The `AGENT_KICKOFF.md` file drives the rest. Do not run stages manually.
+- the backend is authoritative for business state
+- customer/provider/admin/shared route separation matters
+- business rules like multi-role users and collaboration are real
+- contract changes should be deliberate and backward-compatible where possible
 
-## _unused/
-Archived personas that are no longer active. Do not reference these in the pipeline.
+## Personas
+
+| File | Stage | Purpose |
+|------|-------|---------|
+| `product-manager.md` | 1 — Spec | Turn requests into scoped backend-aware specs |
+| `planner.md` | 2 — Plan | Decide what backend files and layers should change |
+| `tester.md` | 3 — Test | Write high-value tests for backend changes |
+| `backend.md` | 4 — Implement | Implement backend route/controller/model changes |
+| `verifier.md` | 5 — Verify | Verify API, build, and contract safety |
+| `reviewer.md` | 6 — Review | Review backend changes for regression risk |
+| `reporter.md` | 7 — Report | Summarize changes, verification, and remaining risk |
+
+## How to use
+
+Read the persona for your current stage before doing anything. Follow its inputs, outputs, and gate checklist.

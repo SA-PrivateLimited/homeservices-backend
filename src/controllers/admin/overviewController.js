@@ -8,6 +8,7 @@ const Provider = require('../../models/Provider');
 const JobCard = require('../../models/JobCard');
 const User = require('../../models/User');
 const {ensureGeographySeeded} = require('../../utils/geographySeed');
+const {CUSTOMER_PROFILE_MATCH} = require('../../utils/userProfiles');
 
 function emptyJobStatus() {
   return {
@@ -98,8 +99,10 @@ async function buildGrowthTrend(days) {
     User.aggregate([
       {
         $match: {
-          role: 'customer',
-          createdAt: {$gte: start, $lte: end},
+          $and: [
+            CUSTOMER_PROFILE_MATCH,
+            {createdAt: {$gte: start, $lte: end}},
+          ],
         },
       },
       {$group: {_id: dayExpr, count: {$sum: 1}}},
@@ -145,6 +148,7 @@ exports.getOverviewStats = async (req, res, next) => {
     const [
       providerStatusRows,
       customerTotal,
+      uniqueUserTotal,
       jobStatusRows,
       providerServiceRows,
       jobServiceRows,
@@ -157,15 +161,51 @@ exports.getOverviewStats = async (req, res, next) => {
       Provider.aggregate([
         {$group: {_id: '$approvalStatus', count: {$sum: 1}}},
       ]),
-      User.countDocuments({role: 'customer'}),
+      User.countDocuments(CUSTOMER_PROFILE_MATCH),
+      User.countDocuments({role: {$in: ['customer', 'provider']}}),
       JobCard.aggregate([{$group: {_id: '$status', count: {$sum: 1}}}]),
       Provider.aggregate([
         {
-          $group: {
-            _id: {$ifNull: ['$serviceType', 'Unknown']},
-            count: {$sum: 1},
+          $project: {
+            services: {
+              $filter: {
+                input: {
+                  $setUnion: [
+                    {
+                      $cond: [
+                        {
+                          $gt: [
+                            {$strLenCP: {$ifNull: ['$serviceType', '']}},
+                            0,
+                          ],
+                        },
+                        ['$serviceType'],
+                        [],
+                      ],
+                    },
+                    {
+                      $cond: [
+                        {
+                          $gt: [
+                            {$strLenCP: {$ifNull: ['$specialization', '']}},
+                            0,
+                          ],
+                        },
+                        ['$specialization'],
+                        [],
+                      ],
+                    },
+                    {$ifNull: ['$serviceCategories', []]},
+                  ],
+                },
+                as: 's',
+                cond: {$and: [{$ne: ['$$s', null]}, {$ne: ['$$s', '']}]},
+              },
+            },
           },
         },
+        {$unwind: {path: '$services', preserveNullAndEmptyArrays: false}},
+        {$group: {_id: '$services', count: {$sum: 1}}},
         {$sort: {count: -1}},
         {$limit: 20},
       ]),
@@ -190,10 +230,14 @@ exports.getOverviewStats = async (req, res, next) => {
       User.aggregate([
         {
           $match: {
-            role: 'customer',
-            $or: [
-              {'homeAddress.stateId': {$exists: true, $nin: [null, '']}},
-              {'location.stateId': {$exists: true, $nin: [null, '']}},
+            $and: [
+              CUSTOMER_PROFILE_MATCH,
+              {
+                $or: [
+                  {'homeAddress.stateId': {$exists: true, $nin: [null, '']}},
+                  {'location.stateId': {$exists: true, $nin: [null, '']}},
+                ],
+              },
             ],
           },
         },
@@ -371,10 +415,14 @@ exports.getOverviewStats = async (req, res, next) => {
         User.aggregate([
           {
             $match: {
-              role: 'customer',
-              $or: [
-                {'homeAddress.stateId': stateIdFilter},
-                {'location.stateId': stateIdFilter},
+              $and: [
+                CUSTOMER_PROFILE_MATCH,
+                {
+                  $or: [
+                    {'homeAddress.stateId': stateIdFilter},
+                    {'location.stateId': stateIdFilter},
+                  ],
+                },
               ],
             },
           },
@@ -519,6 +567,12 @@ exports.getOverviewStats = async (req, res, next) => {
       data: {
         providers,
         customers: {total: customerTotal},
+        users: {
+          unique: uniqueUserTotal,
+          customers: customerTotal,
+          partners: providers.total,
+          both: Math.max(0, customerTotal + providers.total - uniqueUserTotal),
+        },
         jobs: {
           total: jobsTotal,
           byStatus: {
