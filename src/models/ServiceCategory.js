@@ -42,6 +42,24 @@ const serviceCategorySchema = new mongoose.Schema({
     default: false,
     index: true,
   },
+  /**
+   * Extra search aliases for CustomerWeb browse/search (EN + HI).
+   * Managed in Admin — not hardcoded in CustomerWeb.
+   */
+  searchTerms: {
+    type: [String],
+    default: [],
+  },
+  /**
+   * Browse "See all" section grouping key.
+   * e.g. home_repair | delivery | transport | personal | other
+   */
+  sectionKey: {
+    type: String,
+    trim: true,
+    default: 'other',
+    index: true,
+  },
   questionnaire: {
     type: Array,
     default: [],
