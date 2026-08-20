@@ -12,6 +12,10 @@ const {logRequest} = require('../../middleware/logger');
 const {
   getCategories,
   getCategoryById,
+  getCategorySections,
+  createCategorySection,
+  updateCategorySection,
+  deleteCategorySection,
   createCategory,
   updateCategory,
   deleteCategory,
@@ -21,11 +25,50 @@ const {
  * GET /api/serviceCategories
  * Get all service categories (public)
  */
-router.get(
-  '/',
-  optionalAuth,
+router.get('/', optionalAuth, logRequest, getCategories);
+
+/**
+ * GET /api/serviceCategories/sections
+ * Browse section titles (public) — must be before /:categoryId
+ */
+router.get('/sections', optionalAuth, logRequest, getCategorySections);
+
+/**
+ * POST /api/serviceCategories/sections
+ * Create browse section (admin)
+ */
+router.post(
+  '/sections',
+  requireRole('admin'),
+  requirePermission(PERMISSIONS.CATEGORIES_CREATE),
   logRequest,
-  getCategories,
+  createCategorySection,
+);
+
+/**
+ * PUT /api/serviceCategories/sections/:sectionKey
+ * Update browse section (admin)
+ */
+router.put(
+  '/sections/:sectionKey',
+  requireRole('admin'),
+  requirePermission(PERMISSIONS.CATEGORIES_UPDATE),
+  validateObjectId,
+  logRequest,
+  updateCategorySection,
+);
+
+/**
+ * DELETE /api/serviceCategories/sections/:sectionKey
+ * Delete browse section (admin)
+ */
+router.delete(
+  '/sections/:sectionKey',
+  requireRole('admin'),
+  requirePermission(PERMISSIONS.CATEGORIES_DELETE),
+  validateObjectId,
+  logRequest,
+  deleteCategorySection,
 );
 
 /**
