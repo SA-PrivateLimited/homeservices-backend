@@ -1492,6 +1492,60 @@ exports.restoreUserByAdmin = async (req, res, next) => {
 };
 
 /**
+ * DELETE /api/users/me
+ * Customer or Partner deletes their own account (Play Store requirement).
+ * Admin accounts cannot self-delete from this endpoint.
+ */
+exports.deleteMe = async (req, res, next) => {
+  try {
+    const uid = req.user && req.user.uid;
+    if (!uid) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Not authenticated.',
+      });
+    }
+
+    const existing = await User.findById(uid).lean();
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'User not found.',
+      });
+    }
+
+    if (existing.role === 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Admin accounts cannot be deleted from the mobile apps.',
+      });
+    }
+
+    await User.findByIdAndDelete(uid);
+    try {
+      const Provider = require('../models/Provider');
+      await Provider.findByIdAndDelete(uid);
+    } catch (providerErr) {
+      console.warn(
+        'Provider profile cleanup after self-delete:',
+        providerErr.message,
+      );
+    }
+
+    res.json({
+      success: true,
+      data: {_id: uid},
+      message: 'Account deleted.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Admin delete user. Cannot delete self.
  * Deleting an admin requires Super Admin elevation.
  */

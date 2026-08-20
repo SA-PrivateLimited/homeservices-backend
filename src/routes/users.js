@@ -20,6 +20,7 @@ const {
   getAllUsers,
   createOrUpdateMe,
   createUserByAdmin,
+  deleteMe,
   deleteUserByAdmin,
   deactivateUserByAdmin,
   restoreUserByAdmin,
@@ -103,6 +104,17 @@ router.put(
   verifyAuth,
   logRequest,
   updateMe,
+);
+
+/**
+ * DELETE /api/users/me
+ * Permanently delete the authenticated customer/partner account.
+ */
+router.delete(
+  '/me',
+  verifyAuth,
+  logRequest,
+  deleteMe,
 );
 
 /**
