@@ -97,6 +97,7 @@ app.use('/api/reviews', reviewsRoutes);
 app.use('/api/serviceCategories', serviceCategoriesRoutes);
 app.use('/api/contactRecommendations', contactRecommendationsRoutes);
 app.use('/api/branding', brandingRoutes);
+app.use('/api/launch', require('./routes/shared/launch'));
 app.use('/api/geography', require('./routes/shared/geography'));
 app.use('/api/assets', require('./routes/assets').router);
 

@@ -40,6 +40,34 @@ const systemConfigSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    /**
+     * CustomerWeb controlled launch gate.
+     * LAUNCH → tribute / countdown experience; NORMAL → regular site.
+     */
+    websiteLaunchState: {
+      type: String,
+      enum: ['NORMAL', 'LAUNCH'],
+      default: 'NORMAL',
+    },
+    /** Tribute name shown on CustomerWeb launch page (backend-driven). */
+    websiteLaunchName: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 200,
+    },
+    /** Tribute message shown on CustomerWeb launch page (backend-driven). */
+    websiteLaunchMessage: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 2000,
+    },
+    /** When CustomerWeb completed LAUNCH → NORMAL. */
+    websiteLaunchCompletedAt: {
+      type: Date,
+      default: null,
+    },
     updatedAt: {
       type: Date,
       default: Date.now,
