@@ -20,6 +20,7 @@ const {
   resetPin,
   registerWithOtp,
   enableCustomerProfile,
+  enablePartnerProfile,
   createCustomerContextHandoff,
   createPartnerContextHandoff,
   exchangeContextHandoff,
@@ -44,6 +45,7 @@ router.get('/health', (req, res) => {
       'POST /api/auth/phone/register-with-otp (idToken + pin)',
       'POST /api/auth/phone/login-pin',
       'POST /api/auth/phone/enable-customer-profile',
+      'POST /api/auth/phone/enable-partner-profile',
       'POST /api/auth/phone/reset-pin (idToken + pin)',
       'POST /api/auth/register',
       'POST /api/auth/login',
@@ -76,6 +78,7 @@ router.post('/phone/register-pin', registerPin);
 router.post('/phone/register-with-otp', registerWithOtp);
 router.post('/phone/login-pin', loginPin);
 router.post('/phone/enable-customer-profile', enableCustomerProfile);
+router.post('/phone/enable-partner-profile', enablePartnerProfile);
 router.post('/phone/reset-pin', resetPin);
 
 // Cross-app context handoff (Partner → Customer)

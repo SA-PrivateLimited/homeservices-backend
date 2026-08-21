@@ -1147,6 +1147,15 @@ exports.loginPin = async (req, res, next) => {
             'This number is registered as a Partner. Create a Customer account to continue as a customer.',
         });
       }
+      if (requestedRole === 'provider' && hasCustomerProfile(user)) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden',
+          code: 'PARTNER_PROFILE_REQUIRED',
+          message:
+            'This number is registered as a customer. Create a Partner account on the same number to continue.',
+        });
+      }
       return res.status(403).json({
         success: false,
         error: 'Forbidden',
@@ -1285,6 +1294,131 @@ exports.enableCustomerProfile = async (req, res, next) => {
 };
 
 /**
+ * POST /api/auth/phone/enable-partner-profile
+ * Customer-only user proves Mobile + PIN, then adds Partner on the same User.
+ * No OTP. Body: { phoneNumber, pin }
+ */
+exports.enablePartnerProfile = async (req, res, next) => {
+  try {
+    const {ten, e164} = assertTenDigitMobile(
+      req.body.phoneNumber || req.body.phone,
+    );
+    const pin = String(req.body.pin || '').trim();
+
+    if (!isValidPin(pin)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'PIN must be exactly 6 digits',
+      });
+    }
+
+    const user = await User.findOne({
+      $or: [
+        {phoneNumber: e164},
+        {phone: e164},
+        {phoneNumber: ten},
+        {phone: ten},
+      ],
+    }).select(PIN_SELECT);
+
+    const customerHash = pinHashForRole(user, 'customer');
+    if (!user || !customerHash) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'No PIN set for this number. Create a PIN first.',
+      });
+    }
+
+    if (!hasCustomerProfile(user)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Only customers can enable a Partner profile this way.',
+      });
+    }
+
+    if (hasPartnerProfile(user)) {
+      try {
+        await assertRoleAccess(user, 'provider');
+      } catch (accessErr) {
+        return res.status(accessErr.statusCode || 403).json({
+          success: false,
+          error: 'Forbidden',
+          message: accessErr.message,
+        });
+      }
+      const matchExisting = await bcrypt.compare(pin, customerHash);
+      if (!matchExisting) {
+        const partnerHash = pinHashForRole(user, 'provider');
+        const partnerMatch =
+          partnerHash && (await bcrypt.compare(pin, partnerHash));
+        if (!partnerMatch) {
+          return res.status(401).json({
+            success: false,
+            error: 'Unauthorized',
+            message: 'Incorrect PIN',
+          });
+        }
+      }
+      const sessionExisting = await issueSessionForUser(user, {
+        activeRole: 'provider',
+      });
+      return res.json({
+        success: true,
+        data: sessionExisting,
+        message: 'Partner account is ready.',
+      });
+    }
+
+    try {
+      await assertRoleAccess(user, 'customer');
+    } catch (accessErr) {
+      return res.status(accessErr.statusCode || 403).json({
+        success: false,
+        error: 'Forbidden',
+        message: accessErr.message,
+      });
+    }
+
+    const match = await bcrypt.compare(pin, customerHash);
+    if (!match) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Incorrect PIN',
+      });
+    }
+
+    snapshotLegacyPins(user);
+    user.role = 'provider';
+    user.customerProfileEnabled = true;
+    user.customerAccessActive = true;
+    user.updatedAt = new Date();
+    snapshotLegacyPins(user);
+    await user.save();
+    await ensureProviderProfile(user, user.name || user.displayName);
+
+    const session = await issueSessionForUser(user, {activeRole: 'provider'});
+    res.json({
+      success: true,
+      data: session,
+      message: 'Partner account is ready.',
+    });
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        success: false,
+        error: err.statusCode === 403 ? 'Forbidden' : 'Bad Request',
+        message: err.message,
+      });
+    }
+    next(err);
+  }
+};
+
+/**
  * POST /api/auth/phone/register-with-otp
  * New number: verify Firebase idToken (or Twilio code), then create account with 6-digit PIN.
  * Body: { phoneNumber, pin, idToken?, code?, fullName?, role? }
@@ -1328,8 +1462,21 @@ exports.registerWithOtp = async (req, res, next) => {
       ],
     }).select(PIN_SELECT);
 
+    const upgradingCustomerToPartner =
+      Boolean(user) &&
+      requestedRole === 'provider' &&
+      hasCustomerProfile(user) &&
+      !hasPartnerProfile(user);
+
     if (user?.pinHash) {
       if (requestedRole === 'customer' && hasCustomerProfile(user)) {
+        return res.status(409).json({
+          success: false,
+          error: 'Conflict',
+          message: 'Account already exists. Log in with your PIN.',
+        });
+      }
+      if (requestedRole === 'provider' && hasPartnerProfile(user)) {
         return res.status(409).json({
           success: false,
           error: 'Conflict',
@@ -1345,35 +1492,38 @@ exports.registerWithOtp = async (req, res, next) => {
             'This number is registered as a Partner. Create a Customer account to continue as a customer.',
         });
       }
-      if (user.role !== requestedRole) {
+      if (!upgradingCustomerToPartner && user.role !== requestedRole) {
         return res.status(409).json({
           success: false,
           error: 'Conflict',
           message:
             requestedRole === 'provider'
-              ? 'This number is already registered as a customer. Use a different number for provider signup.'
+              ? 'This number is already registered as a customer. Create a Partner account on the same number.'
               : 'Account already exists. Log in with your PIN.',
         });
       }
-      return res.status(409).json({
-        success: false,
-        error: 'Conflict',
-        message: 'Account already exists. Log in with your PIN.',
-      });
+      if (!upgradingCustomerToPartner) {
+        return res.status(409).json({
+          success: false,
+          error: 'Conflict',
+          message: 'Account already exists. Log in with your PIN.',
+        });
+      }
     }
 
     if (
       user &&
       user.role &&
       user.role !== requestedRole &&
-      !(requestedRole === 'customer' && hasPartnerProfile(user))
+      !(requestedRole === 'customer' && hasPartnerProfile(user)) &&
+      !upgradingCustomerToPartner
     ) {
       return res.status(409).json({
         success: false,
         error: 'Conflict',
         message:
           requestedRole === 'provider'
-            ? 'This number is already registered as a customer. Use a different number for provider signup.'
+            ? 'This number is already registered as a customer. Create a Partner account on the same number.'
             : 'This number is already registered as a Partner.',
       });
     }
@@ -1415,6 +1565,11 @@ exports.registerWithOtp = async (req, res, next) => {
       if (requestedRole === 'customer' && hasPartnerProfile(user)) {
         user.customerProfileEnabled = true;
         user.customerAccessActive = true;
+      } else if (upgradingCustomerToPartner) {
+        snapshotLegacyPins(user);
+        user.role = 'provider';
+        user.customerProfileEnabled = true;
+        user.customerAccessActive = true;
       } else {
         user.role = requestedRole;
         // Ensure existing providers also get customer access
@@ -1452,7 +1607,9 @@ exports.registerWithOtp = async (req, res, next) => {
       data: session,
       message:
         requestedRole === 'provider'
-          ? 'Provider account created. Complete your profile — you appear to customers after admin approval.'
+          ? upgradingCustomerToPartner
+            ? 'Partner account added on your existing Akanso number. Complete your profile — you appear to customers after admin approval.'
+            : 'Provider account created. Complete your profile — you appear to customers after admin approval.'
           : 'Account created. Save your PIN for next login.',
     });
   } catch (err) {
