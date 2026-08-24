@@ -572,6 +572,201 @@ exports.createServiceRequest = async (req, res, next) => {
 /**
  * Update service request
  */
+
+
+function addressMatchSignature(address = {}) {
+  return [
+    String(address.pincode || '').trim(),
+    String(address.districtId || '').trim(),
+    String(address.district || address.city || '').trim().toLowerCase(),
+    String(address.stateId || '').trim(),
+    String(address.state || '').trim().toLowerCase(),
+  ].join('|');
+}
+
+function clearProviderReservation(serviceRequest) {
+  serviceRequest.providerId = undefined;
+  serviceRequest.providerName = undefined;
+  serviceRequest.providerPhone = undefined;
+  serviceRequest.providerSpecialization = undefined;
+  serviceRequest.providerRating = undefined;
+  serviceRequest.providerImage = undefined;
+  serviceRequest.declinedProviders = [];
+}
+
+/**
+ * Re-run area matching after a customer edits service type / address while pending.
+ */
+async function rematchProvidersAfterEdit(serviceRequest, userId) {
+  const serviceType = serviceRequest.serviceType;
+  const customerAddress = serviceRequest.customerAddress || {};
+
+  // Edits that affect matching always rematch openly (no stale targeted reservation).
+  clearProviderReservation(serviceRequest);
+
+  const areaResult = await findProvidersInArea(serviceType, customerAddress, {
+    excludeUserId: userId,
+  });
+  const providersToNotify = areaResult.providers || [];
+  const matchBy = areaResult.matchBy || 'area';
+
+  const needsAdmin = providersToNotify.length === 0;
+  serviceRequest.needsAdminAssignment = needsAdmin;
+  serviceRequest.noProvidersInArea = needsAdmin;
+  await serviceRequest.save();
+
+  let adminJobCardId = null;
+  try {
+    if (needsAdmin) {
+      const existing = await JobCard.findOne({
+        serviceRequestId: serviceRequest._id.toString(),
+        status: 'unassigned',
+      });
+      const addressPayload = {
+        address: customerAddress.address,
+        landmark: customerAddress.landmark,
+        city: customerAddress.district || customerAddress.city,
+        district: customerAddress.district || customerAddress.city,
+        state: customerAddress.state,
+        stateId: customerAddress.stateId,
+        districtId: customerAddress.districtId,
+        pincode: customerAddress.pincode,
+        latitude: customerAddress.latitude,
+        longitude: customerAddress.longitude,
+        label: customerAddress.label,
+        customLabel: customerAddress.customLabel,
+      };
+      if (existing) {
+        existing.serviceType = serviceType;
+        existing.problem = serviceRequest.problem || '';
+        existing.questionnaireAnswers = serviceRequest.questionnaireAnswers;
+        existing.customerAddress = addressPayload;
+        existing.customerName = serviceRequest.customerName || existing.customerName;
+        existing.customerPhone = serviceRequest.customerPhone || existing.customerPhone;
+        existing.needsAdminAssignment = true;
+        existing.updatedAt = new Date();
+        await existing.save();
+        adminJobCardId = existing._id.toString();
+      } else {
+        adminJobCardId = newObjectIdString();
+        await new JobCard({
+          _id: adminJobCardId,
+          providerId: '',
+          providerName: '',
+          customerId: userId,
+          customerName: serviceRequest.customerName || 'Customer',
+          customerPhone: serviceRequest.customerPhone || '',
+          customerAddress: addressPayload,
+          serviceType,
+          problem: serviceRequest.problem || '',
+          questionnaireAnswers: serviceRequest.questionnaireAnswers,
+          bookingId: serviceRequest._id.toString(),
+          serviceRequestId: serviceRequest._id.toString(),
+          needsAdminAssignment: true,
+          status: 'unassigned',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }).save();
+      }
+    } else {
+      await JobCard.updateMany(
+        {
+          serviceRequestId: serviceRequest._id.toString(),
+          status: 'unassigned',
+        },
+        {
+          $set: {
+            status: 'cancelled',
+            cancellationReason: 'Customer updated request; providers available',
+            updatedAt: new Date(),
+          },
+        },
+      );
+    }
+  } catch (jobErr) {
+    console.warn('⚠️ [updateServiceRequest] Job card sync failed:', jobErr.message);
+  }
+
+  const bookingData = sanitizeBookingNotifyPayload(
+    {
+      id: serviceRequest._id.toString(),
+      serviceRequestId: serviceRequest._id.toString(),
+      consultationId: serviceRequest._id.toString(),
+      customerId: userId,
+      customerName: serviceRequest.customerName || 'Customer',
+      customerPhone: serviceRequest.customerPhone || '',
+      serviceType,
+      problem: serviceRequest.problem || '',
+      address: customerAddress.address,
+      pincode: customerAddress.pincode,
+      district: customerAddress.district || customerAddress.city || '',
+      districtId: customerAddress.districtId || '',
+      state: customerAddress.state || '',
+      stateId: customerAddress.stateId || '',
+      status: 'pending',
+      createdAt: serviceRequest.createdAt,
+      matchBy,
+      needsAdminAssignment: needsAdmin,
+      jobCardId: adminJobCardId || undefined,
+      updated: true,
+    },
+    {includeCustomerPhone: false},
+  );
+
+  const emitPromises = providersToNotify.map(async (provider) => {
+    const providerId = provider._id.toString();
+    try {
+      await notifyBooking({providerId, bookingData});
+    } catch (error) {
+      console.warn(
+        `⚠️ [updateServiceRequest] Notify provider ${providerId}:`,
+        error.message,
+      );
+    }
+    try {
+      await notifyProvider(providerId, {
+        title: 'Updated service request',
+        body: `${bookingData.customerName} updated a ${serviceType} request nearby`,
+        data: {
+          type: 'updated-booking',
+          serviceRequestId: bookingData.serviceRequestId,
+          serviceType,
+        },
+      });
+    } catch (fcmErr) {
+      console.warn(`⚠️ [FCM] Provider ${providerId}:`, fcmErr.message);
+    }
+  });
+  Promise.all(emitPromises).catch((err) => {
+    console.warn('⚠️ [updateServiceRequest] Some provider notifications failed:', err.message);
+  });
+
+  try {
+    await notifyAdminsRealtime(
+      sanitizeBookingNotifyPayload(
+        {
+          serviceRequestId: bookingData.serviceRequestId,
+          jobCardId: adminJobCardId || undefined,
+          customerId: userId,
+          customerName: bookingData.customerName,
+          serviceType,
+          address: customerAddress.address,
+          pincode: customerAddress.pincode,
+          district: bookingData.district,
+          status: needsAdmin ? 'unassigned' : 'pending',
+          providersNotified: providersToNotify.length,
+          matchBy,
+          needsAdminAssignment: needsAdmin,
+          updated: true,
+        },
+        {includeCustomerPhone: false},
+      ),
+    );
+  } catch (adminSockErr) {
+    console.warn('⚠️ [updateServiceRequest] Admin realtime failed:', adminSockErr.message);
+  }
+}
+
 exports.updateServiceRequest = async (req, res, next) => {
   try {
     const {serviceRequestId} = req.params;
@@ -580,13 +775,11 @@ exports.updateServiceRequest = async (req, res, next) => {
 
     logDatabaseOperation('findOne', 'serviceRequests', {_id: serviceRequestId, customerId: userId});
 
-    // Try to find by string _id first (for Firestore-style IDs)
     let serviceRequest = await ServiceRequest.findOne({
       _id: serviceRequestId,
       customerId: userId,
     });
 
-    // If not found and the ID looks like an ObjectId, try with ObjectId conversion
     if (!serviceRequest && mongoose.Types.ObjectId.isValid(serviceRequestId)) {
       try {
         serviceRequest = await ServiceRequest.findOne({
@@ -594,7 +787,6 @@ exports.updateServiceRequest = async (req, res, next) => {
           customerId: userId,
         });
       } catch (objectIdError) {
-        // If ObjectId conversion fails, continue with null
         console.warn('⚠️  ObjectId conversion failed:', objectIdError.message);
       }
     }
@@ -607,6 +799,29 @@ exports.updateServiceRequest = async (req, res, next) => {
       });
     }
 
+    // Backend is the authority: only unaccepted (pending) requests are editable.
+    if (serviceRequest.status !== 'pending') {
+      return res.status(409).json({
+        success: false,
+        error: 'REQUEST_NO_LONGER_EDITABLE',
+        code: 'REQUEST_NO_LONGER_EDITABLE',
+        message:
+          t('serviceRequests.noLongerEditable', lang) ||
+          'This request was accepted by a provider and can no longer be edited.',
+        data: {
+          serviceRequestId: String(serviceRequest._id),
+          status: serviceRequest.status,
+          providerId: serviceRequest.providerId || null,
+          providerName: serviceRequest.providerName || null,
+        },
+      });
+    }
+
+    const previousServiceType = serviceRequest.serviceType;
+    const previousServiceTypeKey =
+      serviceRequest.serviceTypeKey || normalizeServiceTypeKey(previousServiceType);
+    const previousAddressSig = addressMatchSignature(serviceRequest.customerAddress);
+
     const ALLOWED_UPDATE_FIELDS = new Set([
       'problem',
       'customerAddress',
@@ -614,37 +829,117 @@ exports.updateServiceRequest = async (req, res, next) => {
       'secondaryPhone',
       'questionnaireAnswers',
       'scheduledTime',
+      // serviceType is intentionally locked after create — edit UI cannot change it.
     ]);
 
     Object.keys(req.body || {}).forEach((key) => {
       if (!ALLOWED_UPDATE_FIELDS.has(key) || req.body[key] === undefined) {
         return;
       }
+      if (key === 'photos') {
+        try {
+          serviceRequest.photos = normalizePhotoReferences(req.body.photos, req.user);
+        } catch (photoErr) {
+          photoErr.statusCode = photoErr.statusCode || 400;
+          throw photoErr;
+        }
+        return;
+      }
       serviceRequest[key] = req.body[key];
     });
 
-    serviceRequest.updatedAt = new Date();
+    const nextServiceType = String(serviceRequest.serviceType || '').trim();
+    if (!nextServiceType) {
+      return res.status(400).json({
+        success: false,
+        error: t('serviceRequests.serviceTypeRequired', lang),
+        message: t('serviceRequests.serviceTypeRequired', lang),
+      });
+    }
 
+    const nextServiceTypeKey = normalizeServiceTypeKey(nextServiceType);
+    serviceRequest.serviceType = nextServiceType;
+    serviceRequest.serviceTypeKey = nextServiceTypeKey;
+
+    const serviceTypeChanged = previousServiceTypeKey !== nextServiceTypeKey;
+    const addressChanged =
+      addressMatchSignature(serviceRequest.customerAddress) !== previousAddressSig;
+    const matchingChanged = serviceTypeChanged || addressChanged;
+
+    if (serviceTypeChanged) {
+      const existing = await findActiveServiceRequest(userId, nextServiceType);
+      if (existing && String(existing._id) !== String(serviceRequest._id)) {
+        return res.status(409).json(activeRequestConflictPayload(existing, lang, t));
+      }
+
+      try {
+        await releaseActiveRequestLock(userId, previousServiceType);
+        const lock = await acquireActiveRequestLock({
+          customerId: userId,
+          serviceType: nextServiceType,
+        });
+        if (!lock.ok) {
+          serviceRequest.serviceType = previousServiceType;
+          serviceRequest.serviceTypeKey = previousServiceTypeKey;
+          return res.status(409).json(activeRequestConflictPayload(lock.existing, lang, t));
+        }
+        await bindLockToRequest(userId, nextServiceType, serviceRequest._id);
+      } catch (lockErr) {
+        console.warn(
+          '⚠️ [updateServiceRequest] Active lock migration failed:',
+          lockErr?.message || lockErr,
+        );
+      }
+    }
+
+    if (matchingChanged) {
+      clearProviderReservation(serviceRequest);
+      serviceRequest.needsAdminAssignment = false;
+      serviceRequest.noProvidersInArea = false;
+    }
+
+    serviceRequest.updatedAt = new Date();
     await serviceRequest.save();
+
+    if (matchingChanged) {
+      try {
+        await rematchProvidersAfterEdit(serviceRequest, userId);
+      } catch (rematchErr) {
+        console.warn(
+          '⚠️ [updateServiceRequest] Rematch failed:',
+          rematchErr?.message || rematchErr,
+        );
+      }
+    }
+
+    const fresh = await ServiceRequest.findById(serviceRequest._id).lean();
 
     res.json({
       success: true,
       data: redactServiceRequestForViewer(
-        serviceRequest.toObject(),
+        fresh || serviceRequest.toObject(),
         req.user,
         await getContactSettings(),
       ),
       message: t('serviceRequests.updated', lang),
+      rematched: matchingChanged,
     });
   } catch (error) {
-    console.error(`❌ [updateServiceRequest] Failed for user ${req.user.uid}:`, error.message);
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        error: error.name || 'Bad Request',
+        message: error.message,
+      });
+    }
+    console.error(
+      `❌ [updateServiceRequest] Failed for user ${req.user.uid}:`,
+      error.message,
+    );
     next(error);
   }
 };
 
-/**
- * Cancel service request with reason
- */
 exports.cancelServiceRequest = async (req, res, next) => {
   try {
     const {serviceRequestId} = req.params;

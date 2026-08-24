@@ -15,6 +15,7 @@ const {
   getMyProfile,
   updateMyProfile,
   updateMyServiceAvailability,
+  updateProviderServiceAvailability,
   addMyService,
   getMyServiceDetails,
   updateMyServiceDetails,
@@ -212,6 +213,19 @@ router.put(
   validateObjectId,
   logRequest,
   updateProviderServiceQualification,
+);
+
+/**
+ * PUT /api/providers/:providerId/service-availability
+ * Admin toggles whether a verified service accepts new jobs
+ */
+router.put(
+  '/:providerId/service-availability',
+  requireRole('admin'),
+  requirePermission(PERMISSIONS.PROVIDERS_UPDATE),
+  validateObjectId,
+  logRequest,
+  updateProviderServiceAvailability,
 );
 
 /**

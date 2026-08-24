@@ -337,6 +337,29 @@ function providerOwnsDocumentUrl(providerId, url) {
   return value.includes(`/providers/${providerId}/`);
 }
 
+/**
+ * Profile experience lives on the Partner account; service review reads
+ * serviceQualifications[].experience — keep primary service in sync.
+ */
+function syncProfileExperienceToPrimaryService(provider) {
+  if (!provider) return false;
+  const raw = provider.experience;
+  if (raw == null || raw === '') return false;
+  const num = Number(raw);
+  if (!Number.isFinite(num) || num < 0) return false;
+
+  const primary = primaryServiceForProvider(provider);
+  if (!primary) return false;
+
+  const q = qualificationForService(provider, primary);
+  if (q?.experience === num) return false;
+
+  const status =
+    q?.verificationStatus || accountVerificationFallback(provider);
+  upsertQualification(provider, primary, status, {experience: num});
+  return true;
+}
+
 module.exports = {
   VERIFICATION_STATUSES,
   allServicesForProvider,
@@ -363,4 +386,5 @@ module.exports = {
   documentsForCategory,
   canEditServiceQualification,
   providerOwnsDocumentUrl,
+  syncProfileExperienceToPrimaryService,
 };

@@ -4,11 +4,16 @@
  */
 
 const Provider = require('../../models/Provider');
+const {normalizePhotoReferences} = require('../../utils/normalizeAssetPhotos');
 const User = require('../../models/User');
 const ServiceCategory = require('../../models/ServiceCategory');
 const {connectDB} = require('../../config/database');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 const {toPublicProviderForSettings} = require('../../utils/contactAccess');
+const {
+  partnerNamePatch,
+  syncPartnerDisplayNames,
+} = require('../../utils/partnerNameSync');
 const {getContactSettings} = require('../../services/contactPolicyService');
 const {
   allServicesForProvider,
@@ -27,6 +32,7 @@ const {
   documentsForCategory,
   providerOwnsDocumentUrl,
   summarizePartnerServices,
+  syncProfileExperienceToPrimaryService,
 } = require('../../utils/providerServiceAvailability');
 const {
   excludeSelfProviderClause,
@@ -35,6 +41,31 @@ const {
 } = require('../../utils/excludeSelfProvider');
 const {adminProfileFlags} = require('../../utils/userProfiles');
 const {hasPinForPurpose, PIN_SELECT} = require('../../utils/rolePins');
+const {autoVerifyPartnerIfEligible} = require('../../utils/partnerAutoVerification');
+const {
+  getPartnerVerificationMode,
+  isPartnerAutoVerifyEnabled,
+} = require('../../services/partnerVerificationPolicyService');
+
+async function providerPayloadWithPolicy(provider) {
+  if (!provider) return provider;
+  const mode = await getPartnerVerificationMode();
+  const raw = provider.toObject ? provider.toObject() : {...provider};
+  return {...raw, partnerVerificationMode: mode};
+}
+
+async function maybeAutoVerifyPartner(provider, userId) {
+  if (!provider || !userId) return provider;
+  if (!(await isPartnerAutoVerifyEnabled())) return provider;
+  const user = await User.findById(userId)
+    .select('phoneVerified name displayName')
+    .lean();
+  const result = autoVerifyPartnerIfEligible(provider, user);
+  if (result.changed) {
+    await provider.save();
+  }
+  return provider;
+}
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -429,13 +460,28 @@ exports.getMyProfile = async (req, res, next) => {
     }
 
     ensureQualifications(provider);
+
+    try {
+      const linkedUser = await User.findById(req.user.uid).select(
+        'name displayName phoneVerified',
+      );
+      const {providerChanged, userChanged} = syncPartnerDisplayNames(
+        provider,
+        linkedUser,
+      );
+      if (providerChanged) await provider.save();
+      if (userChanged && linkedUser) await linkedUser.save();
+    } catch (syncErr) {
+      console.warn('Could not repair partner display name:', syncErr.message);
+    }
+
     if (provider.isModified()) {
       await provider.save();
     }
 
     res.json({
       success: true,
-      data: provider,
+      data: await providerPayloadWithPolicy(provider),
     });
   } catch (error) {
     next(error);
@@ -503,6 +549,51 @@ exports.updateMyProfile = async (req, res, next) => {
     delete updateData.specialization;
     delete updateData.specialty;
 
+    try {
+      const existing = await Provider.findById(req.user.uid).select(
+        'name displayName',
+      );
+      const linkedUser = await User.findById(req.user.uid).select(
+        'name displayName',
+      );
+      const namePatch = partnerNamePatch(
+        updateData.name,
+        existing?.name,
+        existing?.displayName,
+        linkedUser?.name,
+        linkedUser?.displayName,
+      );
+      if (namePatch) {
+        updateData.name = namePatch.name;
+        updateData.displayName = namePatch.displayName;
+      }
+    } catch (syncErr) {
+      console.warn('Could not resolve partner name before update:', syncErr.message);
+    }
+
+    if (updateData.name) {
+      const trimmedName = String(updateData.name).trim();
+      updateData.name = trimmedName;
+      updateData.displayName = trimmedName;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updateData, 'photos')) {
+      try {
+        updateData.photos = normalizePhotoReferences(updateData.photos, req.user, {
+          max: 3,
+        });
+      } catch (photoErr) {
+        if (photoErr.statusCode || photoErr.status) {
+          return res.status(photoErr.statusCode || photoErr.status).json({
+            success: false,
+            error: photoErr.name || 'Bad Request',
+            message: photoErr.message,
+          });
+        }
+        throw photoErr;
+      }
+    }
+
     const provider = await Provider.findByIdAndUpdate(
       req.user.uid,
       {$set: updateData},
@@ -554,15 +645,64 @@ exports.updateMyProfile = async (req, res, next) => {
       console.warn('Could not sync user from provider self-update:', syncErr.message);
     }
 
+    let saved = provider ? await Provider.findById(req.user.uid) : null;
+    if (saved) {
+      if (syncProfileExperienceToPrimaryService(saved)) {
+        await saved.save();
+      }
+      saved = await maybeAutoVerifyPartner(saved, req.user.uid);
+    }
+
     res.json({
       success: true,
-      data: provider,
+      data: await providerPayloadWithPolicy(saved || provider),
       message: 'Provider profile updated successfully',
     });
   } catch (error) {
     next(error);
   }
 };
+
+function applyServiceAvailabilityChange(provider, serviceName, active) {
+  const name = String(serviceName || '').trim();
+  if (!name) {
+    return {
+      ok: false,
+      status: 400,
+      message: 'Service name is required.',
+    };
+  }
+  if (typeof active !== 'boolean') {
+    return {
+      ok: false,
+      status: 400,
+      message: 'active must be true or false.',
+    };
+  }
+
+  const known = allServicesForProvider(provider);
+  const match = known.find((s) => s.toLowerCase() === name.toLowerCase());
+  if (!match) {
+    return {
+      ok: false,
+      status: 400,
+      message: 'This service is not on the Partner profile.',
+    };
+  }
+
+  if (active && !isServiceVerified(provider, match)) {
+    return {
+      ok: false,
+      status: 400,
+      message:
+        'This service cannot receive new jobs until verification is complete.',
+    };
+  }
+
+  setInactive(provider, match, !active);
+  provider.updatedAt = new Date();
+  return {ok: true, match, active};
+}
 
 /**
  * Toggle per-service availability (provider only).
@@ -573,21 +713,6 @@ exports.updateMyServiceAvailability = async (req, res, next) => {
   try {
     await connectDB();
     const {serviceName, active} = req.body || {};
-    const name = String(serviceName || '').trim();
-    if (!name) {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation Error',
-        message: 'Service name is required.',
-      });
-    }
-    if (typeof active !== 'boolean') {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation Error',
-        message: 'active must be true or false.',
-      });
-    }
 
     const provider = await Provider.findById(req.user.uid);
     if (!provider) {
@@ -598,37 +723,57 @@ exports.updateMyServiceAvailability = async (req, res, next) => {
       });
     }
 
-    const known = allServicesForProvider(provider);
-    const match = known.find((s) => s.toLowerCase() === name.toLowerCase());
-    if (!match) {
-      return res.status(400).json({
+    const result = applyServiceAvailabilityChange(provider, serviceName, active);
+    if (!result.ok) {
+      return res.status(result.status).json({
         success: false,
         error: 'Validation Error',
-        message: 'This service is not on your profile.',
+        message: result.message,
       });
     }
 
-    if (active && !isServiceVerified(provider, match)) {
-      return res.status(400).json({
+    await provider.save();
+
+    res.json({
+      success: true,
+      data: provider,
+      message: active
+        ? 'Service is now active for new jobs.'
+        : 'Service is now inactive for new jobs.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Admin: toggle per-service availability for a Partner.
+ * PUT /api/providers/:providerId/service-availability
+ * Body: { serviceName: string, active: boolean }
+ */
+exports.updateProviderServiceAvailability = async (req, res, next) => {
+  try {
+    await connectDB();
+    const {serviceName, active} = req.body || {};
+
+    const provider = await Provider.findById(req.params.providerId);
+    if (!provider) {
+      return res.status(404).json({
         success: false,
-        error: 'Validation Error',
-        message:
-          'This service cannot receive new jobs until verification is complete.',
+        error: 'Not found',
+        message: 'Provider not found.',
       });
     }
 
-    const inactive = Array.isArray(provider.inactiveServiceCategories)
-      ? [...provider.inactiveServiceCategories]
-      : [];
-    const key = match.toLowerCase();
-    const without = inactive.filter((s) => String(s).toLowerCase() !== key);
-
-    if (active) {
-      provider.inactiveServiceCategories = without;
-    } else {
-      provider.inactiveServiceCategories = [...without, match];
+    const result = applyServiceAvailabilityChange(provider, serviceName, active);
+    if (!result.ok) {
+      return res.status(result.status).json({
+        success: false,
+        error: 'Validation Error',
+        message: result.message,
+      });
     }
-    provider.updatedAt = new Date();
+
     await provider.save();
 
     res.json({
@@ -699,10 +844,11 @@ exports.addMyService = async (req, res, next) => {
     if (result.error) {
       return res.status(result.error.status).json(result.error.body);
     }
+    const saved = await maybeAutoVerifyPartner(result.provider, req.user.uid);
     res.status(201).json({
       success: true,
-      data: result.provider,
-      message: 'Service added. Complete this service information for verification.',
+      data: await providerPayloadWithPolicy(saved),
+      message: 'Service added.',
     });
   } catch (error) {
     next(error);
@@ -790,6 +936,7 @@ exports.getMyServiceDetails = async (req, res, next) => {
       name: new RegExp(`^${escapeRegex(match)}$`, 'i'),
     }).lean();
     const docs = provider.documents || {};
+    const partnerVerificationMode = await getPartnerVerificationMode();
     res.json({
       success: true,
       data: {
@@ -798,6 +945,7 @@ exports.getMyServiceDetails = async (req, res, next) => {
         requiredDocuments: documentsForCategory(category),
         identityReady: Boolean(docs.idProof),
         addressReady: Boolean(docs.addressProof),
+        partnerVerificationMode,
       },
     });
   } catch (error) {
@@ -839,9 +987,10 @@ exports.updateMyServiceDetails = async (req, res, next) => {
     applyServiceDetailsBody(provider, match, req.body || {});
     provider.updatedAt = new Date();
     await provider.save();
+    const saved = await maybeAutoVerifyPartner(provider, req.user.uid);
     res.json({
       success: true,
-      data: provider,
+      data: await providerPayloadWithPolicy(saved),
       message: 'Service information saved.',
     });
   } catch (error) {
@@ -888,6 +1037,27 @@ exports.submitMyServiceForReview = async (req, res, next) => {
         message: 'Please enter your experience for this service.',
       });
     }
+
+    const autoMode = await isPartnerAutoVerifyEnabled();
+
+    if (autoMode) {
+      upsertQualification(provider, match, 'approved', {
+        submittedAt: new Date(),
+        reviewedAt: new Date(),
+        reviewedBy: 'auto',
+        rejectionReason: '',
+      });
+      setInactive(provider, match, false);
+      provider.updatedAt = new Date();
+      await provider.save();
+      const saved = await maybeAutoVerifyPartner(provider, req.user.uid);
+      return res.json({
+        success: true,
+        data: await providerPayloadWithPolicy(saved),
+        message: 'Service is verified and active for new jobs.',
+      });
+    }
+
     const category = await ServiceCategory.findOne({
       name: new RegExp(`^${escapeRegex(match)}$`, 'i'),
     }).lean();
@@ -912,7 +1082,7 @@ exports.submitMyServiceForReview = async (req, res, next) => {
     await provider.save();
     res.json({
       success: true,
-      data: provider,
+      data: await providerPayloadWithPolicy(provider),
       message: 'Service information submitted for review.',
     });
   } catch (error) {
@@ -1259,6 +1429,12 @@ exports.updateProvider = async (req, res, next) => {
       );
       updateData.phone = synced.phone;
       updateData.phoneNumber = synced.phoneNumber;
+    }
+
+    if (updateData.name) {
+      const trimmedName = String(updateData.name).trim();
+      updateData.name = trimmedName;
+      updateData.displayName = trimmedName;
     }
 
     // Allow updating documents verification status

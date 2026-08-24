@@ -49,7 +49,6 @@ function normalizeStatus(status) {
 
 function statusAllowsContact(status) {
   const key = normalizeStatus(status);
-  // Treat underscore form as hyphen form
   const compact = key.replace(/-/g, '');
   if (CONTACT_ALLOWED_STATUSES.has(key)) return true;
   if (key === 'inprogress' || compact === 'inprogress') return true;
@@ -57,6 +56,20 @@ function statusAllowsContact(status) {
     return true;
   }
   return CONTACT_ALLOWED_STATUSES.has(key);
+}
+
+function isGenericProviderName(value) {
+  const s = String(value || '').trim();
+  return !s || /^(customer|provider)(\s+\d+)?$/i.test(s);
+}
+
+/** One public name for browse/detail — ignore stale signup placeholders. */
+function resolveProviderPublicName(provider) {
+  const name = String(provider?.name || '').trim();
+  const displayName = String(provider?.displayName || '').trim();
+  if (!isGenericProviderName(name)) return name;
+  if (!isGenericProviderName(displayName)) return displayName;
+  return '';
 }
 
 function viewerId(viewer) {
@@ -153,24 +166,33 @@ function toPublicProvider(provider, {revealPhone = false, policy} = {}) {
     ? pickPhone(raw.phone, raw.phoneNumber)
     : '';
   const out = stripFields(raw, PUBLIC_PROVIDER_STRIP_FIELDS);
+  // Profile street address is part of the public professional profile
+  // (entered in Partner settings). Phone remains gated via revealPhone.
   if (out.location && typeof out.location === 'object') {
     out.location = {
+      address: out.location.address,
+      landmark: out.location.landmark,
       city: out.location.city,
       district: out.location.district,
       state: out.location.state,
       stateId: out.location.stateId,
       districtId: out.location.districtId,
+      pincode: out.location.pincode,
       latitude: out.location.latitude,
       longitude: out.location.longitude,
     };
   }
   if (out.address && typeof out.address === 'object') {
     out.address = {
+      type: out.address.type,
+      address: out.address.address,
+      landmark: out.address.landmark,
       city: out.address.city,
       district: out.address.district,
       state: out.address.state,
       stateId: out.address.stateId,
       districtId: out.address.districtId,
+      pincode: out.address.pincode,
     };
   }
   if (phone) {
@@ -182,6 +204,11 @@ function toPublicProvider(provider, {revealPhone = false, policy} = {}) {
   }
   if (policy) {
     out.providerContactPolicy = policy;
+  }
+  const publicName = resolveProviderPublicName(out);
+  if (publicName) {
+    out.name = publicName;
+    out.displayName = publicName;
   }
   return out;
 }

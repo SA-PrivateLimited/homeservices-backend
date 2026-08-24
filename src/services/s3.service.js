@@ -1,9 +1,10 @@
 /**
  * AWS S3 asset service (SDK v3).
  *
- * Production: default credential chain (EC2 instance IAM role).
- * Local/dev: optional AWS_ACCESS_KEY_ID/SECRET, or disk fallback when
- * AWS_S3_LOCAL_FALLBACK=true (or auto on CredentialsProviderError in development).
+ * Production: EC2/ECS instance IAM role only (default credential provider chain).
+ *   Never use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+ * Local/dev: AWS_S3_LOCAL_FALLBACK=true writes to ./uploads (no AWS needed).
+ *   Static access keys are intentionally not supported.
  */
 
 const path = require('path');
@@ -48,6 +49,28 @@ function localFallbackForced() {
   return String(process.env.AWS_S3_LOCAL_FALLBACK || '').toLowerCase() === 'true';
 }
 
+/** Local disk uploads are allowed only in non-production with explicit fallback. */
+function localDiskAllowed() {
+  if (!isDev()) return false;
+  return localFallbackForced();
+}
+
+function warnIfStaticKeysConfigured() {
+  const hasKeys =
+    Boolean(process.env.AWS_ACCESS_KEY_ID) ||
+    Boolean(process.env.AWS_SECRET_ACCESS_KEY);
+  if (!hasKeys) return;
+  if (!isDev()) {
+    console.error(
+      '[s3] Refusing static AWS access keys in production. Use the instance IAM role only. Unset AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.',
+    );
+    return;
+  }
+  console.warn(
+    '[s3] AWS_ACCESS_KEY_ID/SECRET are set but ignored. Use the default credential chain (instance IAM role in production; AWS_PROFILE/SSO locally).',
+  );
+}
+
 function isLoopbackUrl(value) {
   try {
     const parsed = new URL(value);
@@ -69,23 +92,13 @@ function publicApiBase() {
 }
 
 /**
- * Lazily create S3Client.
- * - Production: IAM role via default chain (no static keys).
- * - Local: optional AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY from .env.
+ * Lazily create S3Client using the default credential provider chain only
+ * (instance IAM role in production). Static access keys are never injected.
  */
 function getS3Client() {
   if (!s3Client) {
-    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-    const config = {region: getRegion()};
-    if (accessKeyId && secretAccessKey) {
-      config.credentials = {
-        accessKeyId,
-        secretAccessKey,
-        sessionToken: process.env.AWS_SESSION_TOKEN || undefined,
-      };
-    }
-    s3Client = new S3Client(config);
+    warnIfStaticKeysConfigured();
+    s3Client = new S3Client({region: getRegion()});
   }
   return s3Client;
 }
@@ -206,7 +219,7 @@ async function uploadFile({body, key, contentType, userId} = {}) {
 
   const size = Buffer.byteLength(body);
 
-  if (localFallbackForced() && isDev()) {
+  if (localDiskAllowed()) {
     return uploadToLocalDisk({
       body,
       key: normalizedKey,
@@ -352,16 +365,19 @@ async function deleteObject(key, {userId} = {}) {
 }
 
 function getCredentialResolutionInfo() {
-  const hasExplicit =
-    Boolean(process.env.AWS_ACCESS_KEY_ID) &&
+  const staticKeysPresent =
+    Boolean(process.env.AWS_ACCESS_KEY_ID) ||
     Boolean(process.env.AWS_SECRET_ACCESS_KEY);
   return {
     region: getRegion(),
     bucket: getBucket(),
     cloudFrontDomain: getCloudFrontDomain(),
-    localFallback: localFallbackForced(),
-    usesDefaultCredentialProviderChain: !hasExplicit,
-    hasExplicitConstructorCredentials: hasExplicit,
+    localFallbackRequested: localFallbackForced(),
+    localDiskAllowed: localDiskAllowed(),
+    credentialMode: 'iam-role-default-chain-only',
+    usesDefaultCredentialProviderChain: true,
+    hasExplicitConstructorCredentials: false,
+    staticKeysPresentButIgnored: staticKeysPresent,
   };
 }
 
@@ -369,7 +385,7 @@ function getCredentialResolutionInfo() {
  * Whether we should issue S3 presigned URLs (vs local direct-upload tokens).
  */
 function shouldUseS3Presign() {
-  if (localFallbackForced() && isDev()) return false;
+  if (localDiskAllowed()) return false;
   return true;
 }
 
@@ -439,7 +455,7 @@ async function createPresignedPutUrl({
 
 async function headObject(key, {userId} = {}) {
   const normalizedKey = normalizeObjectKey(key);
-  if (localFallbackForced() && isDev()) {
+  if (localDiskAllowed()) {
     const absPath = path.join(UPLOAD_ROOT, normalizedKey);
     if (!fs.existsSync(absPath)) {
       throw createHttpError(404, 'Object not found', 'Not Found');
@@ -496,6 +512,7 @@ module.exports = {
   headObject,
   createPresignedPutUrl,
   shouldUseS3Presign,
+  localDiskAllowed,
   getCredentialResolutionInfo,
   getRegion,
   getBucket,

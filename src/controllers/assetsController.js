@@ -19,6 +19,7 @@ const {
 } = require('../utils/assetValidation');
 const {
   buildProviderProfileKey,
+  buildProviderShowcaseKey,
   buildCustomerProfileKey,
   buildCustomerServiceRequestPhotoKey,
   buildCustomerServiceRequestPhotoKeyForRequest,
@@ -38,6 +39,7 @@ const UPLOAD_PURPOSES = new Set([
   'provider-document',
   'customer-profile',
   'provider-profile',
+  'provider-showcase',
   'temp',
 ]);
 
@@ -122,6 +124,13 @@ function buildKeyForPurpose({purpose, user, contentType, requestId, docKey}) {
     case 'customer-profile': {
       const ext = extensionForContentType(contentType, {documents: false});
       return buildCustomerProfileKey(uid, ext);
+    }
+    case 'provider-showcase': {
+      if (role !== 'provider' && role !== 'admin') {
+        throw createHttpError(403, 'Only providers can upload showcase images', 'Forbidden');
+      }
+      const ext = extensionForContentType(contentType, {documents: false});
+      return buildProviderShowcaseKey(uid, ext);
     }
     case 'provider-profile': {
       if (role !== 'provider' && role !== 'admin') {
@@ -234,6 +243,14 @@ exports.createUploadUrl = async (req, res, next) => {
     }
 
     if (!payload) {
+      // Production must use IAM role → S3. Local disk only when explicitly allowed in dev.
+      if (!s3.localDiskAllowed()) {
+        throw createHttpError(
+          503,
+          'Photo upload requires S3 via the instance IAM role. Local disk fallback is disabled outside development.',
+          'Storage Unavailable',
+        );
+      }
       // Local/dev fallback: client PUTs binary to our API with a short-lived token
       const token = signUploadToken(
         {
@@ -251,10 +268,8 @@ exports.createUploadUrl = async (req, res, next) => {
       payload = {
         uploadUrl: `${base}/api/assets/direct-upload/${token}`,
         key,
-        url:
-          String(process.env.AWS_S3_LOCAL_FALLBACK || '').toLowerCase() === 'true'
-            ? `${base}/uploads/${normalizeObjectKey(key)}`
-            : s3.generateCloudFrontUrl(key),
+        // Relative path avoids persisting loopback hosts into shared Mongo docs.
+        url: `/uploads/${normalizeObjectKey(key)}`,
         method: 'PUT',
         headers: {'Content-Type': contentType},
         expiresIn,

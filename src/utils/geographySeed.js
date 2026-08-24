@@ -1,189 +1,87 @@
 /**
- * Seed India states + districts (core set; expandable later)
+ * Seed all Indian states + districts into MongoDB.
+ * Source of truth: india-states-districts-2026.json (LGD / IGOD, Aug 2026).
  * Idempotent — skips existing ids / names; backfills pincode when missing.
  */
 
+const path = require('path');
 const State = require('../models/State');
 const District = require('../models/District');
 
-/** @type {Array<{code: string, name: string, districts: Array<{name: string, pincode: string}>}>} */
-const SEED = [
-  {
-    code: 'JH',
-    name: 'Jharkhand',
-    districts: [
-      {name: 'Ranchi', pincode: '834001'},
-      {name: 'East Singhbhum', pincode: '831001'},
-      {name: 'West Singhbhum', pincode: '833201'},
-      {name: 'Dhanbad', pincode: '826001'},
-      {name: 'Bokaro', pincode: '827001'},
-      {name: 'Hazaribagh', pincode: '825301'},
-      {name: 'Giridih', pincode: '815301'},
-      {name: 'Deoghar', pincode: '814112'},
-      {name: 'Dumka', pincode: '814101'},
-      {name: 'Palamu', pincode: '822101'},
-      {name: 'Garhwa', pincode: '822114'},
-      {name: 'Chatra', pincode: '825401'},
-      {name: 'Koderma', pincode: '825410'},
-      {name: 'Jamtara', pincode: '815351'},
-      {name: 'Sahibganj', pincode: '816109'},
-      {name: 'Pakur', pincode: '816107'},
-      {name: 'Godda', pincode: '814133'},
-      {name: 'Latehar', pincode: '829206'},
-      {name: 'Simdega', pincode: '835223'},
-      {name: 'Khunti', pincode: '835210'},
-      {name: 'Ramgarh', pincode: '829122'},
-      {name: 'Seraikela Kharsawan', pincode: '833220'},
-      {name: 'Lohardaga', pincode: '835302'},
-      {name: 'Gumla', pincode: '835207'},
-    ],
-  },
-  {
-    code: 'BR',
-    name: 'Bihar',
-    districts: [
-      {name: 'Patna', pincode: '800001'},
-      {name: 'Gaya', pincode: '823001'},
-      {name: 'Muzaffarpur', pincode: '842001'},
-      {name: 'Bhagalpur', pincode: '812001'},
-      {name: 'Darbhanga', pincode: '846004'},
-      {name: 'Purnia', pincode: '854301'},
-      {name: 'Nalanda', pincode: '803111'},
-      {name: 'Rohtas', pincode: '821305'},
-      {name: 'Saran', pincode: '841301'},
-      {name: 'Vaishali', pincode: '844101'},
-    ],
-  },
-  {
-    code: 'WB',
-    name: 'West Bengal',
-    districts: [
-      {name: 'Kolkata', pincode: '700001'},
-      {name: 'Howrah', pincode: '711101'},
-      {name: 'North 24 Parganas', pincode: '700124'},
-      {name: 'South 24 Parganas', pincode: '700145'},
-      {name: 'Hooghly', pincode: '712101'},
-      {name: 'Bardhaman', pincode: '713101'},
-      {name: 'Paschim Medinipur', pincode: '721101'},
-      {name: 'Darjeeling', pincode: '734101'},
-      {name: 'Malda', pincode: '732101'},
-      {name: 'Murshidabad', pincode: '742101'},
-    ],
-  },
-  {
-    code: 'MH',
-    name: 'Maharashtra',
-    districts: [
-      {name: 'Mumbai City', pincode: '400001'},
-      {name: 'Mumbai Suburban', pincode: '400050'},
-      {name: 'Pune', pincode: '411001'},
-      {name: 'Nagpur', pincode: '440001'},
-      {name: 'Thane', pincode: '400601'},
-      {name: 'Nashik', pincode: '422001'},
-      {name: 'Aurangabad', pincode: '431001'},
-      {name: 'Solapur', pincode: '413001'},
-      {name: 'Kolhapur', pincode: '416001'},
-      {name: 'Satara', pincode: '415001'},
-    ],
-  },
-  {
-    code: 'KA',
-    name: 'Karnataka',
-    districts: [
-      {name: 'Bengaluru Urban', pincode: '560001'},
-      {name: 'Bengaluru Rural', pincode: '562110'},
-      {name: 'Mysuru', pincode: '570001'},
-      {name: 'Mangaluru', pincode: '575001'},
-      {name: 'Hubballi', pincode: '580020'},
-      {name: 'Belagavi', pincode: '590001'},
-      {name: 'Kalaburagi', pincode: '585101'},
-      {name: 'Ballari', pincode: '583101'},
-      {name: 'Tumakuru', pincode: '572101'},
-      {name: 'Davanagere', pincode: '577001'},
-    ],
-  },
-  {
-    code: 'DL',
-    name: 'Delhi',
-    districts: [
-      {name: 'Central Delhi', pincode: '110001'},
-      {name: 'East Delhi', pincode: '110091'},
-      {name: 'New Delhi', pincode: '110001'},
-      {name: 'North Delhi', pincode: '110054'},
-      {name: 'North East Delhi', pincode: '110053'},
-      {name: 'North West Delhi', pincode: '110085'},
-      {name: 'Shahdara', pincode: '110032'},
-      {name: 'South Delhi', pincode: '110017'},
-      {name: 'South East Delhi', pincode: '110019'},
-      {name: 'South West Delhi', pincode: '110045'},
-      {name: 'West Delhi', pincode: '110018'},
-    ],
-  },
-  {
-    code: 'UP',
-    name: 'Uttar Pradesh',
-    districts: [
-      {name: 'Lucknow', pincode: '226001'},
-      {name: 'Kanpur Nagar', pincode: '208001'},
-      {name: 'Varanasi', pincode: '221001'},
-      {name: 'Agra', pincode: '282001'},
-      {name: 'Prayagraj', pincode: '211001'},
-      {name: 'Ghaziabad', pincode: '201001'},
-      {name: 'Noida', pincode: '201301'},
-      {name: 'Meerut', pincode: '250001'},
-      {name: 'Gorakhpur', pincode: '273001'},
-      {name: 'Bareilly', pincode: '243001'},
-    ],
-  },
-  {
-    code: 'RJ',
-    name: 'Rajasthan',
-    districts: [
-      {name: 'Jaipur', pincode: '302001'},
-      {name: 'Jodhpur', pincode: '342001'},
-      {name: 'Udaipur', pincode: '313001'},
-      {name: 'Kota', pincode: '324001'},
-      {name: 'Ajmer', pincode: '305001'},
-      {name: 'Bikaner', pincode: '334001'},
-      {name: 'Alwar', pincode: '301001'},
-      {name: 'Bhilwara', pincode: '311001'},
-      {name: 'Sikar', pincode: '332001'},
-      {name: 'Pali', pincode: '306401'},
-    ],
-  },
-  {
-    code: 'GJ',
-    name: 'Gujarat',
-    districts: [
-      {name: 'Ahmedabad', pincode: '380001'},
-      {name: 'Surat', pincode: '395001'},
-      {name: 'Vadodara', pincode: '390001'},
-      {name: 'Rajkot', pincode: '360001'},
-      {name: 'Gandhinagar', pincode: '382010'},
-      {name: 'Bhavnagar', pincode: '364001'},
-      {name: 'Jamnagar', pincode: '361001'},
-      {name: 'Junagadh', pincode: '362001'},
-      {name: 'Anand', pincode: '388001'},
-      {name: 'Mehsana', pincode: '384001'},
-    ],
-  },
-  {
-    code: 'TN',
-    name: 'Tamil Nadu',
-    districts: [
-      {name: 'Chennai', pincode: '600001'},
-      {name: 'Coimbatore', pincode: '641001'},
-      {name: 'Madurai', pincode: '625001'},
-      {name: 'Tiruchirappalli', pincode: '620001'},
-      {name: 'Salem', pincode: '636001'},
-      {name: 'Tirunelveli', pincode: '627001'},
-      {name: 'Erode', pincode: '638001'},
-      {name: 'Vellore', pincode: '632001'},
-      {name: 'Thoothukudi', pincode: '628001'},
-      {name: 'Thanjavur', pincode: '613001'},
-    ],
-  },
-];
+/** ISO-style codes for stable state _id slugs (st_jh, st_br, …). */
+const STATE_CODES = {
+  'Andaman and Nicobar Islands': 'AN',
+  'Andhra Pradesh': 'AP',
+  'Arunachal Pradesh': 'AR',
+  Assam: 'AS',
+  Bihar: 'BR',
+  Chandigarh: 'CH',
+  Chhattisgarh: 'CG',
+  'Dadra and Nagar Haveli and Daman and Diu': 'DH',
+  Delhi: 'DL',
+  Goa: 'GA',
+  Gujarat: 'GJ',
+  Haryana: 'HR',
+  'Himachal Pradesh': 'HP',
+  'Jammu and Kashmir': 'JK',
+  Jharkhand: 'JH',
+  Karnataka: 'KA',
+  Kerala: 'KL',
+  Ladakh: 'LA',
+  Lakshadweep: 'LD',
+  'Madhya Pradesh': 'MP',
+  Maharashtra: 'MH',
+  Manipur: 'MN',
+  Meghalaya: 'ML',
+  Mizoram: 'MZ',
+  Nagaland: 'NL',
+  Odisha: 'OD',
+  Puducherry: 'PY',
+  Punjab: 'PB',
+  Rajasthan: 'RJ',
+  Sikkim: 'SK',
+  'Tamil Nadu': 'TN',
+  Telangana: 'TS',
+  Tripura: 'TR',
+  'Uttar Pradesh': 'UP',
+  Uttarakhand: 'UK',
+  'West Bengal': 'WB',
+};
+
+/**
+ * Delhi LGD uses short names ("Central"); Nominatim / UI often use "Central Delhi".
+ * Prefer the longer form so GPS matching and existing rows stay aligned.
+ */
+function normalizeDistrictName(stateName, districtName) {
+  const name = String(districtName || '').trim();
+  if (stateName !== 'Delhi') return name;
+  if (name === 'New Delhi' || name === 'Shahdara') return name;
+  if (name.endsWith(' Delhi')) return name;
+  return `${name} Delhi`;
+}
+
+function loadSeedFrom2026File() {
+  const raw = require(path.join(__dirname, 'india-states-districts-2026.json'));
+  const list = raw.statesAndUnionTerritories || [];
+  return list.map((entry) => {
+    const name = entry.name;
+    const code =
+      STATE_CODES[name] ||
+      String(name)
+        .split(/\s+/)
+        .map((w) => w[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 3);
+    const districts = (entry.districts || []).map((d) => ({
+      name: normalizeDistrictName(name, d),
+    }));
+    return {code, name, type: entry.type, districts};
+  });
+}
+
+/** @type {Array<{code: string, name: string, districts: Array<{name: string, pincode?: string}>}>} */
+const SEED = loadSeedFrom2026File();
 
 function slugId(prefix, name) {
   const slug = String(name)
@@ -196,6 +94,17 @@ function slugId(prefix, name) {
 /** Process-level: seed runs once; concurrent callers share the same promise. */
 let seedPromise = null;
 let seedDone = false;
+
+function invalidateMetaCacheSafe() {
+  try {
+    const ctrl = require('../controllers/admin/geographyController');
+    if (typeof ctrl.invalidateGeographyMetaCache === 'function') {
+      ctrl.invalidateGeographyMetaCache();
+    }
+  } catch (_) {
+    // Controller may not be loaded yet during early boot — fine.
+  }
+}
 
 /**
  * Ensure states/districts exist. Safe to call on every geography request.
@@ -241,7 +150,8 @@ async function ensureGeographySeeded() {
 
     for (const entry of SEED) {
       const stateId = slugId('st', entry.code || entry.name);
-      let state = stateById.get(stateId) || stateByName.get(entry.name.toLowerCase());
+      let state =
+        stateById.get(stateId) || stateByName.get(entry.name.toLowerCase());
       if (!state) {
         state = {
           _id: stateId,
@@ -260,9 +170,10 @@ async function ensureGeographySeeded() {
       const sid = state._id;
       const sname = state.name || entry.name;
 
-      for (const district of entry.districts) {
+      for (const district of entry.districts || []) {
         const districtName =
           typeof district === 'string' ? district : district.name;
+        if (!districtName) continue;
         const pincode =
           typeof district === 'string'
             ? ''
@@ -285,7 +196,10 @@ async function ensureGeographySeeded() {
           };
           districtsToInsert.push(doc);
           districtById.set(districtId, doc);
-          districtByStateName.set(`${sid}::${districtName.toLowerCase()}`, doc);
+          districtByStateName.set(
+            `${sid}::${districtName.toLowerCase()}`,
+            doc,
+          );
           districtsCreated += 1;
           continue;
         }
@@ -315,6 +229,10 @@ async function ensureGeographySeeded() {
           ),
         ),
       );
+    }
+
+    if (statesCreated || districtsCreated || districtsUpdated) {
+      invalidateMetaCacheSafe();
     }
 
     seedDone = true;
