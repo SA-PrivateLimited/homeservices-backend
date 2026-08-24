@@ -57,6 +57,16 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           audience: sts.amazonaws.com
 
+      - name: Apply S3 CORS for browser photo uploads
+        env:
+          AWS_S3_BUCKET: ${{ vars.AWS_S3_BUCKET || 'akanso-assets' }}
+        run: |
+          set -euo pipefail
+          aws s3api put-bucket-cors \
+            --bucket "${AWS_S3_BUCKET}" \
+            --cors-configuration file://ops/s3-bucket-cors.json
+          aws s3api get-bucket-cors --bucket "${AWS_S3_BUCKET}"
+
       - name: Deploy to EC2 via SSM
         shell: bash
         run: |
