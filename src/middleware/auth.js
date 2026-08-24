@@ -9,6 +9,27 @@ const {verifyAccessToken} = require('../utils/jwtAuth');
 const {resolveAdminPermissions} = require('../constants/permissions');
 
 /**
+ * Multi-role users often keep DB role "provider" after becoming a Partner,
+ * while CustomerWeb issues JWTs with role "customer".
+ * Prefer the JWT customer context when the customer profile is enabled.
+ */
+function resolveEffectiveRole(userDoc, decoded) {
+  const dbRole = userDoc?.role || 'customer';
+  const jwtRole = decoded?.role || dbRole;
+  const customerContextSwitch =
+    jwtRole === 'customer' &&
+    dbRole === 'provider' &&
+    userDoc?.customerProfileEnabled === true;
+
+  return {
+    dbRole,
+    jwtRole,
+    customerContextSwitch,
+    effectiveRole: customerContextSwitch ? 'customer' : dbRole,
+  };
+}
+
+/**
  * Verify Bearer JWT and attach req.user / req.userDoc
  */
 async function verifyAuth(req, res, next) {
@@ -37,9 +58,15 @@ async function verifyAuth(req, res, next) {
     await connectDB();
     const userDoc = await User.findById(decoded.sub).lean();
     if (userDoc) {
-      req.user.role = userDoc.role || 'customer';
+      const {effectiveRole, jwtRole, dbRole} = resolveEffectiveRole(
+        userDoc,
+        decoded,
+      );
+      req.user.role = effectiveRole;
+      req.user.activeRole = jwtRole || effectiveRole;
+      req.user.dbRole = dbRole;
       req.userDoc = userDoc;
-      if (userDoc.role === 'admin') {
+      if (dbRole === 'admin') {
         // Option 1: JWT snapshot wins for enforcement; expose DB copy for UI/me
         if (!Array.isArray(decoded.permissions)) {
           req.user.permissions = resolveAdminPermissions(userDoc);
@@ -47,6 +74,7 @@ async function verifyAuth(req, res, next) {
       }
     } else {
       req.user.role = decoded.role || 'customer';
+      req.user.activeRole = decoded.role || 'customer';
     }
 
     next();
@@ -99,15 +127,12 @@ function requireRole(...allowedRoles) {
         });
       }
 
-      const userRole = userDoc.role || 'customer';
-      const jwtRole = decoded.role || userRole;
-
-      const customerContextSwitch =
-        jwtRole === 'customer' &&
-        userRole === 'provider' &&
-        userDoc.customerProfileEnabled === true;
-
-      const effectiveRole = customerContextSwitch ? 'customer' : userRole;
+      const {
+        dbRole: userRole,
+        jwtRole,
+        customerContextSwitch,
+        effectiveRole,
+      } = resolveEffectiveRole(userDoc, decoded);
 
       if (jwtRole !== userRole && !customerContextSwitch) {
         return res.status(403).json({
@@ -126,8 +151,9 @@ function requireRole(...allowedRoles) {
       }
 
       req.userDoc = userDoc;
-      req.user.role = customerContextSwitch ? 'customer' : userRole;
+      req.user.role = effectiveRole;
       req.user.activeRole = jwtRole;
+      req.user.dbRole = userRole;
       if (userRole === 'admin' && !Array.isArray(decoded.permissions)) {
         req.user.permissions = resolveAdminPermissions(userDoc);
       }
@@ -160,7 +186,13 @@ async function optionalAuth(req, res, next) {
       await connectDB();
       const userDoc = await User.findById(decoded.sub).lean();
       if (userDoc) {
-        req.user.role = userDoc.role || 'customer';
+        const {effectiveRole, jwtRole, dbRole} = resolveEffectiveRole(
+          userDoc,
+          decoded,
+        );
+        req.user.role = effectiveRole;
+        req.user.activeRole = jwtRole;
+        req.user.dbRole = dbRole;
         req.userDoc = userDoc;
       }
     }
@@ -174,4 +206,5 @@ module.exports = {
   verifyAuth,
   requireRole,
   optionalAuth,
+  resolveEffectiveRole,
 };

@@ -1,8 +1,8 @@
 /**
- * Normalize service-request / review photo arrays.
- * Accepts CloudFront URLs, object keys, or {key,url} refs.
+ * Normalize service-request / provider showcase photo arrays.
+ * Accepts CloudFront URLs, /uploads/… paths, object keys, or {key,url} refs.
  * Rejects base64 data URLs and local file URIs.
- * Persists CloudFront (or local /uploads) URL strings for schema compatibility.
+ * Persists CloudFront URLs when S3 is in use; keeps /uploads/… when local disk fallback is on.
  */
 
 const s3 = require('../services/s3.service');
@@ -15,28 +15,60 @@ const {createHttpError} = require('./assetValidation');
 
 const MAX_PHOTOS = Number(process.env.MAX_SERVICE_REQUEST_PHOTOS || 3);
 
+function cloudFrontDomain() {
+  return (process.env.AWS_CLOUDFRONT_DOMAIN || 'assets.akanso.in')
+    .replace(/^https?:\/\//, '')
+    .replace(/\/+$/, '');
+}
+
 function isForbiddenInlinePayload(value) {
   const s = String(value || '').trim();
   if (!s) return true;
   if (/^data:/i.test(s)) return true;
   if (/base64,/i.test(s)) return true;
   if (/^(file|content|blob):/i.test(s)) return true;
-  // Extremely large strings are almost certainly inline media
-  if (s.length > 2048 && !/^https?:\/\//i.test(s)) return true;
+  if (s.length > 2048 && !/^https?:\/\//i.test(s) && !s.startsWith('/uploads/')) {
+    return true;
+  }
   return false;
 }
 
+function isLoopbackHostname(hostname) {
+  return (
+    hostname === '127.0.0.1' ||
+    hostname === 'localhost' ||
+    hostname === '::1' ||
+    hostname === '0.0.0.0'
+  );
+}
+
+/** True when the string is one of our asset references (CDN, local uploads, or key). */
+function isAcceptedAssetReference(raw) {
+  const domain = cloudFrontDomain();
+  if (raw.startsWith(`https://${domain}/`)) return true;
+  if (raw.startsWith('/uploads/')) return true;
+  if (!/^https?:\/\//i.test(raw) && !raw.startsWith('/')) {
+    // Bare object key — validated later by normalizeObjectKey
+    return true;
+  }
+  try {
+    const parsed = new URL(raw);
+    if (isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith('/uploads/')) {
+      return true;
+    }
+  } catch {
+    /* not a URL */
+  }
+  const localBase = (process.env.PUBLIC_API_BASE_URL || '').replace(/\/+$/, '');
+  if (localBase && raw.startsWith(`${localBase}/uploads/`)) return true;
+  return false;
+}
+
+/** CloudFront in normal mode; relative /uploads/… when local disk fallback is active. */
 function resolvePublicUrl(key) {
   const normalized = normalizeObjectKey(key);
-  if (
-    String(process.env.AWS_S3_LOCAL_FALLBACK || '').toLowerCase() === 'true' &&
-    (process.env.NODE_ENV || 'development') !== 'production'
-  ) {
-    const base = (
-      process.env.PUBLIC_API_BASE_URL ||
-      `http://127.0.0.1:${process.env.PORT || 3001}`
-    ).replace(/\/+$/, '');
-    return `${base}/uploads/${normalized}`;
+  if (s3.localDiskAllowed()) {
+    return s3.generateLocalUrl(normalized);
   }
   return s3.generateCloudFrontUrl(normalized);
 }
@@ -78,30 +110,17 @@ function normalizePhotoReferences(photos, user, {max = MAX_PHOTOS} = {}) {
       );
     }
 
-    // Legacy absolute URLs that are not our CloudFront domain: keep as-is for display
-    // only if they already look like http(s) and are reasonably short (existing data).
-    if (/^https?:\/\//i.test(raw)) {
-      const domain = (
-        process.env.AWS_CLOUDFRONT_DOMAIN || 'assets.akanso.in'
-      ).replace(/^https?:\/\//, '');
-      const localBase = (
-        process.env.PUBLIC_API_BASE_URL || ''
-      ).replace(/\/+$/, '');
-      const isOurCdn = raw.startsWith(`https://${domain}/`);
-      const isLocalUploads =
-        Boolean(localBase) && raw.startsWith(`${localBase}/uploads/`);
-      if (!isOurCdn && !isLocalUploads) {
-        throw createHttpError(
-          400,
-          `photos[${index}] must use the assets CDN`,
-          'Bad Request',
-        );
-      }
-      const key = assertKeyAuthorizedForUser(keyFromUrlOrKey(raw), user);
-      return resolvePublicUrl(key);
+    if (!isAcceptedAssetReference(raw)) {
+      throw createHttpError(
+        400,
+        `photos[${index}] must use the assets CDN (https://${cloudFrontDomain()}/…)`,
+        'Bad Request',
+      );
     }
 
-    const key = assertKeyAuthorizedForUser(normalizeObjectKey(raw), user);
+    // Always go through keyFromUrlOrKey so /uploads/… and loopback URLs
+    // are stripped to providers|customers|… keys (never treat "uploads" as root).
+    const key = assertKeyAuthorizedForUser(keyFromUrlOrKey(raw), user);
     return resolvePublicUrl(key);
   });
 }

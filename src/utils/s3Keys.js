@@ -68,6 +68,12 @@ function buildUniqueFilename(extension) {
   return `${randomUUID()}${safeExt}`;
 }
 
+function buildProviderShowcaseKey(providerId, extension) {
+  const id = assertSafeId(providerId, 'providerId');
+  assertRootPrefix('providers');
+  return `providers/${id}/showcase/${buildUniqueFilename(extension)}`;
+}
+
 function buildProviderProfileKey(providerId, extension) {
   const id = assertSafeId(providerId, 'providerId');
   assertRootPrefix('providers');
@@ -253,6 +259,7 @@ module.exports = {
   normalizeObjectKey,
   buildUniqueFilename,
   buildProviderProfileKey,
+  buildProviderShowcaseKey,
   buildProviderDocumentKey,
   buildCustomerProfileKey,
   buildClientLogoKey,

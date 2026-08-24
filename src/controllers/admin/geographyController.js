@@ -17,6 +17,9 @@ const {
   summarizePartnerServices,
   serviceMembershipBreakdown,
 } = require('../../utils/providerServiceAvailability');
+const {
+  resolveGeographyFromCoords,
+} = require('../../utils/resolveGeographyFromCoords');
 
 const PASSWORD_SALT_ROUNDS = 10;
 
@@ -565,6 +568,41 @@ exports.getGeographyMeta = async (req, res, next) => {
       data: metaCache,
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Resolve GPS coordinates to Akanso state/district (public — server-side geocode).
+ */
+exports.resolveLocationFromCoordinates = async (req, res, next) => {
+  try {
+    const {lat, lon} = req.query;
+    const resolved = await resolveGeographyFromCoords(lat, lon);
+    res.json({success: true, data: resolved});
+  } catch (error) {
+    const code = error?.code || 'unavailable';
+    if (code === 'invalid') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid coordinates',
+        code: 'invalid',
+      });
+    }
+    if (code === 'nomatch') {
+      return res.status(404).json({
+        success: false,
+        error: 'Could not match your location to a supported area',
+        code: 'nomatch',
+      });
+    }
+    if (code === 'geocode') {
+      return res.status(502).json({
+        success: false,
+        error: 'Location lookup failed',
+        code: 'geocode',
+      });
+    }
     next(error);
   }
 };

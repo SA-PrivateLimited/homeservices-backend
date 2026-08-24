@@ -6,6 +6,8 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const User = require('../models/User');
+const Provider = require('../models/Provider');
+const {syncPartnerDisplayNames, bestPartnerName} = require('../utils/partnerNameSync');
 const {decryptToken} = require('../utils/tokenEncryption');
 const {syncPhoneFields} = require('../utils/phone');
 const {verifySuperAdminToken} = require('../utils/jwtAuth');
@@ -160,6 +162,31 @@ exports.getMe = async (req, res, next) => {
     delete userData.passwordHash;
     delete userData.totpSecretEncrypted;
     delete userData.activationTokenHash;
+
+    if (user.role === 'provider' || hasPartnerProfile(user)) {
+      try {
+        const provider = await Provider.findById(req.user.uid).select(
+          'name displayName',
+        );
+        if (provider) {
+          const {providerChanged, userChanged, bestName} =
+            syncPartnerDisplayNames(provider, user);
+          if (providerChanged) await provider.save();
+          if (userChanged) await user.save();
+          if (bestName) {
+            userData.name = bestName;
+            userData.displayName = bestName;
+          }
+        }
+      } catch (syncErr) {
+        console.warn('Could not sync partner display name on getMe:', syncErr.message);
+        const bestName = bestPartnerName(userData.name, userData.displayName);
+        if (bestName) {
+          userData.name = bestName;
+          userData.displayName = bestName;
+        }
+      }
+    }
 
     const jwtRole = req.accessTokenPayload?.role;
     if (user.role === 'provider') {

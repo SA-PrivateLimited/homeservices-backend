@@ -35,6 +35,11 @@ const {
   isPartnerAccessActive,
 } = require('../utils/userProfiles');
 const {
+  autoVerifyPartnerIfEligible,
+  syncPartnerProfileFromUser,
+} = require('../utils/partnerAutoVerification');
+const {isPartnerAutoVerifyEnabled} = require('../services/partnerVerificationPolicyService');
+const {
   PIN_SELECT,
   isValidPin,
   assertPinGloballyUnique: assertPinUniqueForUser,
@@ -1399,6 +1404,23 @@ exports.enablePartnerProfile = async (req, res, next) => {
     snapshotLegacyPins(user);
     await user.save();
     await ensureProviderProfile(user, user.name || user.displayName);
+    if (await isPartnerAutoVerifyEnabled()) {
+      try {
+        const Provider = require('../models/Provider');
+        const provider = await Provider.findById(user._id);
+        if (provider) {
+          if (syncPartnerProfileFromUser(provider, user)) {
+            await provider.save();
+          }
+          autoVerifyPartnerIfEligible(provider, user);
+          if (provider.isModified()) {
+            await provider.save();
+          }
+        }
+      } catch (syncErr) {
+        console.warn('Partner auto-verify after enable-profile skipped:', syncErr.message);
+      }
+    }
 
     const session = await issueSessionForUser(user, {activeRole: 'provider'});
     res.json({
@@ -1608,8 +1630,8 @@ exports.registerWithOtp = async (req, res, next) => {
       message:
         requestedRole === 'provider'
           ? upgradingCustomerToPartner
-            ? 'Partner account added on your existing Akanso number. Complete your profile — you appear to customers after admin approval.'
-            : 'Provider account created. Complete your profile — you appear to customers after admin approval.'
+            ? 'Partner account added on your existing Akanso number. Complete your profile to appear to customers.'
+            : 'Provider account created. Complete your profile to appear to customers.'
           : 'Account created. Save your PIN for next login.',
     });
   } catch (err) {

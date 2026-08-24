@@ -68,6 +68,16 @@ const systemConfigSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    /**
+     * Partner go-live verification:
+     * AUTO — approve when profile fields are complete + phone verified
+     * ADMIN — manual admin review (legacy flow)
+     */
+    partnerVerificationMode: {
+      type: String,
+      enum: ['AUTO', 'ADMIN'],
+      default: 'AUTO',
+    },
     updatedAt: {
       type: Date,
       default: Date.now,

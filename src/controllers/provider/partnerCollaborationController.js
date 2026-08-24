@@ -62,6 +62,7 @@ exports.listCollaborationPartners = async (req, res, next) => {
       stateId,
       districtId,
       isOnline,
+      q: searchQ,
       limit = 50,
       offset = 0,
     } = req.query;
@@ -73,7 +74,32 @@ exports.listCollaborationPartners = async (req, res, next) => {
     };
 
     const andClauses = [];
-    if (serviceType) {
+    const qRaw = String(searchQ || '').trim();
+    if (qRaw) {
+      const qEsc = escapeRegex(qRaw);
+      const qRe = new RegExp(qEsc, 'i');
+      const digits = qRaw.replace(/\D/g, '');
+      const phoneOr = digits.length >= 4
+        ? [
+            {phone: new RegExp(escapeRegex(digits))},
+            {phoneNumber: new RegExp(escapeRegex(digits))},
+          ]
+        : [];
+      andClauses.push({
+        $or: [
+          {name: qRe},
+          {displayName: qRe},
+          {specialization: qRe},
+          {serviceType: qRe},
+          {serviceCategories: qRe},
+          {'location.city': qRe},
+          {'location.district': qRe},
+          {'location.state': qRe},
+          ...phoneOr,
+        ],
+      });
+    }
+    if (serviceType && !qRaw) {
       const s = String(serviceType).trim();
       andClauses.push({
         $or: [
@@ -82,6 +108,9 @@ exports.listCollaborationPartners = async (req, res, next) => {
           {specialization: s},
         ],
       });
+    } else if (serviceType && qRaw) {
+      // Prefer matching service when searching, but do not require it —
+      // Partner may know someone by name across services.
     }
     if (city) {
       query['location.city'] = new RegExp(`^${escapeRegex(city)}$`, 'i');
@@ -115,7 +144,7 @@ exports.listCollaborationPartners = async (req, res, next) => {
       Provider.countDocuments(query),
     ]);
 
-    const needed = serviceType ? String(serviceType).trim() : '';
+    const needed = !qRaw && serviceType ? String(serviceType).trim() : '';
     const visibleRows = needed
       ? rows.filter((p) => isServiceCustomerVisible(p, needed))
       : rows;
