@@ -3,7 +3,7 @@
  * like "Customer" when a real profile name exists.
  */
 
-const GENERIC_PARTNER_NAME = /^(customer|provider)(\s+\d+)?$/i;
+const GENERIC_PARTNER_NAME = /^(customer|provider|user)([-\s]\d{1,4})?$/i;
 
 function isGenericPartnerName(value) {
   const s = String(value || '').trim();

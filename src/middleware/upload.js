@@ -17,12 +17,26 @@ const UPLOAD_ROOT = path.join(__dirname, '../../uploads');
 const DOC_DIR = path.join(UPLOAD_ROOT, 'provider_documents');
 const LOGO_DIR = path.join(UPLOAD_ROOT, 'client_logos');
 
+/** Same top-level folders as S3 bucket `akanso-assets`. */
+const S3_ROOT_DIRS = [
+  'admin',
+  'bookings',
+  'categories',
+  'customers',
+  'providers',
+  'services',
+  'temp',
+];
+
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, {recursive: true});
   }
 }
 
+for (const prefix of S3_ROOT_DIRS) {
+  ensureDir(path.join(UPLOAD_ROOT, prefix));
+}
 // Keep dirs for any legacy disk files still referenced in DB
 ensureDir(DOC_DIR);
 ensureDir(LOGO_DIR);
@@ -99,4 +113,5 @@ module.exports = {
   UPLOAD_ROOT,
   DOC_DIR,
   LOGO_DIR,
+  S3_ROOT_DIRS,
 };

@@ -48,6 +48,12 @@ const {
   snapshotLegacyPins,
   resolvePinPurpose,
 } = require('../utils/rolePins');
+const {
+  resolveInitialCustomerName,
+  resolveInitialProviderName,
+  hasRealCustomerName,
+  generateCustomerDisplayId,
+} = require('../utils/userDisplayIdentity');
 
 const SALT_ROUNDS = 12;
 
@@ -179,9 +185,9 @@ async function issueSessionForUser(user, {includePin, activeRole} = {}) {
   safe.role = role;
   safe.id = safe._id;
   safe.customerDisplayId = user.customerDisplayId || null;
-  const hasRealName = !!(user.name || user.displayName || '').trim() &&
-    !/^(Customer|Provider)\s+\d+$/i.test((user.name || user.displayName || '').trim());
-  safe.customerProfileComplete = hasRealName;
+  safe.customerProfileComplete = hasRealCustomerName(
+    user.name || user.displayName,
+  );
   if (user.role === 'provider') {
     safe.canSwitchToPartner = true;
     safe.canSwitchToCustomer = true;
@@ -238,10 +244,13 @@ async function ensureProviderProfile(user, fullName) {
   const Provider = require('../models/Provider');
   const existing = await Provider.findById(user._id);
   if (existing) return existing;
+  const providerName = resolveInitialProviderName(
+    fullName || user.name || user.displayName,
+  );
   return Provider.create({
     _id: user._id,
-    name: fullName || user.name || user.displayName || 'Provider',
-    displayName: fullName || user.displayName || user.name || 'Provider',
+    name: providerName,
+    displayName: providerName,
     phoneNumber: user.phoneNumber || user.phone,
     approvalStatus: 'pending',
     verified: false,
@@ -271,15 +280,8 @@ async function assertPinGloballyUnique(pin, excludeUserId) {
   return assertPinUniqueForUser(User, pin, excludeUserId);
 }
 
-/** Generate a stable 4-digit display number unique across all users. */
-async function generateCustomerDisplayId(maxAttempts = 50) {
-  for (let i = 0; i < maxAttempts; i++) {
-    const id = crypto.randomInt(1000, 9999);
-    const existing = await User.findOne({customerDisplayId: id}).lean();
-    if (!existing) return id;
-  }
-  // Fallback: use last 4 digits of timestamp
-  return parseInt(String(Date.now()).slice(-4), 10);
+async function allocateCustomerDisplayId() {
+  return generateCustomerDisplayId(User);
 }
 
 async function generateUniquePin(maxAttempts = 40) {
@@ -431,17 +433,28 @@ exports.register = async (req, res, next) => {
 
     const _id = crypto.randomUUID();
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    let displayId;
+    let resolvedName = fullName;
+    if (role === 'customer' || role === 'provider') {
+      displayId = await allocateCustomerDisplayId();
+      resolvedName =
+        role === 'provider'
+          ? resolveInitialProviderName(fullName)
+          : resolveInitialCustomerName({requestedName: fullName, displayId});
+    }
 
     const user = await User.create({
       _id,
       email,
       phoneNumber: synced.phoneNumber,
       phone: synced.phone,
-      name: fullName,
-      displayName: fullName,
+      name: resolvedName,
+      displayName: resolvedName,
       role,
       passwordHash,
       phoneVerified: false,
+      ...(displayId != null ? {customerDisplayId: displayId} : {}),
+      customerProfileEnabled: role === 'provider' ? true : false,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -875,7 +888,7 @@ exports.sendPhoneOtp = async (req, res, next) => {
 exports.verifyPhoneOtp = async (req, res, next) => {
   try {
     const phoneNumber = toE164(req.body.phoneNumber || req.body.phone);
-    const fullName = (req.body.fullName || req.body.name || 'Customer').trim();
+    const requestedName = (req.body.fullName || req.body.name || '').trim();
     const idToken = req.body.idToken || req.body.firebaseIdToken;
     const code = req.body.code || req.body.otp;
 
@@ -904,6 +917,11 @@ exports.verifyPhoneOtp = async (req, res, next) => {
     });
 
     if (!user) {
+      const displayId = await allocateCustomerDisplayId();
+      const fullName = resolveInitialCustomerName({
+        requestedName,
+        displayId,
+      });
       user = await User.create({
         _id: crypto.randomUUID(),
         phoneNumber: synced.phoneNumber,
@@ -913,6 +931,7 @@ exports.verifyPhoneOtp = async (req, res, next) => {
         name: fullName,
         displayName: fullName,
         role: 'customer',
+        customerDisplayId: displayId,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -922,7 +941,14 @@ exports.verifyPhoneOtp = async (req, res, next) => {
       user.phoneVerified = true;
       if (verified.firebaseUid) user.firebaseUid = verified.firebaseUid;
       user.role = user.role || 'customer';
+      if (!user.customerDisplayId) {
+        user.customerDisplayId = await allocateCustomerDisplayId();
+      }
       if (!user.name && !user.displayName) {
+        const fullName = resolveInitialCustomerName({
+          requestedName,
+          displayId: user.customerDisplayId,
+        });
         user.name = fullName;
         user.displayName = fullName;
       }
@@ -1015,7 +1041,7 @@ exports.registerPin = async (req, res, next) => {
     const {ten, e164} = assertTenDigitMobile(
       req.body.phoneNumber || req.body.phone,
     );
-    const fullName = (req.body.fullName || req.body.name || 'Customer').trim();
+    const requestedName = (req.body.fullName || req.body.name || '').trim();
     let pin = req.body.pin != null ? String(req.body.pin).trim() : '';
 
     if (!pin) {
@@ -1056,6 +1082,11 @@ exports.registerPin = async (req, res, next) => {
     }
 
     if (!user) {
+      const displayId = await allocateCustomerDisplayId();
+      const fullName = resolveInitialCustomerName({
+        requestedName,
+        displayId,
+      });
       user = await User.create({
         _id: crypto.randomUUID(),
         phoneNumber: e164,
@@ -1067,6 +1098,7 @@ exports.registerPin = async (req, res, next) => {
         name: fullName,
         displayName: fullName,
         role: 'customer',
+        customerDisplayId: displayId,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -1075,7 +1107,14 @@ exports.registerPin = async (req, res, next) => {
       user.phone = ten;
       user.phoneVerified = true;
       user.role = user.role || 'customer';
+      if (!user.customerDisplayId) {
+        user.customerDisplayId = await allocateCustomerDisplayId();
+      }
       if (!user.name) {
+        const fullName = resolveInitialCustomerName({
+          requestedName,
+          displayId: user.customerDisplayId,
+        });
         user.name = fullName;
         user.displayName = fullName;
       }
@@ -1454,11 +1493,7 @@ exports.registerWithOtp = async (req, res, next) => {
     const code = req.body.code || req.body.otp;
     const pin = req.body.pin != null ? String(req.body.pin).trim() : '';
     const requestedRole = resolveAuthRole(req.body.role);
-    const fullName = (
-      req.body.fullName ||
-      req.body.name ||
-      (requestedRole === 'provider' ? 'Provider' : 'Customer')
-    ).trim();
+    const requestedName = (req.body.fullName || req.body.name || '').trim();
 
     if (!isValidPin(pin)) {
       return res.status(400).json({
@@ -1559,8 +1594,13 @@ exports.registerWithOtp = async (req, res, next) => {
       console.warn('Could not encrypt PIN for admin recovery:', e.message);
     }
 
+    let resolvedName = '';
     if (!user) {
-      const displayId = await generateCustomerDisplayId();
+      const displayId = await allocateCustomerDisplayId();
+      resolvedName =
+        requestedRole === 'provider'
+          ? resolveInitialProviderName(requestedName)
+          : resolveInitialCustomerName({requestedName, displayId});
       user = await User.create({
         _id: crypto.randomUUID(),
         phoneNumber: e164,
@@ -1570,8 +1610,8 @@ exports.registerWithOtp = async (req, res, next) => {
         pinHash,
         pinKey,
         encryptedPin,
-        name: fullName,
-        displayName: fullName,
+        name: resolvedName,
+        displayName: resolvedName,
         role: requestedRole,
         customerDisplayId: displayId,
         // Providers always get customer access so switch-to-customer works
@@ -1599,13 +1639,22 @@ exports.registerWithOtp = async (req, res, next) => {
           user.customerProfileEnabled = true;
         }
       }
-      if (!user.name) {
-        user.name = fullName;
-        user.displayName = fullName;
-      }
-      // Assign stable display ID if missing
       if (!user.customerDisplayId) {
-        user.customerDisplayId = await generateCustomerDisplayId();
+        user.customerDisplayId = await allocateCustomerDisplayId();
+      }
+      // Do not overwrite existing names (including legacy "Customer" / "Provider").
+      if (!user.name && !user.displayName) {
+        resolvedName =
+          requestedRole === 'provider'
+            ? resolveInitialProviderName(requestedName)
+            : resolveInitialCustomerName({
+                requestedName,
+                displayId: user.customerDisplayId,
+              });
+        user.name = resolvedName;
+        user.displayName = resolvedName;
+      } else {
+        resolvedName = user.name || user.displayName || '';
       }
       user.updatedAt = new Date();
     }
@@ -1617,7 +1666,7 @@ exports.registerWithOtp = async (req, res, next) => {
     await user.save();
 
     if (requestedRole === 'provider') {
-      await ensureProviderProfile(user, fullName);
+      await ensureProviderProfile(user, resolvedName);
     }
 
     const session = await issueSessionForUser(user, {

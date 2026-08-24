@@ -8,6 +8,9 @@ const ServiceRequest = require('../../models/ServiceRequest');
 const {onServiceRequestStatusChange} = require('../../services/activeServiceRequestService');
 const {redactJobCardForViewer} = require('../../utils/contactAccess');
 const {getContactSettings} = require('../../services/contactPolicyService');
+const {
+  backfillProviderJobCards,
+} = require('../../utils/ensureJobCardFromServiceRequest');
 
 /** Providers must not see the customer verification PIN; phones follow contact rules. */
 function sanitizeJobCardForProvider(job, viewer, settings) {
@@ -28,6 +31,15 @@ function sanitizeJobCardForProvider(job, viewer, settings) {
 exports.getMyJobCards = async (req, res, next) => {
   try {
     const {status, limit = 50, offset = 0} = req.query;
+
+    try {
+      await backfillProviderJobCards(req.user.uid);
+    } catch (backfillErr) {
+      console.warn(
+        '⚠️ [getMyJobCards] Could not backfill missing job cards:',
+        backfillErr.message,
+      );
+    }
 
     const query = {providerId: req.user.uid};
     if (status) {

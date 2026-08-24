@@ -24,6 +24,9 @@ const {
   redactDeclinedProviders,
 } = require('../../utils/contactAccess');
 const {getContactSettings} = require('../../services/contactPolicyService');
+const {
+  ensureJobCardFromServiceRequest,
+} = require('../../utils/ensureJobCardFromServiceRequest');
 
 async function serializeRequest(doc, viewer) {
   const settings = await getContactSettings();
@@ -206,6 +209,14 @@ exports.acceptServiceRequest = async (req, res, next) => {
     }
 
     if (serviceRequest.status === 'accepted' && serviceRequest.providerId === providerId) {
+      try {
+        await ensureJobCardFromServiceRequest(serviceRequest, {providerId});
+      } catch (syncErr) {
+        console.warn(
+          '⚠️ [acceptServiceRequest] Could not ensure job card:',
+          syncErr.message,
+        );
+      }
       return res.json({
         success: true,
         data: await serializeRequest(serviceRequest, req.user),
@@ -275,40 +286,15 @@ exports.acceptServiceRequest = async (req, res, next) => {
 
     await saveServiceRequestFlexible(serviceRequest);
 
-    // Clear admin-assist flag on any linked unassigned job card created earlier
     try {
-      const JobCard = require('../../models/JobCard');
-      const srKey = String(serviceRequest._id);
-      await JobCard.updateMany(
-        {
-          $or: [
-            {_id: srKey},
-            {bookingId: srKey},
-            {serviceRequestId: srKey},
-          ],
-        },
-        {
-          $set: {
-            providerId,
-            providerName,
-            providerPhone,
-            providerAddress: providerAddress || undefined,
-            status: 'accepted',
-            needsAdminAssignment: false,
-            acceptedAt: serviceRequest.acceptedAt,
-            updatedAt: acceptedAt,
-            ...(serviceRequest.problem
-              ? {problem: serviceRequest.problem}
-              : {}),
-            ...(serviceRequest.serviceType
-              ? {serviceType: serviceRequest.serviceType}
-              : {}),
-            ...(serviceRequest.scheduledTime
-              ? {scheduledTime: serviceRequest.scheduledTime}
-              : {}),
-          },
-        },
-      );
+      await ensureJobCardFromServiceRequest(serviceRequest, {
+        providerId,
+        providerName,
+        providerPhone,
+        providerAddress: providerAddress || undefined,
+        status: 'accepted',
+        acceptedAt: serviceRequest.acceptedAt,
+      });
     } catch (syncErr) {
       console.warn(
         '⚠️ [acceptServiceRequest] Could not sync linked job card:',
