@@ -5,9 +5,12 @@
       "AllowedOrigins": [
         "https://akanso.in",
         "https://www.akanso.in",
+        "https://customer.akanso.in",
+        "https://www.customer.akanso.in",
         "https://partner.akanso.in",
         "https://www.partner.akanso.in",
         "https://admin.akanso.in",
+        "https://www.admin.akanso.in",
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:5175",
