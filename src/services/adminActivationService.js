@@ -41,27 +41,96 @@ function generateActivationToken() {
   return crypto.randomBytes(32).toString('base64url');
 }
 
-function getAdminWebBaseUrl() {
-  const raw =
-    process.env.ADMIN_WEB_BASE_URL ||
-    process.env.ADMIN_PUBLIC_URL ||
-    'http://localhost:5173';
-  return String(raw).replace(/\/$/, '');
+const PRODUCTION_ADMIN_ORIGIN = 'https://admin.akanso.in';
+const DEFAULT_LOCAL_ADMIN_ORIGIN = 'http://localhost:5173';
+
+const ALLOWED_ADMIN_ORIGINS = new Set([
+  PRODUCTION_ADMIN_ORIGIN,
+  DEFAULT_LOCAL_ADMIN_ORIGIN,
+  'http://127.0.0.1:5173',
+]);
+
+function extraAllowedAdminOrigins() {
+  return String(process.env.ADMIN_WEB_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((value) => normalizeOrigin(value))
+    .filter(Boolean);
 }
 
-function buildActivationLink(plainToken) {
-  return `${getAdminWebBaseUrl()}/activate?token=${encodeURIComponent(
+function configuredAdminOrigins() {
+  return [process.env.ADMIN_WEB_BASE_URL, process.env.ADMIN_PUBLIC_URL]
+    .map((value) => normalizeOrigin(value))
+    .filter(Boolean);
+}
+
+function normalizeOrigin(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  try {
+    const url = new URL(text.includes('://') ? text : `https://${text}`);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return '';
+  }
+}
+
+function isLocalhostOrigin(origin) {
+  try {
+    const host = new URL(origin).hostname;
+    return host === 'localhost' || host === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
+function isProductionRuntime() {
+  return String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+}
+
+function getAdminWebBaseUrl(preferred) {
+  const allow = new Set([
+    ...ALLOWED_ADMIN_ORIGINS,
+    ...extraAllowedAdminOrigins(),
+    ...configuredAdminOrigins(),
+  ]);
+  const candidates = [
+    preferred,
+    process.env.ADMIN_WEB_BASE_URL,
+    process.env.ADMIN_PUBLIC_URL,
+  ]
+    .map((value) => normalizeOrigin(value))
+    .filter(Boolean);
+
+  const prod = isProductionRuntime();
+  for (const origin of candidates) {
+    if (!allow.has(origin)) continue;
+    if (prod && isLocalhostOrigin(origin)) continue;
+    return origin;
+  }
+
+  return prod ? PRODUCTION_ADMIN_ORIGIN : DEFAULT_LOCAL_ADMIN_ORIGIN;
+}
+
+function resolveAdminWebOriginFromRequest(req) {
+  return getAdminWebBaseUrl(
+    req?.body?.adminWebOrigin || req?.get?.('origin') || req?.headers?.origin,
+  );
+}
+
+function buildActivationLink(plainToken, preferredOrigin) {
+  return `${getAdminWebBaseUrl(preferredOrigin)}/activate?token=${encodeURIComponent(
     plainToken,
   )}`;
 }
 
-function issueActivationTokenBundle() {
+function issueActivationTokenBundle(preferredOrigin) {
   const plainToken = generateActivationToken();
   return {
     plainToken,
     activationTokenHash: hashActivationToken(plainToken),
     activationExpiresAt: new Date(Date.now() + ACTIVATION_TTL_MS),
-    activationLink: buildActivationLink(plainToken),
+    activationLink: buildActivationLink(plainToken, preferredOrigin),
   };
 }
 
@@ -149,8 +218,8 @@ function publicAdminFields(user) {
   };
 }
 
-async function buildInvitationPayload(plainToken, expiresAt) {
-  const activationLink = buildActivationLink(plainToken);
+async function buildInvitationPayload(plainToken, expiresAt, preferredOrigin) {
+  const activationLink = buildActivationLink(plainToken, preferredOrigin);
   const qrCodeDataUrl = await buildQrDataUrl(activationLink);
   return {
     activationLink,
@@ -162,7 +231,7 @@ async function buildInvitationPayload(plainToken, expiresAt) {
 /**
  * Create PENDING admin + one-time activation link (returned once; hashed in DB).
  */
-async function createPendingAdmin({name, email, permissions} = {}) {
+async function createPendingAdmin({name, email, permissions, adminWebOrigin} = {}) {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail || !normalizedEmail.includes('@')) {
     const err = new Error('A valid email is required');
@@ -177,7 +246,7 @@ async function createPendingAdmin({name, email, permissions} = {}) {
     throw err;
   }
 
-  const bundle = issueActivationTokenBundle();
+  const bundle = issueActivationTokenBundle(adminWebOrigin);
   const displayName = String(name || '').trim() || undefined;
   const perms =
     permissions === undefined
@@ -207,6 +276,7 @@ async function createPendingAdmin({name, email, permissions} = {}) {
   const invitation = await buildInvitationPayload(
     bundle.plainToken,
     bundle.activationExpiresAt,
+    adminWebOrigin,
   );
 
   return {
@@ -235,7 +305,7 @@ async function findAdminOrThrow(userId) {
 /**
  * Issue a new activation token (invalidates previous). PENDING only.
  */
-async function regenerateActivation(userId) {
+async function regenerateActivation(userId, {adminWebOrigin} = {}) {
   const user = await findAdminOrThrow(userId);
   const status = resolveAdminStatus(user);
   if (status !== ADMIN_STATUSES.PENDING) {
@@ -246,7 +316,7 @@ async function regenerateActivation(userId) {
     throw err;
   }
 
-  const bundle = issueActivationTokenBundle();
+  const bundle = issueActivationTokenBundle(adminWebOrigin);
   user.activationTokenHash = bundle.activationTokenHash;
   user.activationExpiresAt = bundle.activationExpiresAt;
   // Fresh invite: clear any partial activation progress
@@ -262,6 +332,7 @@ async function regenerateActivation(userId) {
   const invitation = await buildInvitationPayload(
     bundle.plainToken,
     bundle.activationExpiresAt,
+    adminWebOrigin,
   );
 
   return {
@@ -539,6 +610,7 @@ module.exports = {
   hashActivationToken,
   buildActivationLink,
   getAdminWebBaseUrl,
+  resolveAdminWebOriginFromRequest,
   resolveAdminStatus,
   assertCanLoginAsAdmin,
   publicAdminFields,

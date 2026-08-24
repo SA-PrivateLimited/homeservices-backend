@@ -94,11 +94,20 @@ function publicApiBase() {
 /**
  * Lazily create S3Client using the default credential provider chain only
  * (instance IAM role in production). Static access keys are never injected.
+ *
+ * requestChecksumCalculation MUST be WHEN_REQUIRED for browser presigned PUTs.
+ * SDK v3.1100+ defaults to WHEN_SUPPORTED, which embeds x-amz-checksum-crc32
+ * for an empty body into the signed URL. Browsers then PUT the real file
+ * without that checksum → S3 rejects (often surfaced as opaque CORS/network).
  */
 function getS3Client() {
   if (!s3Client) {
     warnIfStaticKeysConfigured();
-    s3Client = new S3Client({region: getRegion()});
+    s3Client = new S3Client({
+      region: getRegion(),
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
+    });
   }
   return s3Client;
 }
@@ -391,6 +400,8 @@ function shouldUseS3Presign() {
 
 /**
  * Create a time-limited PUT URL for direct client → S3 upload.
+ * Browser uploads must send only Content-Type (see returned headers).
+ * Do not add checksum query params — clients cannot satisfy empty-body CRC32.
  */
 async function createPresignedPutUrl({
   key,
@@ -413,6 +424,16 @@ async function createPresignedPutUrl({
     const uploadUrl = await getSignedUrl(getS3Client(), command, {
       expiresIn: ttl,
     });
+    if (
+      /x-amz-checksum/i.test(uploadUrl) ||
+      /x-amz-sdk-checksum-algorithm/i.test(uploadUrl)
+    ) {
+      throw createHttpError(
+        500,
+        'Presigned upload URL was generated with checksum parameters. Check S3 client checksum settings.',
+        'Storage Configuration',
+      );
+    }
     const result = {
       uploadUrl,
       key: normalizedKey,

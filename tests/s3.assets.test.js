@@ -27,6 +27,8 @@ const {
 } = require('../src/services/s3.service');
 const {
   buildProviderProfileKey,
+  buildCustomerProfileKey,
+  buildAdminAssetKey,
   normalizeObjectKey,
   assertKeyAuthorizedForUser,
   keyFromUrlOrKey,
@@ -113,9 +115,31 @@ describe('s3Keys + CloudFront URL', () => {
     assert.match(key, /^providers\/prov_abc\/profile\/[0-9a-f-]{36}\.webp$/);
   });
 
+  it('builds customer profile keys under customers/', () => {
+    const key = buildCustomerProfileKey('cust_abc', '.jpg');
+    assert.match(key, /^customers\/cust_abc\/profile\/[0-9a-f-]{36}\.jpg$/);
+  });
+
+  it('builds admin asset keys under admin/', () => {
+    const key = buildAdminAssetKey('adm_abc', '.png');
+    assert.match(key, /^admin\/adm_abc\/[0-9a-f-]{36}\.png$/);
+  });
+
   it('rejects path traversal and unauthorized prefixes', () => {
     assert.throws(() => normalizeObjectKey('../../etc/passwd'), (e) => e.statusCode === 400);
     assert.throws(() => normalizeObjectKey('evil/foo.png'), (e) => e.statusCode === 403);
+    assert.deepEqual(
+      [...ALLOWED_ROOT_PREFIXES].sort(),
+      [
+        'admin',
+        'bookings',
+        'categories',
+        'customers',
+        'providers',
+        'services',
+        'temp',
+      ].sort(),
+    );
     assert.ok(ALLOWED_ROOT_PREFIXES.includes('providers'));
   });
 

@@ -6,13 +6,18 @@
 const {randomUUID} = require('crypto');
 const {createHttpError} = require('./assetValidation');
 
-/** IAM-aligned root prefixes only */
+/**
+ * Root prefixes in bucket `akanso-assets` (eu-north-1).
+ * Local fallback writes the same relative paths under `uploads/`.
+ * Never invent a top-level folder that is not already in the bucket.
+ */
 const ALLOWED_ROOT_PREFIXES = Object.freeze([
+  'admin',
+  'bookings',
+  'categories',
   'customers',
   'providers',
   'services',
-  'categories',
-  'bookings',
   'temp',
 ]);
 
@@ -92,6 +97,13 @@ function buildProviderDocumentKey(providerId, docKey, extension) {
 function buildCustomerProfileKey(customerId, extension) {
   const id = assertSafeId(customerId, 'customerId');
   return `customers/${id}/profile/${buildUniqueFilename(extension)}`;
+}
+
+/** Admin-uploaded assets — bucket prefix `admin/`. */
+function buildAdminAssetKey(adminId, extension) {
+  const id = assertSafeId(adminId, 'adminId');
+  assertRootPrefix('admin');
+  return `admin/${id}/${buildUniqueFilename(extension)}`;
 }
 
 /** White-label client logos — under services/* (IAM-allowed) */
@@ -262,6 +274,7 @@ module.exports = {
   buildProviderShowcaseKey,
   buildProviderDocumentKey,
   buildCustomerProfileKey,
+  buildAdminAssetKey,
   buildClientLogoKey,
   buildCategoryImageKey,
   buildServiceImageKey,

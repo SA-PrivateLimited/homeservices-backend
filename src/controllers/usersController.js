@@ -32,7 +32,14 @@ const {
 const {
   createPendingAdmin,
   resolveAdminStatus,
+  resolveAdminWebOriginFromRequest,
 } = require('../services/adminActivationService');
+const {
+  resolveInitialCustomerName,
+  resolveInitialProviderName,
+  hasRealCustomerName,
+  generateCustomerDisplayId,
+} = require('../utils/userDisplayIdentity');
 const {
   resolveAdminPermissions,
   PERMISSIONS,
@@ -209,9 +216,9 @@ exports.getMe = async (req, res, next) => {
     userData.customerDisplayId = user.customerDisplayId || null;
 
     // Profile completeness for frontend banners
-    const hasRealName = !!(user.name || user.displayName || '').trim() &&
-      !/^(Customer|Provider)\s+\d+$/i.test((user.name || user.displayName || '').trim());
-    userData.customerProfileComplete = hasRealName;
+    userData.customerProfileComplete = hasRealCustomerName(
+      user.name || user.displayName,
+    );
 
     userData.id = userData._id;
     if (userData.role === 'admin') {
@@ -1131,6 +1138,7 @@ exports.createUserByAdmin = async (req, res, next) => {
         name,
         email,
         permissions: req.body.permissions,
+        adminWebOrigin: resolveAdminWebOriginFromRequest(req),
       });
       return res.status(201).json({
         success: true,
@@ -1225,17 +1233,33 @@ exports.createUserByAdmin = async (req, res, next) => {
         ? [serviceType]
         : [];
 
+    let displayId;
+    let resolvedName = name || undefined;
+    if (role === 'customer' || role === 'provider') {
+      displayId = await generateCustomerDisplayId(User);
+      if (role === 'customer') {
+        resolvedName = resolveInitialCustomerName({
+          requestedName: name,
+          displayId,
+        });
+      } else if (!name) {
+        resolvedName = resolveInitialProviderName(name);
+      }
+    }
+
     const doc = {
       _id,
       role,
-      name: name || undefined,
-      displayName: name || undefined,
+      name: resolvedName,
+      displayName: resolvedName,
       email: email || undefined,
       phone: synced.phone || undefined,
       phoneNumber: synced.phoneNumber || undefined,
       location,
       homeAddress,
       isActive: true,
+      ...(displayId != null ? {customerDisplayId: displayId} : {}),
+      customerProfileEnabled: role === 'provider' ? true : false,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -1262,8 +1286,8 @@ exports.createUserByAdmin = async (req, res, next) => {
         if (!existing) {
           await Provider.create({
             _id,
-            name: name || 'Provider',
-            displayName: name || 'Provider',
+            name: name || resolveInitialProviderName(name),
+            displayName: name || resolveInitialProviderName(name),
             phoneNumber: synced.phoneNumber || synced.phone || undefined,
             serviceType: serviceType || undefined,
             specialization: serviceType || undefined,

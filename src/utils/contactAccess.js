@@ -60,7 +60,7 @@ function statusAllowsContact(status) {
 
 function isGenericProviderName(value) {
   const s = String(value || '').trim();
-  return !s || /^(customer|provider)(\s+\d+)?$/i.test(s);
+  return !s || /^(customer|provider|user)([-\s]\d{1,4})?$/i.test(s);
 }
 
 /** One public name for browse/detail — ignore stale signup placeholders. */

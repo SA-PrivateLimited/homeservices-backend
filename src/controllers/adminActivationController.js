@@ -114,6 +114,8 @@ exports.inviteAdmin = async (req, res, next) => {
       name: req.body.name || req.body.displayName,
       email: req.body.email,
       permissions: req.body.permissions,
+      adminWebOrigin:
+        adminActivationService.resolveAdminWebOriginFromRequest(req),
     });
     res.status(201).json({
       success: true,
@@ -133,6 +135,10 @@ exports.regenerateActivation = async (req, res, next) => {
     requireSuperAdmin(req);
     const result = await adminActivationService.regenerateActivation(
       req.params.userId,
+      {
+        adminWebOrigin:
+          adminActivationService.resolveAdminWebOriginFromRequest(req),
+      },
     );
     res.json({
       success: true,
