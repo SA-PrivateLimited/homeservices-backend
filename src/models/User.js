@@ -27,6 +27,12 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  /** Optional alternate contact for service requests (E.164, e.g. +91…). */
+  secondaryPhone: {
+    type: String,
+    trim: true,
+    default: null,
+  },
   displayName: {
     type: String,
     trim: true,
