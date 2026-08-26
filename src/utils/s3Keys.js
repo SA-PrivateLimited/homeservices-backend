@@ -220,6 +220,9 @@ function assertKeyAuthorizedForUser(key, user) {
 
 /**
  * Extract S3 key from a CloudFront URL if it matches our domain; otherwise treat as key.
+ * Accepts the canonical CDN host and optional legacy distribution hostname(s)
+ * from AWS_CLOUDFRONT_DISTRIBUTION_HOSTNAME (comma-separated). Never accepts
+ * raw S3 bucket URLs as permanent references.
  */
 function keyFromUrlOrKey(urlOrKey) {
   if (!urlOrKey || typeof urlOrKey !== 'string') {
@@ -228,11 +231,25 @@ function keyFromUrlOrKey(urlOrKey) {
   const raw = urlOrKey.trim();
   const domain = (
     process.env.AWS_CLOUDFRONT_DOMAIN || 'assets.akanso.in'
-  ).replace(/^https?:\/\//, '');
-  const cfPrefix = `https://${domain}/`;
-  if (raw.startsWith(cfPrefix)) {
-    return normalizeObjectKey(raw.slice(cfPrefix.length));
-  }
+  )
+    .replace(/^https?:\/\//, '')
+    .replace(/\/+$/, '');
+  const acceptedHosts = new Set(
+    [domain]
+      .concat(
+        String(process.env.AWS_CLOUDFRONT_DISTRIBUTION_HOSTNAME || '')
+          .split(',')
+          .map((h) =>
+            h
+              .trim()
+              .replace(/^https?:\/\//, '')
+              .replace(/\/+$/, ''),
+          )
+          .filter(Boolean),
+      )
+      .map((h) => h.toLowerCase()),
+  );
+
   const localBase = (process.env.PUBLIC_API_BASE_URL || '').replace(/\/+$/, '');
   if (localBase) {
     const uploadsPrefix = `${localBase}/uploads/`;
@@ -240,20 +257,33 @@ function keyFromUrlOrKey(urlOrKey) {
       return normalizeObjectKey(raw.slice(uploadsPrefix.length));
     }
   }
-  // Loopback local-fallback URLs (http://127.0.0.1:3001/uploads/...)
+
   try {
     const parsed = new URL(raw);
+    const host = parsed.hostname.toLowerCase();
+    if (acceptedHosts.has(host)) {
+      return normalizeObjectKey(parsed.pathname.replace(/^\/+/, ''));
+    }
     const loopback =
-      parsed.hostname === '127.0.0.1' ||
-      parsed.hostname === 'localhost' ||
-      parsed.hostname === '::1' ||
-      parsed.hostname === '0.0.0.0';
+      host === '127.0.0.1' ||
+      host === 'localhost' ||
+      host === '::1' ||
+      host === '0.0.0.0';
     if (loopback && parsed.pathname.startsWith('/uploads/')) {
       return normalizeObjectKey(parsed.pathname.slice('/uploads/'.length));
     }
-  } catch {
-    /* not a URL */
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      throw createHttpError(
+        400,
+        'Only CloudFront asset URLs are accepted',
+        'Bad Request',
+      );
+    }
+  } catch (err) {
+    if (err.statusCode) throw err;
+    /* not an absolute URL — continue */
   }
+
   // Relative /uploads/... paths (legacy)
   if (raw.startsWith('/uploads/')) {
     return normalizeObjectKey(raw.slice('/uploads/'.length));
@@ -262,6 +292,19 @@ function keyFromUrlOrKey(urlOrKey) {
     throw createHttpError(400, 'Only CloudFront asset URLs are accepted', 'Bad Request');
   }
   return normalizeObjectKey(raw);
+}
+
+/**
+ * Sensitive object keys must not be treated as unrestricted public CDN content.
+ * API responses already strip provider.documents from public browse payloads;
+ * long-term these should use authenticated/signed GET rather than permanent
+ * public CloudFront URLs. See ASSET_UPLOAD_IAM.md.
+ */
+function isSensitiveObjectKey(key) {
+  const normalized = normalizeObjectKey(key);
+  if (normalized.includes('/documents/')) return true;
+  if (normalized.startsWith('bookings/')) return true;
+  return false;
 }
 
 module.exports = {
@@ -286,4 +329,5 @@ module.exports = {
   buildProviderRequestDocumentKey,
   assertKeyAuthorizedForUser,
   keyFromUrlOrKey,
+  isSensitiveObjectKey,
 };

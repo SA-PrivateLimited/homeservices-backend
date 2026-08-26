@@ -9,7 +9,7 @@ const User = require('../models/User');
 const Provider = require('../models/Provider');
 const {syncPartnerDisplayNames, bestPartnerName} = require('../utils/partnerNameSync');
 const {decryptToken} = require('../utils/tokenEncryption');
-const {syncPhoneFields} = require('../utils/phone');
+const {syncPhoneFields, localTenDigits, toE164} = require('../utils/phone');
 const {verifySuperAdminToken} = require('../utils/jwtAuth');
 const {
   hasCustomerProfile,
@@ -293,6 +293,37 @@ exports.updateMe = async (req, res, next) => {
       );
       updateData.phone = synced.phone;
       updateData.phoneNumber = synced.phoneNumber;
+    }
+
+    if (updateData.secondaryPhone !== undefined) {
+      const raw = String(updateData.secondaryPhone || '').trim();
+      if (!raw) {
+        updateData.secondaryPhone = null;
+      } else {
+        const ten = localTenDigits(raw);
+        if (ten.length !== 10) {
+          return res.status(400).json({
+            success: false,
+            error: 'Bad Request',
+            message: 'Alternate contact must be a valid 10-digit mobile number',
+          });
+        }
+        const current = await User.findById(req.user.uid).select(
+          'phone phoneNumber',
+        );
+        const primaryTen = localTenDigits(
+          current?.phoneNumber || current?.phone || '',
+        );
+        if (primaryTen && ten === primaryTen) {
+          return res.status(400).json({
+            success: false,
+            error: 'Bad Request',
+            message:
+              'Alternate contact must be different from your registered mobile',
+          });
+        }
+        updateData.secondaryPhone = toE164(ten);
+      }
     }
 
     const user = await User.findByIdAndUpdate(

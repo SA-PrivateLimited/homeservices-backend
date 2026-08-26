@@ -1,10 +1,14 @@
 /**
  * AWS S3 asset service (SDK v3).
  *
- * Production: EC2/ECS instance IAM role only (default credential provider chain).
- *   Never use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
- * Local/dev: AWS_S3_LOCAL_FALLBACK=true writes to ./uploads (no AWS needed).
- *   Static access keys are intentionally not supported.
+ * Production: EC2 instance IAM role via the default credential provider chain
+ *   (IMDS). Do NOT configure AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY —
+ *   env credentials take precedence over the instance role in the SDK chain.
+ * Local/dev: AWS_S3_LOCAL_FALLBACK=true writes to ./uploads (no AWS needed),
+ *   or AWS_PROFILE / SSO. Static keys are not injected into S3Client.
+ *
+ * Public asset URLs always use AWS_CLOUDFRONT_DOMAIN (assets.akanso.in),
+ * never raw S3 bucket URLs or the *.cloudfront.net distribution hostname.
  */
 
 const path = require('path');
@@ -55,19 +59,28 @@ function localDiskAllowed() {
   return localFallbackForced();
 }
 
-function warnIfStaticKeysConfigured() {
-  const hasKeys =
+function hasStaticAwsAccessKeys() {
+  return (
     Boolean(process.env.AWS_ACCESS_KEY_ID) ||
-    Boolean(process.env.AWS_SECRET_ACCESS_KEY);
-  if (!hasKeys) return;
+    Boolean(process.env.AWS_SECRET_ACCESS_KEY)
+  );
+}
+
+/**
+ * Env credentials override IMDS in the AWS SDK default chain.
+ * Production must fail closed so the EC2 instance role is the only path.
+ */
+function assertProductionUsesInstanceRoleOnly() {
+  if (!hasStaticAwsAccessKeys()) return;
   if (!isDev()) {
-    console.error(
-      '[s3] Refusing static AWS access keys in production. Use the instance IAM role only. Unset AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.',
+    throw createHttpError(
+      500,
+      'Static AWS access keys must not be configured in production. Unset AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY so the EC2 instance IAM role is used.',
+      'Config Error',
     );
-    return;
   }
   console.warn(
-    '[s3] AWS_ACCESS_KEY_ID/SECRET are set but ignored. Use the default credential chain (instance IAM role in production; AWS_PROFILE/SSO locally).',
+    '[s3] AWS_ACCESS_KEY_ID/SECRET are set. The AWS SDK will prefer them over AWS_PROFILE/IMDS. Unset them and use AWS_PROFILE/SSO for local development.',
   );
 }
 
@@ -93,7 +106,8 @@ function publicApiBase() {
 
 /**
  * Lazily create S3Client using the default credential provider chain only
- * (instance IAM role in production). Static access keys are never injected.
+ * (instance IAM role in production). Credentials are never passed to the
+ * constructor. Production refuses to start S3 ops if static access keys are set.
  *
  * requestChecksumCalculation MUST be WHEN_REQUIRED for browser presigned PUTs.
  * SDK v3.1100+ defaults to WHEN_SUPPORTED, which embeds x-amz-checksum-crc32
@@ -102,7 +116,7 @@ function publicApiBase() {
  */
 function getS3Client() {
   if (!s3Client) {
-    warnIfStaticKeysConfigured();
+    assertProductionUsesInstanceRoleOnly();
     s3Client = new S3Client({
       region: getRegion(),
       requestChecksumCalculation: 'WHEN_REQUIRED',
@@ -122,11 +136,25 @@ function resetS3ClientForTests() {
 }
 
 /**
- * Public CloudFront URL for an object key (never an S3 bucket URL).
+ * Canonical public CDN URL for an object key.
+ * Always https://{AWS_CLOUDFRONT_DOMAIN}/<key> (e.g. assets.akanso.in).
+ * Never emits raw S3 URLs or *.cloudfront.net distribution hostnames.
  */
 function generateCloudFrontUrl(key) {
   const normalized = normalizeObjectKey(key);
-  return `https://${getCloudFrontDomain()}/${normalized}`;
+  const domain = getCloudFrontDomain();
+  if (
+    /amazonaws\.com$/i.test(domain) ||
+    /\.cloudfront\.net$/i.test(domain) ||
+    /^s3[.-]/i.test(domain)
+  ) {
+    throw createHttpError(
+      500,
+      'AWS_CLOUDFRONT_DOMAIN must be the canonical CDN host (assets.akanso.in), not an S3 or *.cloudfront.net hostname',
+      'Config Error',
+    );
+  }
+  return `https://${domain}/${normalized}`;
 }
 
 function generateLocalUrl(key) {
@@ -374,9 +402,7 @@ async function deleteObject(key, {userId} = {}) {
 }
 
 function getCredentialResolutionInfo() {
-  const staticKeysPresent =
-    Boolean(process.env.AWS_ACCESS_KEY_ID) ||
-    Boolean(process.env.AWS_SECRET_ACCESS_KEY);
+  const staticKeysPresent = hasStaticAwsAccessKeys();
   return {
     region: getRegion(),
     bucket: getBucket(),
@@ -386,7 +412,10 @@ function getCredentialResolutionInfo() {
     credentialMode: 'iam-role-default-chain-only',
     usesDefaultCredentialProviderChain: true,
     hasExplicitConstructorCredentials: false,
-    staticKeysPresentButIgnored: staticKeysPresent,
+    /** True when env keys are set — they override IMDS in the SDK chain. */
+    staticKeysPresent,
+    /** Production refuses to create an S3 client while this is true. */
+    productionRefusesStaticKeys: !isDev(),
   };
 }
 

@@ -29,6 +29,7 @@ const {
   assertKeyAuthorizedForUser,
   keyFromUrlOrKey,
   normalizeObjectKey,
+  isSensitiveObjectKey,
 } = require('../utils/s3Keys');
 const {signUploadToken, verifyUploadToken} = require('../utils/uploadToken');
 
@@ -289,6 +290,8 @@ exports.createUploadUrl = async (req, res, next) => {
         storage: payload.storage,
         maxBytes,
         fileName: req.body?.fileName || undefined,
+        // Documents remain capability-sensitive; see isSensitiveObjectKey / ASSET_UPLOAD_IAM.md
+        sensitive: isSensitiveObjectKey(payload.key),
       },
       message: 'Upload URL created',
     });
