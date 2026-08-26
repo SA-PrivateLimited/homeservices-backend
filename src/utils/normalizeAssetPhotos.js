@@ -56,6 +56,14 @@ function isAcceptedAssetReference(raw) {
     if (isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith('/uploads/')) {
       return true;
     }
+    // Optional legacy distribution hostname(s) — rewritten to canonical CDN on persist
+    const legacyHosts = String(process.env.AWS_CLOUDFRONT_DISTRIBUTION_HOSTNAME || '')
+      .split(',')
+      .map((h) => h.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase())
+      .filter(Boolean);
+    if (legacyHosts.includes(parsed.hostname.toLowerCase())) {
+      return true;
+    }
   } catch {
     /* not a URL */
   }

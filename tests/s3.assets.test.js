@@ -235,9 +235,51 @@ describe('s3.service with mocked client', () => {
     assert.equal(info.region, 'eu-north-1');
     assert.equal(info.bucket, 'akanso-assets');
     assert.equal(info.hasExplicitConstructorCredentials, false);
+    assert.equal(info.staticKeysPresent, false);
     // Ensure env does not rely on access keys for this suite
     assert.equal(process.env.AWS_ACCESS_KEY_ID, undefined);
     assert.equal(process.env.AWS_SECRET_ACCESS_KEY, undefined);
+  });
+
+  it('refuses static AWS access keys in production', () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevKey = process.env.AWS_ACCESS_KEY_ID;
+    const prevSecret = process.env.AWS_SECRET_ACCESS_KEY;
+    try {
+      process.env.NODE_ENV = 'production';
+      process.env.AWS_ACCESS_KEY_ID = 'AKIATEST';
+      process.env.AWS_SECRET_ACCESS_KEY = 'secret';
+      resetS3ClientForTests();
+      assert.throws(
+        () => getS3Client(),
+        (err) =>
+          err.statusCode === 500 &&
+          /instance IAM role|access keys/i.test(err.message),
+      );
+    } finally {
+      process.env.NODE_ENV = prevNodeEnv;
+      if (prevKey === undefined) delete process.env.AWS_ACCESS_KEY_ID;
+      else process.env.AWS_ACCESS_KEY_ID = prevKey;
+      if (prevSecret === undefined) delete process.env.AWS_SECRET_ACCESS_KEY;
+      else process.env.AWS_SECRET_ACCESS_KEY = prevSecret;
+      resetS3ClientForTests();
+    }
+  });
+
+  it('rejects AWS_CLOUDFRONT_DOMAIN set to *.cloudfront.net', () => {
+    const prev = process.env.AWS_CLOUDFRONT_DOMAIN;
+    try {
+      process.env.AWS_CLOUDFRONT_DOMAIN = 'dpyk9otyl50r.cloudfront.net';
+      assert.throws(
+        () =>
+          generateCloudFrontUrl(
+            'providers/123/profile/550e8400-e29b-41d4-a716-446655440000.webp',
+          ),
+        (err) => err.statusCode === 500 && /canonical CDN/i.test(err.message),
+      );
+    } finally {
+      process.env.AWS_CLOUDFRONT_DOMAIN = prev;
+    }
   });
 });
 

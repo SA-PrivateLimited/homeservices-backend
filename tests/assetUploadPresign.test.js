@@ -19,6 +19,8 @@ const {
   buildCustomerServiceRequestPhotoKey,
   buildProviderRequestPhotoKey,
   assertKeyAuthorizedForUser,
+  isSensitiveObjectKey,
+  keyFromUrlOrKey,
 } = require('../src/utils/s3Keys');
 const {signUploadToken, verifyUploadToken} = require('../src/utils/uploadToken');
 
@@ -119,6 +121,56 @@ describe('uploadToken', () => {
     assert.throws(
       () => verifyUploadToken(token.slice(0, -2) + 'aa'),
       (err) => err.statusCode === 403,
+    );
+  });
+});
+
+describe('sensitive asset keys + URL parsing', () => {
+  it('marks KYC / booking document paths as sensitive', () => {
+    assert.equal(
+      isSensitiveObjectKey(
+        'providers/p1/documents/idProof/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.pdf',
+      ),
+      true,
+    );
+    assert.equal(
+      isSensitiveObjectKey(
+        'providers/p1/showcase/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.webp',
+      ),
+      false,
+    );
+    assert.equal(
+      isSensitiveObjectKey(
+        'bookings/b1/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.pdf',
+      ),
+      true,
+    );
+  });
+
+  it('rewrites legacy distribution hostname to object key when configured', () => {
+    const prev = process.env.AWS_CLOUDFRONT_DISTRIBUTION_HOSTNAME;
+    try {
+      process.env.AWS_CLOUDFRONT_DISTRIBUTION_HOSTNAME =
+        'dpyk9otyl50r.cloudfront.net';
+      const key =
+        'providers/p1/showcase/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.webp';
+      assert.equal(
+        keyFromUrlOrKey(`https://dpyk9otyl50r.cloudfront.net/${key}`),
+        key,
+      );
+    } finally {
+      if (prev === undefined) delete process.env.AWS_CLOUDFRONT_DISTRIBUTION_HOSTNAME;
+      else process.env.AWS_CLOUDFRONT_DISTRIBUTION_HOSTNAME = prev;
+    }
+  });
+
+  it('rejects raw S3 bucket URLs', () => {
+    assert.throws(
+      () =>
+        keyFromUrlOrKey(
+          'https://akanso-assets.s3.eu-north-1.amazonaws.com/customers/u1/x.webp',
+        ),
+      (err) => err.statusCode === 400,
     );
   });
 });
