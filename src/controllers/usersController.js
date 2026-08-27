@@ -342,6 +342,23 @@ exports.updateMe = async (req, res, next) => {
     const userData = user.toObject();
     delete userData.fcmToken;
 
+    // Same multi-role remap as getMe — CustomerWeb sessions must keep
+    // role "customer" after profile/address updates for Partner users.
+    const jwtRole = req.accessTokenPayload?.role;
+    if (user.role === 'provider' || hasPartnerProfile(user)) {
+      userData.canSwitchToPartner = true;
+      userData.canSwitchToCustomer = true;
+    }
+    if (
+      jwtRole === 'customer' &&
+      user.role === 'provider' &&
+      user.customerProfileEnabled
+    ) {
+      userData.role = 'customer';
+    }
+
+    userData.id = userData._id;
+
     res.json({
       success: true,
       data: userData,
