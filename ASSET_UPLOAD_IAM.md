@@ -183,6 +183,15 @@ Required so browser presigned PUTs are not broken by empty-body CRC signing.
 | `src/utils/normalizeAssetPhotos.js` | Persist canonical CDN URLs |
 | `ops/s3-bucket-cors.json` | Browser PUT CORS |
 
+### Customer Web boot loader (static branding)
+
+| Item | Value |
+|------|--------|
+| Local source | `homeServices-customer-web/public/assets/LoaderAkanso.svg` |
+| S3 key | `services/loader/LoaderAkanso.svg` |
+| CDN URL | `https://assets.akanso.in/services/loader/LoaderAkanso.svg` |
+| Upload | `node scripts/upload-customer-web-loader.js` (run on EC2 or with `AWS_PROFILE`) |
+
 ---
 
 ## Operator checklist
