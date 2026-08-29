@@ -38,6 +38,8 @@ const serviceRequestSchema = new mongoose.Schema({
     state: String,
     stateId: String,
     districtId: String,
+    blockId: String,
+    block: String,
     pincode: {
       type: String,
       required: true,
@@ -81,6 +83,8 @@ const serviceRequestSchema = new mongoose.Schema({
   consultationId: String,
   questionnaireAnswers: mongoose.Schema.Types.Mixed,
   photos: [String],
+  /** Partner photos uploaded at job completion */
+  completionPhotos: [String],
   /** Customer asked admin to source a provider (none online in area) */
   needsAdminAssignment: {
     type: Boolean,

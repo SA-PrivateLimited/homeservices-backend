@@ -144,6 +144,8 @@ const providerSchema = new mongoose.Schema({
     district: String,
     stateId: String,
     districtId: String,
+    blockId: String,
+    block: String,
     pincode: String,
   },
   /** Structured service address (home/office) — includes landmark */
@@ -156,6 +158,8 @@ const providerSchema = new mongoose.Schema({
     state: String,
     stateId: String,
     districtId: String,
+    blockId: String,
+    block: String,
     pincode: String,
     latitude: Number,
     longitude: Number,
@@ -235,6 +239,7 @@ providerSchema.index({'location.state': 1});
 providerSchema.index({'location.pincode': 1});
 providerSchema.index({'location.stateId': 1});
 providerSchema.index({'location.districtId': 1});
+providerSchema.index({'location.blockId': 1});
 
 const Provider = mongoose.model('Provider', providerSchema, 'providers');
 

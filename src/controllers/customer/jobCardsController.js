@@ -54,7 +54,7 @@ exports.getMyJobCardById = async (req, res, next) => {
     const jobCard = await JobCard.findOne({
       _id: jobCardId,
       customerId: req.user.uid,
-    });
+    }).lean();
 
     if (!jobCard) {
       const lang = req.lang || 'en';
@@ -162,9 +162,11 @@ exports.addCommentToJobCard = async (req, res, next) => {
       req,
       text,
     });
+    const settings = await getContactSettings();
+    const plain = jobCard.toObject ? jobCard.toObject() : jobCard;
     res.json({
       success: true,
-      data: jobCard,
+      data: redactJobCardForViewer(plain, req.user, settings),
       message: 'Comment added',
     });
   } catch (error) {

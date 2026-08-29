@@ -51,6 +51,8 @@ const jobCardSchema = new mongoose.Schema({
     state: String,
     stateId: String,
     districtId: String,
+    blockId: String,
+    block: String,
     pincode: String,
     latitude: Number,
     longitude: Number,
@@ -100,6 +102,8 @@ const jobCardSchema = new mongoose.Schema({
   serviceAmount: Number,
   materialsUsed: mongoose.Schema.Types.Mixed,
   jobCardPdfUrl: String,
+  /** Provider-uploaded photos when marking job complete (CDN URLs) */
+  completionPhotos: [String],
   completedAt: Date,
   cancellationReason: String,
   cancelledAt: Date,

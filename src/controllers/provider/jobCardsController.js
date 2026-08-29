@@ -161,6 +161,7 @@ exports.updateJobCardStatus = async (req, res, next) => {
       materialsUsed,
       jobCardPdfUrl,
       completedAt,
+      completionPhotos,
     } = req.body;
 
     let jobCard = req.jobCard;
@@ -268,6 +269,30 @@ exports.updateJobCardStatus = async (req, res, next) => {
       update.completedAt = completedAt ? new Date(completedAt) : new Date();
     }
 
+    if (completionPhotos !== undefined) {
+      if (status !== 'completed') {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: 'Completion photos can only be added when marking the job complete',
+        });
+      }
+      try {
+        const {normalizePhotoReferences} = require('../../utils/normalizeAssetPhotos');
+        update.completionPhotos = normalizePhotoReferences(
+          completionPhotos,
+          req.user,
+          {max: 3},
+        );
+      } catch (photoErr) {
+        return res.status(photoErr.statusCode || 400).json({
+          success: false,
+          error: photoErr.message || 'Bad Request',
+          message: photoErr.message || 'Invalid completion photos',
+        });
+      }
+    }
+
     const updatedJobCard = await JobCard.findByIdAndUpdate(
       jobCardId,
       {$set: update},
@@ -327,6 +352,12 @@ exports.updateJobCardStatus = async (req, res, next) => {
               sr.cancelledAt = new Date();
               if (cancellationReason) sr.cancellationReason = cancellationReason;
             }
+            if (
+              status === 'completed' &&
+              Array.isArray(update.completionPhotos)
+            ) {
+              sr.completionPhotos = update.completionPhotos;
+            }
             await sr.save();
             await onServiceRequestStatusChange(sr, next);
 
@@ -346,6 +377,36 @@ exports.updateJobCardStatus = async (req, res, next) => {
                 console.warn(
                   '⚠️  Could not emit in-progress service-request-status:',
                   socketErr.message,
+                );
+              }
+            }
+
+            if (status === 'completed') {
+              try {
+                const {notifyUser} = require('../../utils/notify');
+                const {emitServiceCompleted} = require('../../realtime/socket');
+                const srId = String(sr._id);
+                await notifyUser(updatedJobCard.customerId, {
+                  title: 'Service Complete',
+                  body: `${updatedJobCard.providerName || 'Your partner'} has completed your ${updatedJobCard.serviceType || 'service'}.`,
+                  data: {
+                    type: 'service',
+                    status: 'completed',
+                    serviceRequestId: srId,
+                    jobCardId: String(jobCardId),
+                  },
+                });
+                emitServiceCompleted({
+                  customerId: updatedJobCard.customerId,
+                  jobCardId: String(jobCardId),
+                  consultationId: srId,
+                  providerName: updatedJobCard.providerName,
+                  serviceType: updatedJobCard.serviceType,
+                });
+              } catch (completeErr) {
+                console.warn(
+                  '⚠️  Customer completion notify failed:',
+                  completeErr.message,
                 );
               }
             }
@@ -384,9 +445,12 @@ exports.addCommentToJobCard = async (req, res, next) => {
       req,
       text,
     });
+    const settings = await getContactSettings();
+    const plain = jobCard.toObject ? jobCard.toObject() : jobCard;
+    const [enriched] = await attachCustomerProfileImages([plain]);
     res.json({
       success: true,
-      data: jobCard,
+      data: sanitizeJobCardForProvider(enriched, req.user, settings),
       message: 'Comment added',
     });
   } catch (error) {

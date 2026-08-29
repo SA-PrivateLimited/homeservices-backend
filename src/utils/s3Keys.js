@@ -176,6 +176,16 @@ function buildProviderRequestDocumentKey(providerId, requestId, extension) {
 }
 
 /**
+ * Provider job completion photos.
+ * Path: providers/{providerId}/job-cards/{jobCardId}/completion/{uuid}.ext
+ */
+function buildJobCompletionPhotoKey(providerId, jobCardId, extension) {
+  const pid = assertSafeId(providerId, 'providerId');
+  const jid = assertSafeId(jobCardId, 'jobCardId');
+  return `providers/${pid}/job-cards/${jid}/completion/${buildUniqueFilename(extension)}`;
+}
+
+/**
  * Whether an authenticated principal may manage this object key.
  * - Admins may manage any allowed-prefix key
  * - Providers: providers/{theirId}/...
@@ -194,7 +204,7 @@ function assertKeyAuthorizedForUser(key, user) {
     return normalized;
   }
 
-  if (role === 'provider') {
+  if (role === 'provider' || user.dbRole === 'provider') {
     const prefix = `providers/${uid}/`;
     if (!normalized.startsWith(prefix)) {
       throw createHttpError(
@@ -327,6 +337,7 @@ module.exports = {
   buildCustomerServiceRequestPhotoKeyForRequest,
   buildProviderRequestPhotoKey,
   buildProviderRequestDocumentKey,
+  buildJobCompletionPhotoKey,
   assertKeyAuthorizedForUser,
   keyFromUrlOrKey,
   isSensitiveObjectKey,

@@ -257,5 +257,4 @@ module.exports = {
   SEED,
   ensureGeographySeeded,
   resetGeographySeedFlag,
-  slugId,
 };
