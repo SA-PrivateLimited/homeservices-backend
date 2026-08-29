@@ -28,9 +28,35 @@ function jobStatusFromRequest(status) {
 
 async function findLinkedJobCard(id) {
   if (!id) return null;
+  const byPrimaryId = await JobCard.findById(id);
+  if (byPrimaryId) return byPrimaryId;
   return JobCard.findOne({
-    $or: [{_id: id}, {bookingId: id}, {serviceRequestId: id}],
+    $or: [{bookingId: id}, {serviceRequestId: id}],
   });
+}
+
+async function syncLinkedJobCardStatuses(id, providerId, status, extras = {}) {
+  const uid = String(providerId || '').trim();
+  if (!id || !uid) return;
+
+  const acceptedAt = extras.acceptedAt || null;
+  const $set = {status, updatedAt: new Date()};
+  if (status === 'accepted' && acceptedAt) {
+    $set.acceptedAt = acceptedAt;
+  }
+
+  const update = {$set};
+  if (status === 'accepted') {
+    update.$unset = {taskPIN: '', pinGeneratedAt: ''};
+  }
+
+  await JobCard.updateMany(
+    {
+      providerId: uid,
+      $or: [{_id: id}, {bookingId: id}, {serviceRequestId: id}],
+    },
+    update,
+  );
 }
 
 function addressFrom(sr) {
@@ -85,7 +111,14 @@ async function ensureJobCardFromServiceRequest(sr, extras = {}) {
   let jobCard = await findLinkedJobCard(id);
   if (jobCard) {
     Object.assign(jobCard, fields);
+    if (status === 'accepted') {
+      jobCard.taskPIN = undefined;
+      jobCard.pinGeneratedAt = undefined;
+    }
     await jobCard.save({validateBeforeSave: false});
+    await syncLinkedJobCardStatuses(id, fields.providerId, status, {
+      acceptedAt: fields.acceptedAt,
+    });
     return jobCard;
   }
 
@@ -94,7 +127,14 @@ async function ensureJobCardFromServiceRequest(sr, extras = {}) {
     createdAt: sr.createdAt || now,
     ...fields,
   });
+  if (status === 'accepted') {
+    jobCard.taskPIN = undefined;
+    jobCard.pinGeneratedAt = undefined;
+  }
   await jobCard.save({validateBeforeSave: false});
+  await syncLinkedJobCardStatuses(id, fields.providerId, status, {
+    acceptedAt: fields.acceptedAt,
+  });
   return jobCard;
 }
 
@@ -116,15 +156,13 @@ async function backfillProviderJobCards(providerId) {
     )
     .lean();
 
-  let created = 0;
+  let synced = 0;
   for (const sr of rows) {
     const id = srKey(sr);
-    const existing = await findLinkedJobCard(id);
-    if (existing) continue;
     await ensureJobCardFromServiceRequest(sr);
-    created += 1;
+    synced += 1;
   }
-  return created;
+  return synced;
 }
 
 module.exports = {
