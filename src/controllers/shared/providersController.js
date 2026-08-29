@@ -49,6 +49,9 @@ const {
 const {
   isOfflineOpenRequestsEnabled,
 } = require('../../services/providerOpenRequestPolicyService');
+const {
+  applyLinkedProfileImageFallback,
+} = require('../../utils/resolvePartnerProfileImage');
 
 async function providerPayloadWithPolicy(provider) {
   if (!provider) return provider;
@@ -437,9 +440,10 @@ exports.getMyProfile = async (req, res, next) => {
 
     ensureQualifications(provider);
 
+    let linkedUser = null;
     try {
-      const linkedUser = await User.findById(req.user.uid).select(
-        'name displayName phoneVerified',
+      linkedUser = await User.findById(req.user.uid).select(
+        'name displayName phoneVerified profileImage photoURL',
       );
       const {providerChanged, userChanged} = syncPartnerDisplayNames(
         provider,
@@ -455,9 +459,12 @@ exports.getMyProfile = async (req, res, next) => {
       await provider.save();
     }
 
+    const payload = await providerPayloadWithPolicy(provider);
+    applyLinkedProfileImageFallback(payload, linkedUser);
+
     res.json({
       success: true,
-      data: await providerPayloadWithPolicy(provider),
+      data: payload,
     });
   } catch (error) {
     next(error);
@@ -629,9 +636,15 @@ exports.updateMyProfile = async (req, res, next) => {
       saved = await maybeAutoVerifyPartner(saved, req.user.uid);
     }
 
+    const linkedUser = await User.findById(req.user.uid)
+      .select('profileImage photoURL')
+      .lean();
+    const payload = await providerPayloadWithPolicy(saved || provider);
+    applyLinkedProfileImageFallback(payload, linkedUser);
+
     res.json({
       success: true,
-      data: await providerPayloadWithPolicy(saved || provider),
+      data: payload,
       message: 'Provider profile updated successfully',
     });
   } catch (error) {
