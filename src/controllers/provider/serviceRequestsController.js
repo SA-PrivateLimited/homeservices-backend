@@ -33,17 +33,23 @@ const {
 const {
   ensureJobCardFromServiceRequest,
 } = require('../../utils/ensureJobCardFromServiceRequest');
+const {
+  attachCustomerProfileImages,
+} = require('../../utils/attachCustomerProfileImages');
 
 async function serializeRequest(doc, viewer) {
   const settings = await getContactSettings();
-  return redactServiceRequestForViewer(doc, viewer, settings);
+  const redacted = redactServiceRequestForViewer(doc, viewer, settings);
+  const [enriched] = await attachCustomerProfileImages([redacted]);
+  return enriched;
 }
 
 async function serializeList(rows, viewer) {
   const settings = await getContactSettings();
-  return (rows || []).map((row) =>
+  const redacted = (rows || []).map((row) =>
     redactServiceRequestForViewer(row, viewer, settings),
   );
+  return attachCustomerProfileImages(redacted);
 }
 
 /**
