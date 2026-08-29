@@ -134,6 +134,7 @@ exports.getProviders = async (req, res, next) => {
       district,
       stateId,
       districtId,
+      blockId,
       pincode,
       isOnline,
       minRating,
@@ -206,6 +207,17 @@ exports.getProviders = async (req, res, next) => {
         Object.assign(query, districtParts[0]);
       } else {
         andClauses.push({$or: districtParts});
+      }
+    }
+    if (blockId) {
+      const blockParts = [];
+      const bid = String(blockId).trim();
+      blockParts.push({'location.blockId': bid});
+      blockParts.push({'address.blockId': bid});
+      if (blockParts.length === 1) {
+        Object.assign(query, blockParts[0]);
+      } else {
+        andClauses.push({$or: blockParts});
       }
     }
     if (pincode) {

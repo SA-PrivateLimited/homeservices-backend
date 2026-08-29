@@ -177,6 +177,8 @@ function toPublicProvider(provider, {revealPhone = false, policy} = {}) {
       state: out.location.state,
       stateId: out.location.stateId,
       districtId: out.location.districtId,
+      blockId: out.location.blockId,
+      block: out.location.block,
       pincode: out.location.pincode,
       latitude: out.location.latitude,
       longitude: out.location.longitude,
@@ -192,6 +194,8 @@ function toPublicProvider(provider, {revealPhone = false, policy} = {}) {
       state: out.address.state,
       stateId: out.address.stateId,
       districtId: out.address.districtId,
+      blockId: out.address.blockId,
+      block: out.address.block,
       pincode: out.address.pincode,
     };
   }

@@ -5,6 +5,7 @@
 
 const State = require('../../models/State');
 const District = require('../../models/District');
+const Block = require('../../models/Block');
 const Provider = require('../../models/Provider');
 const JobCard = require('../../models/JobCard');
 const User = require('../../models/User');
@@ -548,7 +549,17 @@ exports.addProviderToDistrict = async (req, res, next) => {
 exports.getGeographyMeta = async (req, res, next) => {
   try {
     await ensureGeographySeeded();
+    // Rebuild when cache predates blocks support or was populated before block seed.
+    if (metaCache && !Array.isArray(metaCache.blocks)) {
+      metaCache = null;
+    }
     if (metaCache) {
+      // Blocks are ops-seeded; refresh on each meta read so a running server
+      // picks up new blocks without restart.
+      metaCache.blocks = await Block.find({isActive: {$ne: false}})
+        .sort({stateName: 1, districtName: 1, name: 1})
+        .select('_id name districtId districtName stateId stateName')
+        .lean();
       return res.json({
         success: true,
         data: metaCache,
@@ -562,7 +573,11 @@ exports.getGeographyMeta = async (req, res, next) => {
       .sort({stateName: 1, name: 1})
       .select('_id name stateId stateName pincode')
       .lean();
-    metaCache = {states, districts};
+    const blocks = await Block.find({isActive: {$ne: false}})
+      .sort({stateName: 1, districtName: 1, name: 1})
+      .select('_id name districtId districtName stateId stateName')
+      .lean();
+    metaCache = {states, districts, blocks};
     res.json({
       success: true,
       data: metaCache,

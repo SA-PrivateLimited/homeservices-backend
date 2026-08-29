@@ -4,6 +4,7 @@
  * Attachments: presigned PUT → S3 (or local direct PUT in dev fallback).
  */
 
+const JobCard = require('../models/JobCard');
 const User = require('../models/User');
 const Provider = require('../models/Provider');
 const ServiceRequest = require('../models/ServiceRequest');
@@ -25,6 +26,7 @@ const {
   buildCustomerServiceRequestPhotoKeyForRequest,
   buildProviderRequestPhotoKey,
   buildProviderRequestDocumentKey,
+  buildJobCompletionPhotoKey,
   buildProviderDocumentKey,
   assertKeyAuthorizedForUser,
   keyFromUrlOrKey,
@@ -41,6 +43,7 @@ const UPLOAD_PURPOSES = new Set([
   'customer-profile',
   'provider-profile',
   'provider-showcase',
+  'job-completion-photo',
   'temp',
 ]);
 
@@ -77,13 +80,43 @@ async function assertProviderOwnsRequest(providerId, requestId) {
   return sr;
 }
 
-function buildKeyForPurpose({purpose, user, contentType, requestId, docKey}) {
+async function assertProviderOwnsJobCard(providerId, jobCardId) {
+  const jobCard = await JobCard.findById(String(jobCardId)).lean();
+  if (!jobCard) {
+    throw createHttpError(404, 'Job card not found', 'Not Found');
+  }
+  if (String(jobCard.providerId || '') !== String(providerId)) {
+    throw createHttpError(
+      403,
+      'Not allowed to upload for this job',
+      'Forbidden',
+    );
+  }
+  return jobCard;
+}
+
+function isPartnerActor(user) {
+  if (!user) return false;
+  const role = user.role || 'customer';
+  const dbRole = user.dbRole || role;
+  return role === 'provider' || role === 'admin' || dbRole === 'provider';
+}
+
+function isCustomerActor(user) {
+  if (!user) return false;
+  const role = user.role || 'customer';
+  const activeRole = user.activeRole || role;
+  return role === 'customer' || role === 'admin' || activeRole === 'customer';
+}
+
+function buildKeyForPurpose({purpose, user, contentType, requestId, docKey, jobCardId}) {
   const role = user.role || 'customer';
   const uid = String(user.uid);
+  const partner = isPartnerActor(user);
 
   switch (purpose) {
     case 'service-request-photo': {
-      if (role !== 'customer' && role !== 'admin') {
+      if (!isCustomerActor(user)) {
         throw createHttpError(403, 'Only customers can upload request photos', 'Forbidden');
       }
       const ext = extensionForContentType(contentType, {documents: false});
@@ -127,14 +160,24 @@ function buildKeyForPurpose({purpose, user, contentType, requestId, docKey}) {
       return buildCustomerProfileKey(uid, ext);
     }
     case 'provider-showcase': {
-      if (role !== 'provider' && role !== 'admin') {
+      if (!partner) {
         throw createHttpError(403, 'Only providers can upload showcase images', 'Forbidden');
       }
       const ext = extensionForContentType(contentType, {documents: false});
       return buildProviderShowcaseKey(uid, ext);
     }
+    case 'job-completion-photo': {
+      if (!partner) {
+        throw createHttpError(403, 'Only providers can upload completion photos', 'Forbidden');
+      }
+      if (!jobCardId) {
+        throw createHttpError(400, 'jobCardId is required', 'Bad Request');
+      }
+      const ext = extensionForContentType(contentType, {documents: false});
+      return buildJobCompletionPhotoKey(uid, jobCardId, ext);
+    }
     case 'provider-profile': {
-      if (role !== 'provider' && role !== 'admin') {
+      if (!partner) {
         throw createHttpError(403, 'Only providers can upload provider profile images', 'Forbidden');
       }
       const ext = extensionForContentType(contentType, {documents: false});
@@ -167,6 +210,9 @@ exports.createUploadUrl = async (req, res, next) => {
     const purpose = String(req.body?.purpose || '').trim();
     const requestId = req.body?.requestId
       ? String(req.body.requestId).trim()
+      : '';
+    const jobCardId = req.body?.jobCardId
+      ? String(req.body.jobCardId).trim()
       : '';
     const docKey = req.body?.docKey ? String(req.body.docKey).trim() : '';
     const fileSize = Number(req.body?.fileSize);
@@ -204,8 +250,12 @@ exports.createUploadUrl = async (req, res, next) => {
       await assertProviderOwnsRequest(req.user.uid, requestId);
     }
 
+    if (purpose === 'job-completion-photo') {
+      await assertProviderOwnsJobCard(req.user.uid, jobCardId);
+    }
+
     // Optional: customer binding request id must belong to them if provided
-    if (purpose === 'service-request-photo' && requestId && req.user.role === 'customer') {
+    if (purpose === 'service-request-photo' && requestId && isCustomerActor(req.user)) {
       const sr = await ServiceRequest.findById(requestId).lean();
       if (!sr || String(sr.customerId) !== String(req.user.uid)) {
         throw createHttpError(
@@ -222,6 +272,7 @@ exports.createUploadUrl = async (req, res, next) => {
       contentType,
       requestId,
       docKey,
+      jobCardId,
     });
 
     const expiresIn = 900;

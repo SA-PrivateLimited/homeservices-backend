@@ -6,6 +6,7 @@
 const axios = require('axios');
 const State = require('../models/State');
 const District = require('../models/District');
+const Block = require('../models/Block');
 const {ensureGeographySeeded} = require('./geographySeed');
 
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/reverse';
@@ -79,6 +80,48 @@ function pickStateCandidate(address) {
   );
 }
 
+function pickBlockCandidates(address, districtName) {
+  if (!address || typeof address !== 'object') return [];
+  const keys = [
+    'suburb',
+    'village',
+    'town',
+    'hamlet',
+    'municipality',
+    'city',
+    'county',
+  ];
+  const out = [];
+  for (const key of keys) {
+    const val = address[key];
+    if (!val || typeof val !== 'string') continue;
+    if (districtName && namesMatch(val, districtName)) continue;
+    out.push(val);
+  }
+  return out;
+}
+
+function findBlockMatch(blocks, candidates) {
+  for (const candidate of candidates) {
+    const match = blocks.find((b) => namesMatch(b.name, candidate));
+    if (match) return match;
+  }
+  return null;
+}
+
+function pickAddressLine(address) {
+  if (!address || typeof address !== 'object') return '';
+  return [address.road, address.neighbourhood, address.suburb, address.village]
+    .filter(Boolean)
+    .join(', ');
+}
+
+function pickPincode(address) {
+  return String(address?.postcode || '')
+    .replace(/\D/g, '')
+    .slice(0, 6);
+}
+
 async function reverseGeocode(lat, lon) {
   try {
     const {data} = await axios.get(NOMINATIM_URL, {
@@ -87,7 +130,7 @@ async function reverseGeocode(lat, lon) {
         lon,
         format: 'json',
         addressdetails: 1,
-        zoom: 10,
+        zoom: 14,
       },
       headers: {
         'User-Agent': USER_AGENT,
@@ -165,18 +208,35 @@ async function resolveGeographyFromCoords(lat, lon) {
   const stateDistricts = districts.filter((d) => d.stateId === state._id);
   const district = findDistrictMatch(stateDistricts, districtCandidates);
 
+  let block = null;
+  if (district?._id) {
+    const districtBlocks = await Block.find({
+      districtId: district._id,
+      isActive: {$ne: false},
+    })
+      .select('_id name')
+      .lean();
+    block = findBlockMatch(
+      districtBlocks,
+      pickBlockCandidates(address, district.name),
+    );
+  }
+
   const stateName = state.name;
   const districtName = district?.name || '';
-  const label = districtName
-    ? `${districtName}, ${stateName}`
-    : stateName;
+  const blockName = block?.name || '';
+  const label = [blockName, districtName, stateName].filter(Boolean).join(', ');
 
   return {
     stateId: state._id,
     districtId: district?._id || '',
+    blockId: block?._id || '',
+    blockName,
     stateName,
     districtName,
     label,
+    pincode: pickPincode(address),
+    addressLine: pickAddressLine(address),
   };
 }
 
