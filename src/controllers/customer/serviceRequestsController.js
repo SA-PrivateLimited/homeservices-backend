@@ -10,7 +10,7 @@ const AreaProviderDemand = require('../../models/AreaProviderDemand');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
 const {t} = require('../../utils/translations');
 const mongoose = require('mongoose');
-const {notifyBooking, notifyAdminsRealtime} = require('../../realtime/socket');
+const {notifyBooking, notifyAdminsRealtime, notifyAreaProviders} = require('../../realtime/socket');
 const {findProvidersInArea} = require('../../utils/findProvidersInArea');
 const {notifyAdmins, notifyProvider} = require('../../utils/notify');
 const {
@@ -1002,13 +1002,133 @@ exports.cancelServiceRequest = async (req, res, next) => {
       });
     }
 
+    const trimmedReason = cancellationReason.trim();
+    const assignedProviderIdBeforeCancel = serviceRequest.providerId
+      ? String(serviceRequest.providerId)
+      : null;
+    const wasOpenRequest =
+      !assignedProviderIdBeforeCancel &&
+      String(serviceRequest.status || '') === 'pending';
     serviceRequest.status = 'cancelled';
-    serviceRequest.cancellationReason = cancellationReason.trim();
+    serviceRequest.cancellationReason = trimmedReason;
     serviceRequest.cancelledAt = new Date();
     serviceRequest.updatedAt = new Date();
 
     await serviceRequest.save();
     await onServiceRequestStatusChange(serviceRequest, 'cancelled');
+
+    const srId = String(serviceRequest._id);
+    const serviceType = serviceRequest.serviceType || 'service';
+    const customerName = serviceRequest.customerName || 'Customer';
+    let cancelledJobCardId = null;
+
+    try {
+      const activeJobStatuses = ['pending', 'accepted', 'in-progress', 'unassigned'];
+      const linkedJobCards = await JobCard.find({
+        serviceRequestId: srId,
+        status: {$in: activeJobStatuses},
+      });
+
+      for (const jobCard of linkedJobCards) {
+        jobCard.status = 'cancelled';
+        jobCard.cancellationReason = trimmedReason;
+        jobCard.updatedAt = new Date();
+        await jobCard.save();
+        if (
+          serviceRequest.providerId &&
+          String(jobCard.providerId) === String(serviceRequest.providerId)
+        ) {
+          cancelledJobCardId = String(jobCard._id);
+        } else if (!cancelledJobCardId) {
+          cancelledJobCardId = String(jobCard._id);
+        }
+      }
+    } catch (jobErr) {
+      console.warn(
+        '⚠️ [cancelServiceRequest] Job card sync failed:',
+        jobErr.message,
+      );
+    }
+
+    const providerId = serviceRequest.providerId
+      ? String(serviceRequest.providerId)
+      : null;
+    if (providerId) {
+      const bookingData = sanitizeBookingNotifyPayload(
+        {
+          type: 'job-cancelled',
+          status: 'cancelled',
+          cancelledBy: 'customer',
+          serviceRequestId: srId,
+          jobCardId: cancelledJobCardId || undefined,
+          customerName,
+          serviceType,
+          cancellationReason: trimmedReason,
+          cancelledAt: serviceRequest.cancelledAt,
+        },
+        {includeCustomerPhone: false},
+      );
+
+      try {
+        await notifyBooking({providerId, bookingData});
+      } catch (notifyErr) {
+        console.warn(
+          `⚠️ [cancelServiceRequest] Realtime notify provider ${providerId}:`,
+          notifyErr.message,
+        );
+      }
+
+      try {
+        await notifyProvider(providerId, {
+          title: 'Customer cancelled the job',
+          body: `${customerName} cancelled their ${serviceType} request`,
+          data: {
+            type: 'job-cancelled',
+            status: 'cancelled',
+            cancelledBy: 'customer',
+            serviceRequestId: srId,
+            jobCardId: cancelledJobCardId || '',
+            serviceType,
+          },
+        });
+      } catch (fcmErr) {
+        console.warn(
+          `⚠️ [cancelServiceRequest] FCM provider ${providerId}:`,
+          fcmErr.message,
+        );
+      }
+    }
+
+    if (wasOpenRequest && serviceRequest.customerAddress) {
+      try {
+        const areaResult = await findProvidersInArea(
+          serviceType,
+          serviceRequest.customerAddress,
+          {excludeUserId: userId},
+        );
+        await notifyAreaProviders({
+          providers: areaResult.providers || [],
+          bookingData: sanitizeBookingNotifyPayload(
+            {
+              type: 'request-cancelled',
+              status: 'cancelled',
+              cancelledBy: 'customer',
+              serviceRequestId: srId,
+              customerName,
+              serviceType,
+              cancellationReason: trimmedReason,
+              cancelledAt: serviceRequest.cancelledAt,
+            },
+            {includeCustomerPhone: false},
+          ),
+        });
+      } catch (areaErr) {
+        console.warn(
+          '⚠️ [cancelServiceRequest] Area cancel notify:',
+          areaErr.message,
+        );
+      }
+    }
 
     res.json({
       success: true,

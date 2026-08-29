@@ -1,6 +1,6 @@
 /**
  * JWT (HS256 / HMAC) authentication — replaces Firebase ID tokens for API auth.
- * Optional Firebase Admin is only used elsewhere (e.g. RTDB) — see config/firebaseAdmin.js
+ * Optional Firebase Admin is only used for Phone Auth verify + FCM — see config/firebaseAdmin.js
  */
 
 const {connectDB} = require('../config/database');

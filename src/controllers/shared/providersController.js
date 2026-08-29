@@ -312,7 +312,6 @@ exports.getProviders = async (req, res, next) => {
 
 /**
  * Get provider by ID (public)
- * Also fetches real-time location from Firebase Realtime Database
  */
 exports.getProviderById = async (req, res, next) => {
   try {
@@ -338,36 +337,7 @@ exports.getProviderById = async (req, res, next) => {
       });
     }
 
-    // Get provider location from Firebase Realtime Database
-    let realtimeLocation = null;
-    try {
-      const admin = require('firebase-admin');
-      if (admin.apps.length > 0) {
-        const db = admin.database();
-        const locationRef = db.ref(`providers/${providerId}/location`);
-        const snapshot = await locationRef.once('value');
-        if (snapshot.exists()) {
-          realtimeLocation = snapshot.val();
-        }
-      }
-    } catch (rtdbError) {
-      console.warn('Could not fetch provider location from Realtime Database:', rtdbError.message);
-      // Continue without location - not critical
-    }
-
-    // Merge real-time location with provider data
     const providerData = provider.toObject ? provider.toObject() : provider;
-    if (realtimeLocation) {
-      providerData.currentLocation = {
-        latitude: realtimeLocation.latitude,
-        longitude: realtimeLocation.longitude,
-        address: realtimeLocation.address,
-        city: realtimeLocation.city,
-        state: realtimeLocation.state,
-        pincode: realtimeLocation.pincode,
-        updatedAt: realtimeLocation.updatedAt || Date.now(),
-      };
-    }
 
     // Admin: PIN presence only — reveal via GET /api/users/:id/pin
     if (req.user?.role === 'admin') {
@@ -1291,24 +1261,6 @@ exports.updateProviderServiceProfile = async (req, res, next) => {
 exports.updateMyStatus = async (req, res, next) => {
   try {
     const {isOnline, isAvailable, currentLocation} = req.body;
-    
-    // Ensure database is connected before using getCollection
-    const {getCollection, connectDB} = require('../../config/database');
-    
-    // Ensure connection is established
-    try {
-      await connectDB();
-    } catch (dbError) {
-      console.warn('⚠️ Database connection check failed, continuing with Mongoose models only:', dbError.message);
-    }
-    
-    let providerStatusCollection = null;
-    try {
-      providerStatusCollection = await getCollection('providerStatus');
-    } catch (collectionError) {
-      console.warn('⚠️ Could not get providerStatus collection, skipping real-time status update:', collectionError.message);
-      // Continue without providerStatus collection - not critical
-    }
 
     const updateData = {
       updatedAt: new Date(),
@@ -1354,20 +1306,6 @@ exports.updateMyStatus = async (req, res, next) => {
         });
       }
       throw mongoError;
-    }
-
-    // Update providerStatus collection (Realtime DB equivalent) - only if collection is available
-    if (providerStatusCollection) {
-      try {
-        await providerStatusCollection.updateOne(
-          {_id: req.user.uid},
-          {$set: {...updateData, _id: req.user.uid}},
-          {upsert: true},
-        );
-      } catch (statusUpdateError) {
-        console.warn('⚠️ Failed to update providerStatus collection (non-critical):', statusUpdateError.message);
-        // Don't fail the request if providerStatus update fails
-      }
     }
 
     res.json({
