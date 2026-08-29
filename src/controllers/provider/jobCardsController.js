@@ -12,6 +12,9 @@ const {getContactSettings} = require('../../services/contactPolicyService');
 const {
   backfillProviderJobCards,
 } = require('../../utils/ensureJobCardFromServiceRequest');
+const {
+  attachCustomerProfileImages,
+} = require('../../utils/attachCustomerProfileImages');
 
 /** Providers must not see the customer verification PIN; phones follow contact rules. */
 function sanitizeJobCardForProvider(job, viewer, settings) {
@@ -54,12 +57,13 @@ exports.getMyJobCards = async (req, res, next) => {
       .lean();
 
     const settings = await getContactSettings();
+    const enriched = await attachCustomerProfileImages(jobCards);
     res.json({
       success: true,
-      data: jobCards.map((job) =>
+      data: enriched.map((job) =>
         sanitizeJobCardForProvider(job, req.user, settings),
       ),
-      count: jobCards.length,
+      count: enriched.length,
     });
   } catch (error) {
     next(error);
@@ -84,12 +88,17 @@ exports.getMyJobCardById = async (req, res, next) => {
       });
     }
 
+    const settings = await getContactSettings();
+    const [enriched] = await attachCustomerProfileImages([
+      jobCard.toObject ? jobCard.toObject() : jobCard,
+    ]);
+
     res.json({
       success: true,
       data: sanitizeJobCardForProvider(
-        jobCard,
+        enriched,
         req.user,
-        await getContactSettings(),
+        settings,
       ),
     });
   } catch (error) {
