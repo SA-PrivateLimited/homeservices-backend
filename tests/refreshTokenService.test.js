@@ -5,7 +5,6 @@ const crypto = require('crypto');
 require('dotenv').config();
 process.env.REFRESH_TOKEN_EXPIRES_IN = '30d';
 
-const {connectDB, closeDB} = require('../src/config/database');
 const RefreshSession = require('../src/models/RefreshSession');
 const {
   createRefreshSession,
@@ -15,16 +14,28 @@ const {
   hashToken,
 } = require('../src/utils/refreshTokenService');
 
+const mongoConfigured = Boolean(String(process.env.MONGODB_URI || '').trim());
+const dbOpts = mongoConfigured ? {} : {skip: 'MONGODB_URI not configured (CI)'};
+
+test('hashToken is deterministic', () => {
+  assert.equal(hashToken('abc'), hashToken('abc'));
+  assert.notEqual(hashToken('abc'), hashToken('def'));
+});
+
 const createdUserIds = [];
 
 test.before(async () => {
+  if (!mongoConfigured) return;
+  const {connectDB} = require('../src/config/database');
   await connectDB();
 });
 
 test.after(async () => {
+  if (!mongoConfigured) return;
   if (createdUserIds.length) {
     await RefreshSession.deleteMany({userId: {$in: createdUserIds}});
   }
+  const {closeDB} = require('../src/config/database');
   await closeDB();
 });
 
@@ -35,7 +46,7 @@ function mockReq() {
   };
 }
 
-test('create → rotate invalidates old token', async () => {
+test('create → rotate invalidates old token', dbOpts, async () => {
   const userId = crypto.randomUUID();
   createdUserIds.push(userId);
   const {rawToken} = await createRefreshSession(userId, 'customer', mockReq());
@@ -50,7 +61,7 @@ test('create → rotate invalidates old token', async () => {
   );
 });
 
-test('revokeRefreshSession blocks rotation', async () => {
+test('revokeRefreshSession blocks rotation', dbOpts, async () => {
   const userId = crypto.randomUUID();
   createdUserIds.push(userId);
   const {rawToken} = await createRefreshSession(userId, 'provider', mockReq());
@@ -63,7 +74,7 @@ test('revokeRefreshSession blocks rotation', async () => {
   );
 });
 
-test('revokeAllForUser revokes active sessions', async () => {
+test('revokeAllForUser revokes active sessions', dbOpts, async () => {
   const userId = crypto.randomUUID();
   createdUserIds.push(userId);
   const a = await createRefreshSession(userId, 'customer', mockReq());
@@ -79,7 +90,7 @@ test('revokeAllForUser revokes active sessions', async () => {
   );
 });
 
-test('expired token is rejected', async () => {
+test('expired token is rejected', dbOpts, async () => {
   const userId = crypto.randomUUID();
   createdUserIds.push(userId);
   const rawToken = crypto.randomBytes(32).toString('base64url');
