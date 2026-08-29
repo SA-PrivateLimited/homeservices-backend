@@ -14,7 +14,6 @@ const stateSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      index: true,
     },
     code: {
       type: String,

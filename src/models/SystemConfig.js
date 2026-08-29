@@ -78,6 +78,15 @@ const systemConfigSchema = new mongoose.Schema(
       enum: ['AUTO', 'ADMIN'],
       default: 'AUTO',
     },
+    /**
+     * When true, open (broadcast) customer requests also reach approved
+     * partners who are offline; they may poll nearby-pending and accept
+     * without toggling online. Toggle via admin settings.
+     */
+    allowOfflineProviderOpenRequests: {
+      type: Boolean,
+      default: false,
+    },
     updatedAt: {
       type: Date,
       default: Date.now,

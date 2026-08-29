@@ -122,6 +122,10 @@ app.use(
   '/api/admin/settings/partner-verification',
   require('./routes/admin/partnerVerification'),
 );
+app.use(
+  '/api/admin/settings/provider-open-requests',
+  require('./routes/admin/providerOpenRequests'),
+);
 app.use('/api/admins', require('./routes/admin/admins'));
 app.use(
   '/api/admin/area-provider-demands',

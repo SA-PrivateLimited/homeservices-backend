@@ -25,6 +25,9 @@ const {
 } = require('../../utils/contactAccess');
 const {getContactSettings} = require('../../services/contactPolicyService');
 const {
+  isOfflineOpenRequestsEnabled,
+} = require('../../services/providerOpenRequestPolicyService');
+const {
   ensureJobCardFromServiceRequest,
 } = require('../../utils/ensureJobCardFromServiceRequest');
 
@@ -89,7 +92,8 @@ exports.getNearbyPendingServiceRequests = async (req, res, next) => {
     if (!provider) {
       return res.json({success: true, data: [], count: 0});
     }
-    if (!provider.isOnline) {
+    const offlineOpenOk = await isOfflineOpenRequestsEnabled();
+    if (!provider.isOnline && !offlineOpenOk) {
       return res.json({success: true, data: [], count: 0});
     }
 
@@ -242,7 +246,8 @@ exports.acceptServiceRequest = async (req, res, next) => {
         message: 'Only approved providers can accept service requests',
       });
     }
-    if (!providerDoc.isOnline) {
+    const offlineOpenOk = await isOfflineOpenRequestsEnabled();
+    if (!providerDoc.isOnline && !offlineOpenOk) {
       return res.status(400).json({
         success: false,
         error: 'Provider Offline',

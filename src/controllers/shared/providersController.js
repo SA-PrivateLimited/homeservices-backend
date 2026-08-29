@@ -46,12 +46,18 @@ const {
   getPartnerVerificationMode,
   isPartnerAutoVerifyEnabled,
 } = require('../../services/partnerVerificationPolicyService');
+const {
+  isOfflineOpenRequestsEnabled,
+} = require('../../services/providerOpenRequestPolicyService');
 
 async function providerPayloadWithPolicy(provider) {
   if (!provider) return provider;
-  const mode = await getPartnerVerificationMode();
+  const [mode, allowOfflineProviderOpenRequests] = await Promise.all([
+    getPartnerVerificationMode(),
+    isOfflineOpenRequestsEnabled(),
+  ]);
   const raw = provider.toObject ? provider.toObject() : {...provider};
-  return {...raw, partnerVerificationMode: mode};
+  return {...raw, partnerVerificationMode: mode, allowOfflineProviderOpenRequests};
 }
 
 async function maybeAutoVerifyPartner(provider, userId) {

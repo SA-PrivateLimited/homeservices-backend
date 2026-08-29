@@ -31,19 +31,26 @@ function serviceTypeClause(serviceType) {
   };
 }
 
-async function findOnlineMatching(serviceType, geoClause, excludeUserId) {
+async function findMatchingProviders(
+  serviceType,
+  geoClause,
+  excludeUserId,
+  {requireOnline = true} = {},
+) {
   const selfExclude =
     excludeUserId && String(excludeUserId).trim()
       ? {_id: {$ne: String(excludeUserId).trim()}}
       : {};
   const query = {
     approvalStatus: 'approved',
-    isOnline: true,
     isAvailable: {$ne: false},
     isActive: {$ne: false},
     ...selfExclude,
     $and: [serviceTypeClause(serviceType), geoClause],
   };
+  if (requireOnline) {
+    query.isOnline = true;
+  }
   return Provider.find(query)
     .select(
       '_id name fcmToken location address specialization serviceType serviceCategories inactiveServiceCategories serviceQualifications',
@@ -57,7 +64,12 @@ async function findOnlineMatching(serviceType, geoClause, excludeUserId) {
     );
 }
 
-async function findByDistrict(serviceType, {districtId, district}, excludeUserId) {
+async function findByDistrict(
+  serviceType,
+  {districtId, district},
+  excludeUserId,
+  matchOptions = {},
+) {
   const districtParts = [];
   if (districtId) {
     const id = String(districtId).trim();
@@ -73,10 +85,20 @@ async function findByDistrict(serviceType, {districtId, district}, excludeUserId
     districtParts.push({'address.city': re});
   }
   if (!districtParts.length) return [];
-  return findOnlineMatching(serviceType, {$or: districtParts}, excludeUserId);
+  return findMatchingProviders(
+    serviceType,
+    {$or: districtParts},
+    excludeUserId,
+    matchOptions,
+  );
 }
 
-async function findByPincode(serviceType, pincode, excludeUserId) {
+async function findByPincode(
+  serviceType,
+  pincode,
+  excludeUserId,
+  matchOptions = {},
+) {
   if (!pincode) return [];
   const pin = String(pincode).trim();
   const usersWithPin = await User.find({
@@ -87,7 +109,7 @@ async function findByPincode(serviceType, pincode, excludeUserId) {
     .lean();
   const userIds = usersWithPin.map(u => u._id);
 
-  return findOnlineMatching(
+  return findMatchingProviders(
     serviceType,
     {
       $or: [
@@ -97,6 +119,7 @@ async function findByPincode(serviceType, pincode, excludeUserId) {
       ],
     },
     excludeUserId,
+    matchOptions,
   );
 }
 
@@ -109,6 +132,14 @@ async function findProvidersInArea(
   options = {},
 ) {
   const excludeUserId = options.excludeUserId || options.customerUserId || null;
+  const {
+    isOfflineOpenRequestsEnabled,
+  } = require('../services/providerOpenRequestPolicyService');
+  const includeOffline =
+    options.includeOffline === true ||
+    (options.includeOffline !== false &&
+      (await isOfflineOpenRequestsEnabled()));
+  const matchOptions = {requireOnline: !includeOffline};
   const districtId = customerAddress.districtId || customerAddress.district_id;
   const district =
     customerAddress.district ||
@@ -122,6 +153,7 @@ async function findProvidersInArea(
       serviceType,
       {districtId, district},
       excludeUserId,
+      matchOptions,
     );
     if (byDistrict.length > 0) {
       return {providers: byDistrict, matchBy: 'district'};
@@ -129,7 +161,12 @@ async function findProvidersInArea(
   }
 
   if (pincode) {
-    const byPin = await findByPincode(serviceType, pincode, excludeUserId);
+    const byPin = await findByPincode(
+      serviceType,
+      pincode,
+      excludeUserId,
+      matchOptions,
+    );
     if (byPin.length > 0) {
       return {providers: byPin, matchBy: 'pincode'};
     }
