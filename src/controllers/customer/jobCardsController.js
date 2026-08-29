@@ -134,20 +134,6 @@ exports.cancelJobCard = async (req, res, next) => {
       {new: true},
     );
 
-    // Update Realtime DB equivalent
-    try {
-      const {getCollection, connectDB} = require('../../config/database');
-      await connectDB(); // Ensure database is connected
-      const jobCardsRTDB = await getCollection('jobCards_rtdb');
-      await jobCardsRTDB.updateOne(
-        {_id: jobCardId},
-        {$set: {status: 'cancelled', updatedAt: new Date()}},
-        {upsert: true},
-      );
-    } catch (rtdbError) {
-      console.warn('⚠️  Could not update Realtime DB equivalent:', rtdbError.message);
-    }
-
     res.json({
       success: true,
       data: redactJobCardForViewer(

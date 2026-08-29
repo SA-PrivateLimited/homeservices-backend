@@ -7,8 +7,11 @@ const ServiceRequest = require('../../models/ServiceRequest');
 const Provider = require('../../models/Provider');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
 const {t} = require('../../utils/translations');
-const {notifyBooking} = require('../../realtime/socket');
-const {findNearbyOpenPendingForProvider} = require('../../utils/findProvidersInArea');
+const {notifyBooking, notifyAreaProviders} = require('../../realtime/socket');
+const {
+  findNearbyOpenPendingForProvider,
+  findProvidersInArea,
+} = require('../../utils/findProvidersInArea');
 const {
   findServiceRequestFlexible,
   saveServiceRequestFlexible,
@@ -355,6 +358,39 @@ exports.acceptServiceRequest = async (req, res, next) => {
       });
     } catch (_) {
       // non-fatal
+    }
+
+    try {
+      const customerAddress = serviceRequest.customerAddress;
+      if (customerAddress) {
+        const areaResult = await findProvidersInArea(
+          serviceType,
+          customerAddress,
+          {excludeUserId: serviceRequest.customerId},
+        );
+        await notifyAreaProviders({
+          providers: areaResult.providers || [],
+          excludeProviderId: providerId,
+          bookingData: sanitizeBookingNotifyPayload(
+            {
+              type: 'request-taken',
+              status: 'accepted',
+              acceptedByOther: true,
+              serviceRequestId: String(serviceRequest._id),
+              providerId,
+              providerName,
+              serviceType,
+              acceptedAt: acceptedAtIso,
+            },
+            {includeCustomerPhone: false},
+          ),
+        });
+      }
+    } catch (areaErr) {
+      console.warn(
+        '⚠️ [acceptServiceRequest] Area taken notify:',
+        areaErr.message,
+      );
     }
 
     // Push via Mongo-stored FCM tokens (server-side). No client Firestore dependency.

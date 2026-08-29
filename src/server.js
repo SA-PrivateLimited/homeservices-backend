@@ -4,7 +4,7 @@
  */
 
 require('dotenv').config();
-// Optional Firebase Admin (RTDB / legacy); JWT auth does not use Firebase
+// Optional Firebase Admin (Phone Auth verify + FCM); JWT session auth is separate
 try {
   require('./config/firebaseAdmin');
 } catch (e) {

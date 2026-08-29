@@ -116,20 +116,6 @@ exports.createJobCard = async (req, res, next) => {
     const jobCard = new JobCard(jobCardData);
     await jobCard.save();
 
-    // Update Realtime DB equivalent if exists
-    try {
-      const {getCollection, connectDB} = require('../config/database');
-      await connectDB(); // Ensure database is connected
-      const jobCardsRTDB = await getCollection('jobCards_rtdb');
-      await jobCardsRTDB.updateOne(
-        {_id: jobCard._id},
-        {$set: {status: jobCard.status, updatedAt: jobCard.updatedAt}},
-        {upsert: true},
-      );
-    } catch (rtdbError) {
-      console.warn('⚠️  Could not update Realtime DB equivalent:', rtdbError.message);
-    }
-
     res.status(201).json({
       success: true,
       data: jobCard,
@@ -216,20 +202,6 @@ exports.updateJobCard = async (req, res, next) => {
       {$set: update},
       {new: true},
     );
-
-    // Update Realtime DB equivalent
-    try {
-      const {getCollection, connectDB} = require('../config/database');
-      await connectDB(); // Ensure database is connected
-      const jobCardsRTDB = await getCollection('jobCards_rtdb');
-      await jobCardsRTDB.updateOne(
-        {_id: jobCardId},
-        {$set: {status: update.status || jobCard.status, updatedAt: update.updatedAt}},
-        {upsert: true},
-      );
-    } catch (rtdbError) {
-      console.warn('⚠️  Could not update Realtime DB equivalent:', rtdbError.message);
-    }
 
     res.json({
       success: true,

@@ -5,6 +5,7 @@
 
 const JobCard = require('../../models/JobCard');
 const ServiceRequest = require('../../models/ServiceRequest');
+const {notifyBooking} = require('../../realtime/socket');
 const {onServiceRequestStatusChange} = require('../../services/activeServiceRequestService');
 const {redactJobCardForViewer} = require('../../utils/contactAccess');
 const {getContactSettings} = require('../../services/contactPolicyService');
@@ -121,20 +122,6 @@ exports.createJobCard = async (req, res, next) => {
 
     const jobCard = new JobCard(jobCardData);
     await jobCard.save();
-
-    // Update Realtime DB equivalent
-    try {
-      const {getCollection, connectDB} = require('../../config/database');
-      await connectDB(); // Ensure database is connected
-      const jobCardsRTDB = await getCollection('jobCards_rtdb');
-      await jobCardsRTDB.updateOne(
-        {_id: jobCard._id},
-        {$set: {status: jobCard.status, updatedAt: jobCard.updatedAt}},
-        {upsert: true},
-      );
-    } catch (rtdbError) {
-      console.warn('⚠️  Could not update Realtime DB equivalent:', rtdbError.message);
-    }
 
     res.status(201).json({
       success: true,
@@ -278,25 +265,6 @@ exports.updateJobCardStatus = async (req, res, next) => {
       {new: true},
     );
 
-    // Mirror in Mongo RTDB collection (not Firebase)
-    try {
-      const {getCollection, connectDB} = require('../../config/database');
-      await connectDB();
-      const jobCardsRTDB = await getCollection('jobCards_rtdb');
-      await jobCardsRTDB.updateOne(
-        {_id: jobCardId},
-        {
-          $set: {
-            status: update.status || jobCard.status,
-            updatedAt: update.updatedAt,
-          },
-        },
-        {upsert: true},
-      );
-    } catch (rtdbError) {
-      console.warn('⚠️  Could not update jobCards_rtdb:', rtdbError.message);
-    }
-
     // Notify customer via Mongo FCM token when service starts
     if (status === 'in-progress' && updatedJobCard?.customerId) {
       try {
@@ -319,8 +287,13 @@ exports.updateJobCardStatus = async (req, res, next) => {
       }
     }
 
-    // Mirror terminal/active status onto linked service request + free active lock when done
-    if (status === 'completed' || status === 'cancelled' || status === 'canceled') {
+    // Mirror job status onto linked service request for customer-facing state
+    if (
+      status === 'in-progress' ||
+      status === 'completed' ||
+      status === 'cancelled' ||
+      status === 'canceled'
+    ) {
       try {
         const srKey = String(
           updatedJobCard.serviceRequestId ||
@@ -334,18 +307,39 @@ exports.updateJobCardStatus = async (req, res, next) => {
           });
           if (sr && String(sr.customerId) === String(updatedJobCard.customerId)) {
             const next =
-              status === 'completed' ? 'completed' : 'cancelled';
+              status === 'in-progress'
+                ? 'in-progress'
+                : status === 'completed'
+                  ? 'completed'
+                  : 'cancelled';
             sr.status = next;
             sr.updatedAt = new Date();
-            if (next === 'completed') {
-              // status only — ServiceRequest schema has no completedAt field
-            }
             if (next === 'cancelled') {
               sr.cancelledAt = new Date();
               if (cancellationReason) sr.cancellationReason = cancellationReason;
             }
             await sr.save();
             await onServiceRequestStatusChange(sr, next);
+
+            if (status === 'in-progress') {
+              try {
+                await notifyBooking({
+                  customerId: sr.customerId,
+                  bookingData: {
+                    type: 'service-request-status',
+                    serviceRequestId: String(sr._id),
+                    status: 'in-progress',
+                    providerName: updatedJobCard.providerName,
+                    serviceType: updatedJobCard.serviceType,
+                  },
+                });
+              } catch (socketErr) {
+                console.warn(
+                  '⚠️  Could not emit in-progress service-request-status:',
+                  socketErr.message,
+                );
+              }
+            }
           }
         }
       } catch (mirrorErr) {

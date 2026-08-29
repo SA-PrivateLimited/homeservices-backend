@@ -225,6 +225,45 @@ async function notifyBooking(payload) {
   }
 }
 
+/**
+ * Emit the same booking payload to many provider rooms (area broadcast).
+ */
+async function notifyAreaProviders({
+  providers,
+  bookingData,
+  excludeProviderId,
+}) {
+  const list = Array.isArray(providers) ? providers : [];
+  if (!list.length || !bookingData) {
+    return {notified: 0, skipped: 0};
+  }
+
+  let notified = 0;
+  let skipped = 0;
+  const exclude = excludeProviderId ? String(excludeProviderId) : '';
+
+  await Promise.all(
+    list.map(async (provider) => {
+      const providerId = String(provider?._id || provider?.id || provider || '');
+      if (!providerId || (exclude && providerId === exclude)) {
+        skipped += 1;
+        return;
+      }
+      try {
+        await notifyBooking({providerId, bookingData});
+        notified += 1;
+      } catch (err) {
+        console.warn(
+          `⚠️ [realtime] Area notify provider ${providerId}:`,
+          err.message,
+        );
+      }
+    }),
+  );
+
+  return {notified, skipped};
+}
+
 async function notifyServiceCompleted(payload) {
   const localOk = emitServiceCompleted(payload || {});
   if (localOk) return {ok: true, via: 'local'};
@@ -309,6 +348,7 @@ module.exports = {
   emitServiceCompleted,
   emitNewServiceRequest,
   notifyBooking,
+  notifyAreaProviders,
   notifyServiceCompleted,
   notifyAdminsRealtime,
   mountEmitHttpRoutes,
