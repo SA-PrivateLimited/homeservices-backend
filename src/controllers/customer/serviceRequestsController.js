@@ -337,7 +337,7 @@ exports.createServiceRequest = async (req, res, next) => {
         matchBy = areaResult.matchBy;
         if (providersToNotify.length === 0) {
           console.log(
-            `ℹ️ [Notify] No online providers in area for ${serviceType} ` +
+            `ℹ️ [Notify] No matching providers in area for ${serviceType} ` +
               `(district/pincode). Skipping nationwide blast.`,
           );
           // Mark for admin sourcing even if client forgot the flag
