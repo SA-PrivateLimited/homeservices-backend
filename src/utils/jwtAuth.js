@@ -7,7 +7,7 @@ const jwt = require('jsonwebtoken');
 
 const SECRET = process.env.JWT_SECRET || process.env.HMAC_JWT_SECRET;
 /** Access token lifetime (override with JWT_EXPIRES_IN). */
-const EXPIRES_IN = process.env.JWT_EXPIRES_IN || '30d';
+const EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 function assertSecret() {
   if (!SECRET || SECRET.length < 32) {

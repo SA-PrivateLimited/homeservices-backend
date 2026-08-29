@@ -10,6 +10,14 @@ const User = require('../models/User');
 const {connectDB} = require('../config/database');
 const {signAccessToken, signMfaToken, verifyMfaToken} = require('../utils/jwtAuth');
 const {encryptToken} = require('../utils/tokenEncryption');
+const {createRefreshSession, rotateRefreshSession, revokeRefreshSession, revokeAllForUser} = require('../utils/refreshTokenService');
+const {
+  setRefreshCookie,
+  clearRefreshCookie,
+  readRefreshCookie,
+  resolveAppContextFromRequest,
+  normalizeAppContext,
+} = require('../utils/authCookies');
 const twilioVerify = require('../services/twilioVerify');
 const firebaseService = require('../services/firebaseService');
 const {
@@ -126,7 +134,17 @@ function normalizeEmail(email) {
   return (email || '').trim().toLowerCase();
 }
 
-async function issueSessionForUser(user, {includePin, activeRole} = {}) {
+function roleToAppContext(role) {
+  const r = String(role || '').toLowerCase();
+  if (r === 'provider') return 'provider';
+  if (r === 'admin') return 'admin';
+  return 'customer';
+}
+
+async function issueSessionForUser(
+  user,
+  {includePin, activeRole, res, req, skipRefreshSession} = {},
+) {
   const role = activeRole || user.role || 'customer';
   const permissions =
     role === 'admin' ? resolveAdminPermissions(user) : undefined;
@@ -232,6 +250,13 @@ async function issueSessionForUser(user, {includePin, activeRole} = {}) {
   if (firebaseCustomToken) {
     result.firebaseCustomToken = firebaseCustomToken;
   }
+
+  if (res && req && !skipRefreshSession) {
+    const appContext = roleToAppContext(role);
+    const {rawToken} = await createRefreshSession(user._id, appContext, req);
+    setRefreshCookie(res, appContext, rawToken);
+  }
+
   return result;
 }
 
@@ -459,42 +484,11 @@ exports.register = async (req, res, next) => {
       updatedAt: new Date(),
     });
 
-    const token = signAccessToken({
-      sub: user._id,
-      email: user.email,
-      phone: user.phoneNumber || user.phone,
-      name: user.name || user.displayName,
-      role: user.role,
-    });
-
-    let encryptedAuthToken;
-    try {
-      encryptedAuthToken = encryptToken(token);
-    } catch (encErr) {
-      await User.findByIdAndDelete(user._id);
-      return res.status(500).json({
-        success: false,
-        error: 'Server Configuration',
-        message:
-          encErr.message ||
-          'TOKEN_ENCRYPTION_KEY is missing or invalid. Set openssl rand -hex 32 in .env',
-      });
-    }
-
-    await User.findByIdAndUpdate(user._id, {
-      $set: {encryptedAuthToken, updatedAt: new Date()},
-    });
-
-    const safe = user.toObject();
-    delete safe.passwordHash;
+    const session = await issueSessionForUser(user, {res, req});
 
     res.status(201).json({
       success: true,
-      data: {
-        user: safe,
-        token,
-        expiresIn: require('../utils/jwtAuth').expiresIn,
-      },
+      data: session,
     });
   } catch (err) {
     next(err);
@@ -647,7 +641,7 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const session = await issueSessionForUser(user);
+    const session = await issueSessionForUser(user, {res, req});
     res.json({
       success: true,
       data: session,
@@ -719,7 +713,7 @@ exports.enableMfa = async (req, res, next) => {
     user.updatedAt = new Date();
     await user.save();
 
-    const session = await issueSessionForUser(user);
+    const session = await issueSessionForUser(user, {res, req});
     res.json({
       success: true,
       data: session,
@@ -793,7 +787,7 @@ exports.verifyMfa = async (req, res, next) => {
       });
     }
 
-    const session = await issueSessionForUser(user);
+    const session = await issueSessionForUser(user, {res, req});
     res.json({
       success: true,
       data: session,
@@ -956,7 +950,7 @@ exports.verifyPhoneOtp = async (req, res, next) => {
       await user.save();
     }
 
-    const session = await issueSessionForUser(user);
+    const session = await issueSessionForUser(user, {res, req});
     res.json({
       success: true,
       data: session,
@@ -1125,7 +1119,7 @@ exports.registerPin = async (req, res, next) => {
       await user.save();
     }
 
-    const session = await issueSessionForUser(user, {includePin: pin});
+    const session = await issueSessionForUser(user, {includePin: pin, res, req});
     res.status(201).json({
       success: true,
       data: session,
@@ -1239,6 +1233,8 @@ exports.loginPin = async (req, res, next) => {
 
     const session = await issueSessionForUser(user, {
       activeRole: requestedRole,
+      res,
+      req,
     });
     res.json({
       success: true,
@@ -1319,7 +1315,7 @@ exports.enableCustomerProfile = async (req, res, next) => {
     user.customerAccessActive = true;
     await ensureCustomerProfileAccess(user);
 
-    const session = await issueSessionForUser(user, {activeRole: 'customer'});
+    const session = await issueSessionForUser(user, {activeRole: 'customer', res, req});
     res.json({
       success: true,
       data: session,
@@ -1408,6 +1404,8 @@ exports.enablePartnerProfile = async (req, res, next) => {
       }
       const sessionExisting = await issueSessionForUser(user, {
         activeRole: 'provider',
+        res,
+        req,
       });
       return res.json({
         success: true,
@@ -1461,7 +1459,7 @@ exports.enablePartnerProfile = async (req, res, next) => {
       }
     }
 
-    const session = await issueSessionForUser(user, {activeRole: 'provider'});
+    const session = await issueSessionForUser(user, {activeRole: 'provider', res, req});
     res.json({
       success: true,
       data: session,
@@ -1672,6 +1670,8 @@ exports.registerWithOtp = async (req, res, next) => {
     const session = await issueSessionForUser(user, {
       includePin: pin,
       activeRole: requestedRole,
+      res,
+      req,
     });
     res.status(201).json({
       success: true,
@@ -1760,7 +1760,7 @@ exports.resetPin = async (req, res, next) => {
     user.updatedAt = new Date();
     await user.save();
 
-    const session = await issueSessionForUser(user, {includePin: pin});
+    const session = await issueSessionForUser(user, {includePin: pin, res, req});
     res.json({
       success: true,
       data: session,
@@ -1989,7 +1989,7 @@ exports.exchangeContextHandoff = async (req, res, next) => {
           message: accessErr.message,
         });
       }
-      const session = await issueSessionForUser(user, {activeRole: 'provider'});
+      const session = await issueSessionForUser(user, {activeRole: 'provider', res, req});
       cacheHandoffReplay(code, entry, session);
       return res.json({
         success: true,
@@ -2008,7 +2008,7 @@ exports.exchangeContextHandoff = async (req, res, next) => {
           message: accessErr.message,
         });
       }
-      const session = await issueSessionForUser(user, {activeRole: 'customer'});
+      const session = await issueSessionForUser(user, {activeRole: 'customer', res, req});
       cacheHandoffReplay(code, entry, session);
       return res.json({
         success: true,
@@ -2042,7 +2042,7 @@ exports.exchangeContextHandoff = async (req, res, next) => {
       });
     }
 
-    const session = await issueSessionForUser(user, {activeRole: 'customer'});
+    const session = await issueSessionForUser(user, {activeRole: 'customer', res, req});
     cacheHandoffReplay(code, entry, session);
     res.json({
       success: true,
@@ -2063,12 +2063,159 @@ exports.exchangeContextHandoff = async (req, res, next) => {
 
 /**
  * POST /api/auth/logout
- * Client clears storage; JWT is stateless so this acknowledges logout for future denylist hooks.
+ * Revokes refresh session cookie and clears client storage.
  */
 exports.logout = async (req, res) => {
-  res.json({
-    success: true,
-    data: {loggedOut: true},
-    message: 'Logged out',
-  });
+  try {
+    let appContext = resolveAppContextFromRequest(req);
+    if (!appContext && req.user?.role) {
+      appContext = roleToAppContext(req.user.role);
+    }
+    if (appContext) {
+      const raw = readRefreshCookie(req, appContext);
+      if (raw) await revokeRefreshSession(raw);
+      clearRefreshCookie(res, appContext);
+    } else {
+      for (const ctx of ['customer', 'provider', 'admin']) {
+        const raw = readRefreshCookie(req, ctx);
+        if (raw) await revokeRefreshSession(raw);
+        clearRefreshCookie(res, ctx);
+      }
+    }
+    res.json({
+      success: true,
+      data: {loggedOut: true},
+      message: 'Logged out',
+    });
+  } catch (err) {
+    res.json({
+      success: true,
+      data: {loggedOut: true},
+      message: 'Logged out',
+    });
+  }
+};
+
+/**
+ * POST /api/auth/logout-all
+ * Revoke all refresh sessions for the authenticated user.
+ */
+exports.logoutAll = async (req, res, next) => {
+  try {
+    const userId = req.user?.uid || req.user?.sub || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Authentication required',
+      });
+    }
+    const appContext = resolveAppContextFromRequest(req);
+    await revokeAllForUser(userId, appContext || undefined);
+    if (appContext) {
+      clearRefreshCookie(res, appContext);
+    } else {
+      for (const ctx of ['customer', 'provider', 'admin']) {
+        clearRefreshCookie(res, ctx);
+      }
+    }
+    res.json({
+      success: true,
+      data: {loggedOut: true, allDevices: true},
+      message: 'Signed out from all devices',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /api/auth/refresh
+ * Rotate refresh cookie and issue a new access JWT.
+ */
+exports.refreshToken = async (req, res, next) => {
+  try {
+    const appContext = resolveAppContextFromRequest(req);
+    if (!appContext) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'appContext is required (customer, provider, or admin)',
+      });
+    }
+
+    const raw = readRefreshCookie(req, appContext);
+    if (!raw) {
+      clearRefreshCookie(res, appContext);
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Refresh token missing',
+      });
+    }
+
+    let rotated;
+    try {
+      rotated = await rotateRefreshSession(raw, req);
+    } catch (rotateErr) {
+      clearRefreshCookie(res, appContext);
+      return res.status(rotateErr.statusCode || 401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: rotateErr.message || 'Invalid refresh token',
+      });
+    }
+
+    setRefreshCookie(res, appContext, rotated.rawToken);
+
+    await connectDB();
+    const user = await User.findById(rotated.userId);
+    if (!user) {
+      clearRefreshCookie(res, appContext);
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'User not found',
+      });
+    }
+
+    const activeRole =
+      appContext === 'provider'
+        ? 'provider'
+        : appContext === 'admin'
+          ? 'admin'
+          : 'customer';
+
+    try {
+      await assertRoleAccess(user, activeRole);
+    } catch (accessErr) {
+      await revokeAllForUser(user._id, appContext);
+      clearRefreshCookie(res, appContext);
+      return res.status(accessErr.statusCode || 403).json({
+        success: false,
+        error: 'Forbidden',
+        message: accessErr.message,
+      });
+    }
+
+    const session = await issueSessionForUser(user, {
+      activeRole,
+      res,
+      req,
+      skipRefreshSession: true,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        token: session.token,
+        expiresIn: session.expiresIn,
+        user: session.user,
+        admin: session.admin,
+      },
+      message: 'Session refreshed',
+    });
+  } catch (err) {
+    next(err);
+  }
 };

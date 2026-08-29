@@ -10,6 +10,8 @@ const {
   register,
   login,
   logout,
+  logoutAll,
+  refreshToken,
   enableMfa,
   verifyMfa,
   sendPhoneOtp,
@@ -64,6 +66,8 @@ router.get('/health', (req, res) => {
 router.post('/register', register);
 router.post('/login', login);
 router.post('/logout', optionalAuth, logRequest, logout);
+router.post('/logout-all', verifyAuth, logRequest, logoutAll);
+router.post('/refresh', logRequest, refreshToken);
 router.post('/mfa/enable', enableMfa);
 router.post('/mfa/verify', verifyMfa);
 
