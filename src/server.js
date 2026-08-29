@@ -13,8 +13,10 @@ try {
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const {getExpressCorsOptions} = require('./config/cors');
 const {connectDB} = require('./config/database');
 const errorHandler = require('./middleware/errorHandler');
 const {
@@ -60,10 +62,8 @@ app.use(
     contentSecurityPolicy: false,
   }),
 );
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-  credentials: true,
-}));
+app.use(cors(getExpressCorsOptions()));
+app.use(cookieParser());
 app.use(morgan('dev')); // Logging
 app.use(express.json()); // Parse JSON bodies
 app.use(express.urlencoded({extended: true})); // Parse URL-encoded bodies

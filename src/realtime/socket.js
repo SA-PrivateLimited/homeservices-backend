@@ -23,15 +23,14 @@
 
 const {Server} = require('socket.io');
 const {verifyAccessToken} = require('../utils/jwtAuth');
+const {parseCorsOrigins} = require('../config/cors');
 
 let io = null;
 
 const ADMIN_ROOM = 'admin';
 
 function getAllowedOrigins() {
-  const raw = process.env.CORS_ORIGIN || '*';
-  if (raw === '*') return '*';
-  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return parseCorsOrigins();
 }
 
 /**
