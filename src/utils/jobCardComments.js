@@ -4,6 +4,9 @@
 
 const JobCard = require('../models/JobCard');
 const User = require('../models/User');
+const {
+  isJobCardCommentsEnabled,
+} = require('../services/jobCardCommentsPolicyService');
 
 async function resolveAuthorName(req, fallback) {
   if (req.user?.name) return req.user.name;
@@ -20,6 +23,17 @@ async function resolveAuthorName(req, fallback) {
  * @param {'admin'|'provider'|'customer'} role
  */
 async function addJobCardComment({jobCardId, role, req, text}) {
+  if (role !== 'admin') {
+    const enabled = await isJobCardCommentsEnabled();
+    if (!enabled) {
+      const err = new Error(
+        'Job chat is currently disabled by the administrator',
+      );
+      err.status = 403;
+      throw err;
+    }
+  }
+
   const trimmed = String(text || '').trim();
   if (!trimmed) {
     const err = new Error('Comment text is required');

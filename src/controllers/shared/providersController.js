@@ -258,11 +258,17 @@ exports.getProviders = async (req, res, next) => {
     const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
     const off = Math.max(parseInt(offset, 10) || 0, 0);
 
-    const providers = await Provider.find(query)
+    const CUSTOMER_LIST_EXCLUDE =
+      '-documents -bankAccount -bankDetails -encryptedPin -pinHash -fcmToken -aadharNumber -aadhaarNumber -panNumber -gstNumber -rejectionReason';
+
+    let listQuery = Provider.find(query)
       .sort(ADMIN_LIST_SORT)
       .limit(lim)
-      .skip(off)
-      .lean();
+      .skip(off);
+    if (!isAdmin) {
+      listQuery = listQuery.select(CUSTOMER_LIST_EXCLUDE);
+    }
+    const providers = await listQuery.lean();
 
     const total = await Provider.countDocuments(query);
 

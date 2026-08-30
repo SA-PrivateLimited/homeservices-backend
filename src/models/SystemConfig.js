@@ -87,6 +87,14 @@ const systemConfigSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    /**
+     * When true, customers and partners can chat on accepted (and later)
+     * job cards. Toggle via Admin → Permissions → Job chat.
+     */
+    allowJobCardComments: {
+      type: Boolean,
+      default: true,
+    },
     updatedAt: {
       type: Date,
       default: Date.now,

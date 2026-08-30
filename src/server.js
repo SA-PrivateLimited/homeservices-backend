@@ -101,6 +101,7 @@ app.use('/api/feedback', feedbackRoutes);
 app.use('/api/branding', brandingRoutes);
 app.use('/api/launch', require('./routes/shared/launch'));
 app.use('/api/geography', require('./routes/shared/geography'));
+app.use('/api/settings', require('./routes/shared/productFeatures'));
 app.use('/api/assets', require('./routes/assets').router);
 
 // Customer app routes
@@ -125,6 +126,10 @@ app.use(
 app.use(
   '/api/admin/settings/provider-open-requests',
   require('./routes/admin/providerOpenRequests'),
+);
+app.use(
+  '/api/admin/settings/job-comments',
+  require('./routes/admin/jobComments'),
 );
 app.use('/api/admins', require('./routes/admin/admins'));
 app.use(
