@@ -14,6 +14,7 @@ const {
   refreshToken,
   enableMfa,
   verifyMfa,
+  resetMfa,
   sendPhoneOtp,
   verifyPhoneOtp,
   lookupPhone,
@@ -54,6 +55,7 @@ router.get('/health', (req, res) => {
       'POST /api/auth/logout',
       'POST /api/auth/mfa/enable',
       'POST /api/auth/mfa/verify',
+      'POST /api/auth/mfa/reset',
       'GET /api/auth/activate?token=',
       'POST /api/auth/activate/password',
       'POST /api/auth/activate/mfa',
@@ -70,6 +72,7 @@ router.post('/logout-all', verifyAuth, logRequest, logoutAll);
 router.post('/refresh', logRequest, refreshToken);
 router.post('/mfa/enable', enableMfa);
 router.post('/mfa/verify', verifyMfa);
+router.post('/mfa/reset', resetMfa);
 
 // Admin invitation activation (public — no JWT; token in body/query)
 router.get('/activate', logRequest, validateActivation);

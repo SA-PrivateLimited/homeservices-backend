@@ -38,6 +38,17 @@ function decryptTotpSecret(encrypted) {
   return decryptToken(encrypted);
 }
 
+/** False when TOKEN_ENCRYPTION_KEY changed or the stored blob is corrupt. */
+function totpSecretIsReadable(encrypted) {
+  if (!encrypted || typeof encrypted !== 'string') return false;
+  try {
+    decryptTotpSecret(encrypted);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function verifyTotpCode(secret, code) {
   const token = String(code || '').replace(/\s/g, '');
   if (!/^\d{6}$/.test(token)) return false;
@@ -56,5 +67,6 @@ module.exports = {
   buildQrDataUrl,
   encryptTotpSecret,
   decryptTotpSecret,
+  totpSecretIsReadable,
   verifyTotpCode,
 };
