@@ -240,6 +240,13 @@ providerSchema.index({'location.pincode': 1});
 providerSchema.index({'location.stateId': 1});
 providerSchema.index({'location.districtId': 1});
 providerSchema.index({'location.blockId': 1});
+// findProvidersInArea also matches address.* (legacy / dual-write docs)
+providerSchema.index({'address.districtId': 1});
+providerSchema.index({'address.pincode': 1});
+providerSchema.index({'address.city': 1});
+// Core matching predicate before service-type filter
+providerSchema.index({approvalStatus: 1, isActive: 1, isOnline: 1, 'location.districtId': 1});
+providerSchema.index({isActive: 1, approvalStatus: 1});
 
 const Provider = mongoose.model('Provider', providerSchema, 'providers');
 
