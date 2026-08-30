@@ -31,6 +31,7 @@ const {
   buildQrDataUrl,
   encryptTotpSecret,
   decryptTotpSecret,
+  totpSecretIsReadable,
   verifyTotpCode,
 } = require('../utils/totp');
 const {assertCanLoginAsAdmin} = require('../services/adminActivationService');
@@ -495,13 +496,44 @@ exports.register = async (req, res, next) => {
   }
 };
 
+async function issueAdminTotpSetup(user) {
+  const secret = generateTotpSecret();
+  const encrypted = encryptTotpSecret(secret);
+  await User.findByIdAndUpdate(user._id, {
+    $set: {
+      totpSecretEncrypted: encrypted,
+      totpEnabled: false,
+      updatedAt: new Date(),
+    },
+  });
+  const otpauthUrl = buildOtpauthUrl(user.email, secret);
+  const qrCodeDataUrl = await buildQrDataUrl(otpauthUrl);
+  const mfaToken = signMfaToken(
+    {
+      sub: user._id,
+      email: user.email,
+      role: user.role,
+    },
+    'mfa_setup',
+  );
+  return {
+    requiresMfaSetup: true,
+    mfaToken,
+    email: user.email,
+    secret,
+    otpauthUrl,
+    qrCodeDataUrl,
+  };
+}
+
 /**
  * POST /api/auth/login
  * Body: { password, email? , phoneNumber? } — one of email or phoneNumber required
  *
  * Admin accounts with authenticator MFA:
- * - totpEnabled → { requiresMfa: true, mfaToken } then POST /api/auth/mfa/verify
- * - not enrolled → { requiresMfaSetup: true, mfaToken, qrCodeDataUrl, secret, otpauthUrl }
+ * - totpEnabled and secret readable → { requiresMfa: true, mfaToken } then POST /api/auth/mfa/verify
+ * - not enrolled, or stored secret cannot be decrypted (e.g. TOKEN_ENCRYPTION_KEY rotated)
+ *   → { requiresMfaSetup: true, mfaToken, qrCodeDataUrl, secret, otpauthUrl }
  *   then POST /api/auth/mfa/enable with first authenticator code
  * Non-admin password login is unchanged (no TOTP).
  */
@@ -573,7 +605,11 @@ exports.login = async (req, res, next) => {
 
     // Admin: authenticator MFA (TOTP) — not Twilio
     if (user.role === 'admin') {
-      if (user.totpEnabled && user.totpSecretEncrypted) {
+      if (
+        user.totpEnabled &&
+        user.totpSecretEncrypted &&
+        totpSecretIsReadable(user.totpSecretEncrypted)
+      ) {
         const mfaToken = signMfaToken(
           {
             sub: user._id,
@@ -593,10 +629,9 @@ exports.login = async (req, res, next) => {
         });
       }
 
-      const secret = generateTotpSecret();
-      let encrypted;
+      let setupData;
       try {
-        encrypted = encryptTotpSecret(secret);
+        setupData = await issueAdminTotpSetup(user);
       } catch (encErr) {
         return res.status(500).json({
           success: false,
@@ -607,35 +642,9 @@ exports.login = async (req, res, next) => {
         });
       }
 
-      await User.findByIdAndUpdate(user._id, {
-        $set: {
-          totpSecretEncrypted: encrypted,
-          totpEnabled: false,
-          updatedAt: new Date(),
-        },
-      });
-
-      const otpauthUrl = buildOtpauthUrl(user.email, secret);
-      const qrCodeDataUrl = await buildQrDataUrl(otpauthUrl);
-      const mfaToken = signMfaToken(
-        {
-          sub: user._id,
-          email: user.email,
-          role: user.role,
-        },
-        'mfa_setup',
-      );
-
       return res.json({
         success: true,
-        data: {
-          requiresMfaSetup: true,
-          mfaToken,
-          email: user.email,
-          secret,
-          otpauthUrl,
-          qrCodeDataUrl,
-        },
+        data: setupData,
         message:
           'Scan the QR code with Google Authenticator / Authy, then enter the 6-digit code',
       });
@@ -772,10 +781,12 @@ exports.verifyMfa = async (req, res, next) => {
     try {
       secret = decryptTotpSecret(user.totpSecretEncrypted);
     } catch {
-      return res.status(500).json({
+      return res.status(409).json({
         success: false,
-        error: 'Server Error',
-        message: 'Could not read MFA secret',
+        error: 'Conflict',
+        code: 'MFA_SECRET_UNREADABLE',
+        message:
+          'Authenticator data could not be read. Reset MFA and scan a new QR code.',
       });
     }
 
@@ -791,6 +802,78 @@ exports.verifyMfa = async (req, res, next) => {
     res.json({
       success: true,
       data: session,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /api/auth/mfa/reset
+ * After password login (mfa_verify token): confirm password, then issue a new QR setup.
+ * Body: { mfaToken, password }
+ */
+exports.resetMfa = async (req, res, next) => {
+  try {
+    const {mfaToken, password} = req.body;
+    if (!mfaToken || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'mfaToken and password are required',
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = verifyMfaToken(mfaToken, 'mfa_verify');
+    } catch (e) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: e.message || 'Invalid or expired MFA token',
+      });
+    }
+
+    const user = await User.findById(decoded.sub)
+      .select('+totpSecretEncrypted +passwordHash')
+      .exec();
+
+    if (!user || user.role !== 'admin' || !user.passwordHash) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'MFA reset is not available for this account',
+      });
+    }
+
+    const match = await bcrypt.compare(password, user.passwordHash);
+    if (!match) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Invalid email/phone or password',
+      });
+    }
+
+    let setupData;
+    try {
+      setupData = await issueAdminTotpSetup(user);
+    } catch (encErr) {
+      return res.status(500).json({
+        success: false,
+        error: 'Server Configuration',
+        message:
+          encErr.message ||
+          'TOKEN_ENCRYPTION_KEY is required to store MFA secrets',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: setupData,
+      message:
+        'Authenticator reset. Scan the new QR code, then enter the 6-digit code',
     });
   } catch (err) {
     next(err);

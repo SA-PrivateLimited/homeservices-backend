@@ -133,6 +133,18 @@ serviceRequestSchema.index({customerId: 1, createdAt: -1});
 serviceRequestSchema.index({customerId: 1, status: 1});
 serviceRequestSchema.index({status: 1, createdAt: -1});
 serviceRequestSchema.index({serviceType: 1, status: 1});
+// Partner pending queue + targeted requests
+serviceRequestSchema.index({providerId: 1, status: 1, createdAt: -1});
+// Nearby open-request polling (broadcast pending by area)
+serviceRequestSchema.index({status: 1, 'customerAddress.districtId': 1, createdAt: -1});
+serviceRequestSchema.index({status: 1, 'customerAddress.pincode': 1, createdAt: -1});
+// Admin unassigned / pending lists (sort by updatedAt)
+serviceRequestSchema.index({needsAdminAssignment: 1, status: 1, updatedAt: -1});
+serviceRequestSchema.index({updatedAt: -1, createdAt: -1});
+// Active-request lookup before partial unique filter
+serviceRequestSchema.index({customerId: 1, serviceTypeKey: 1, status: 1});
+// Decline exclusion on open-request poll
+serviceRequestSchema.index({'declinedProviders.providerId': 1});
 // At most one active request per customer + service type (when serviceTypeKey is set)
 serviceRequestSchema.index(
   {customerId: 1, serviceTypeKey: 1},

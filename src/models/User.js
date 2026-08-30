@@ -314,7 +314,15 @@ const userSchema = new mongoose.Schema({
 // Indexes
 userSchema.index({email: 1});
 userSchema.index({phoneNumber: 1});
+// Auth phone login uses $or: [phoneNumber, phone] — cover both fields
+userSchema.index({phone: 1}, {sparse: true});
 userSchema.index({role: 1});
+// Admin FCM broadcast + pincode / geo admin filters
+userSchema.index({role: 1, fcmToken: 1});
+userSchema.index({role: 1, 'location.pincode': 1});
+userSchema.index({role: 1, adminStatus: 1});
+userSchema.index({'location.stateId': 1});
+userSchema.index({'homeAddress.stateId': 1});
 
 const User = mongoose.model('User', userSchema, 'users');
 

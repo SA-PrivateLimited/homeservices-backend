@@ -136,6 +136,9 @@ jobCardSchema.index({providerId: 1, status: 1}); // Simple compound
 jobCardSchema.index({providerId: 1, status: -1, createdAt: -1}); // Firebase: providerld + status + createdAt
 jobCardSchema.index({customerId: 1, status: -1, createdAt: -1}); // Firebase: customerld + status + createdAt
 jobCardSchema.index({status: 1, createdAt: -1}); // Status-based queries
+// Admin lists sort by updatedAt; unassigned filter uses needsAdminAssignment
+jobCardSchema.index({needsAdminAssignment: 1, status: 1, updatedAt: -1});
+jobCardSchema.index({updatedAt: -1, createdAt: -1});
 
 const JobCard = mongoose.model('JobCard', jobCardSchema, 'jobCards');
 
