@@ -176,10 +176,6 @@ exports.getAllJobCards = async (req, res, next) => {
       });
     }
 
-    const [jobCards] = await Promise.all([
-      JobCard.find(jobQuery).sort(ADMIN_LIST_SORT).lean(),
-    ]);
-
     const srQuery = {status: 'pending'};
     if (customerId) srQuery.customerId = customerId;
     if (wantNeedsAdmin) {
@@ -201,15 +197,37 @@ exports.getAllJobCards = async (req, res, next) => {
     }
     applyCustomerAreaFilters(srQuery, area);
 
-    const linked = await JobCard.find({}).select('_id bookingId').lean();
-    const linkedIds = new Set(
-      linked.flatMap((r) => [r._id, r.bookingId].filter(Boolean).map(String)),
-    );
+    const [jobCards, jobTotal, pendingSrs] = await Promise.all([
+      JobCard.find(jobQuery)
+        .sort(ADMIN_LIST_SORT)
+        .limit(lim)
+        .skip(off)
+        .lean(),
+      JobCard.countDocuments(jobQuery),
+      ServiceRequest.find(srQuery)
+        .sort(ADMIN_LIST_SORT)
+        .limit(lim)
+        .skip(off)
+        .lean(),
+    ]);
 
-    const pendingSrs = await ServiceRequest.find(srQuery)
-      .sort(ADMIN_LIST_SORT)
-      .limit(500)
-      .lean();
+    const srIds = pendingSrs.map((sr) => String(sr._id));
+    const linked = srIds.length
+      ? await JobCard.find({
+          $or: [
+            {serviceRequestId: {$in: srIds}},
+            {bookingId: {$in: srIds}},
+            {_id: {$in: srIds}},
+          ],
+        })
+          .select('_id bookingId serviceRequestId')
+          .lean()
+      : [];
+    const linkedIds = new Set(
+      linked.flatMap((r) =>
+        [r._id, r.bookingId, r.serviceRequestId].filter(Boolean).map(String),
+      ),
+    );
 
     const pendingAsJobs = pendingSrs
       .filter((sr) => !linkedIds.has(String(sr._id)))
@@ -227,14 +245,13 @@ exports.getAllJobCards = async (req, res, next) => {
       return cb - ca;
     });
 
-    const total = merged.length;
-    const page = merged.slice(off, off + lim);
+    const page = merged.slice(0, lim);
 
     res.json({
       success: true,
       data: page,
       count: page.length,
-      total,
+      total: jobTotal,
       limit: lim,
       offset: off,
     });

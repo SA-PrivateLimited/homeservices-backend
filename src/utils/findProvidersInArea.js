@@ -1,15 +1,20 @@
 /**
  * Find online/available providers for an open service request in the customer's area.
  * Order: district (id/name/city) → same pincode. Softened service-type matching.
+ * Capped so a dense district cannot load or notify the whole catalog.
  */
 
 const Provider = require('../models/Provider');
-const User = require('../models/User');
 const {
   activeServicesForProvider,
   isServiceCustomerVisible,
 } = require('./providerServiceAvailability');
 const {filterOutSelfProvider} = require('./excludeSelfProvider');
+
+/** Notify / match cap — FCM + sockets stay cheap at 100k Partners. */
+const MATCH_CAP = 40;
+/** Oversample before visibility filter so a page can still fill. */
+const MATCH_FETCH = 80;
 
 function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -18,7 +23,7 @@ function escapeRegex(value) {
 function serviceTypeClause(serviceType) {
   const raw = String(serviceType || '').trim();
   if (!raw) {
-    return {_id: null}; // match nothing
+    return {_id: null};
   }
   const re = new RegExp(`^${escapeRegex(raw)}$`, 'i');
   return {
@@ -51,17 +56,19 @@ async function findMatchingProviders(
   if (requireOnline) {
     query.isOnline = true;
   }
-  return Provider.find(query)
+  const rows = await Provider.find(query)
     .select(
-      '_id name fcmToken location address specialization serviceType serviceCategories inactiveServiceCategories serviceQualifications',
+      '_id name fcmToken isOnline rating updatedAt location address specialization serviceType serviceCategories inactiveServiceCategories serviceQualifications',
     )
-    .lean()
-    .then((rows) =>
-      filterOutSelfProvider(
-        rows.filter((p) => isServiceCustomerVisible(p, serviceType)),
-        excludeUserId,
-      ),
-    );
+    .sort({isOnline: -1, rating: -1, updatedAt: -1})
+    .limit(MATCH_FETCH)
+    .lean();
+  return filterOutSelfProvider(
+    rows
+      .filter((p) => isServiceCustomerVisible(p, serviceType))
+      .slice(0, MATCH_CAP),
+    excludeUserId,
+  );
 }
 
 async function findByDistrict(
@@ -101,22 +108,10 @@ async function findByPincode(
 ) {
   if (!pincode) return [];
   const pin = String(pincode).trim();
-  const usersWithPin = await User.find({
-    role: 'provider',
-    'location.pincode': pin,
-  })
-    .select('_id')
-    .lean();
-  const userIds = usersWithPin.map(u => u._id);
-
   return findMatchingProviders(
     serviceType,
     {
-      $or: [
-        {'location.pincode': pin},
-        {'address.pincode': pin},
-        {_id: {$in: userIds}},
-      ],
+      $or: [{'location.pincode': pin}, {'address.pincode': pin}],
     },
     excludeUserId,
     matchOptions,
@@ -232,7 +227,21 @@ async function findNearbyOpenPendingForProvider(provider) {
     .lean();
 }
 
+function providerIdsFromList(providers) {
+  const seen = new Set();
+  const ids = [];
+  for (const p of providers || []) {
+    const id = String(p?._id || p?.id || p || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
 module.exports = {
+  MATCH_CAP,
   findProvidersInArea,
   findNearbyOpenPendingForProvider,
+  providerIdsFromList,
 };
