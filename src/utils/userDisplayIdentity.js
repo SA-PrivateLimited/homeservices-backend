@@ -14,10 +14,18 @@ function isPlaceholderDisplayName(value) {
   return !s || PLACEHOLDER_DISPLAY_NAME.test(s);
 }
 
-function formatDefaultCustomerName(displayId) {
+function padDisplayId(displayId, fallbackPrefix) {
   const n = Number(displayId);
-  if (!Number.isFinite(n) || n < 0) return 'User-0000';
-  return `User-${String(Math.trunc(n) % 10000).padStart(4, '0')}`;
+  if (!Number.isFinite(n) || n < 0) return `${fallbackPrefix}-0000`;
+  return `${fallbackPrefix}-${String(Math.trunc(n) % 10000).padStart(4, '0')}`;
+}
+
+function formatDefaultCustomerName(displayId) {
+  return padDisplayId(displayId, 'User');
+}
+
+function formatDefaultProviderName(displayId) {
+  return padDisplayId(displayId, 'Provider');
 }
 
 /**
@@ -34,10 +42,22 @@ function resolveInitialCustomerName({requestedName, existingName, displayId} = {
   return formatDefaultCustomerName(displayId);
 }
 
-function resolveInitialProviderName(requestedName) {
+/**
+ * Resolve the initial Partner display name for a NEW Partner profile.
+ * Same 4-digit id as the Customer default (Provider-4827).
+ */
+function resolveInitialProviderName({
+  requestedName,
+  existingName,
+  displayId,
+} = {}) {
+  const existing = String(existingName || '').trim();
+  if (existing && !isPlaceholderDisplayName(existing)) return existing;
+
   const requested = String(requestedName || '').trim();
   if (requested && !isPlaceholderDisplayName(requested)) return requested;
-  return 'Provider';
+
+  return formatDefaultProviderName(displayId);
 }
 
 function hasRealCustomerName(name) {
@@ -58,6 +78,7 @@ module.exports = {
   PLACEHOLDER_DISPLAY_NAME,
   isPlaceholderDisplayName,
   formatDefaultCustomerName,
+  formatDefaultProviderName,
   resolveInitialCustomerName,
   resolveInitialProviderName,
   hasRealCustomerName,
