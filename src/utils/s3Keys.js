@@ -188,8 +188,12 @@ function buildJobCompletionPhotoKey(providerId, jobCardId, extension) {
 /**
  * Whether an authenticated principal may manage this object key.
  * - Admins may manage any allowed-prefix key
- * - Providers: providers/{theirId}/...
- * - Customers: customers/{theirId}/... or temp/{theirId}/...
+ * - Acting as provider: providers/{theirId}/...
+ * - Acting as customer: customers/{theirId}/... or temp/{theirId}/...
+ *
+ * Use JWT/effective role (`user.role`), not DB role. Dual-role users keep
+ * dbRole "provider" while Customer Web issues a customer JWT; their request
+ * photos live under customers/{uid}/.
  */
 function assertKeyAuthorizedForUser(key, user) {
   const normalized = normalizeObjectKey(key);
@@ -197,14 +201,27 @@ function assertKeyAuthorizedForUser(key, user) {
     throw createHttpError(401, 'Authentication required', 'Unauthorized');
   }
 
-  const role = user.role || 'customer';
+  const role = user.role || user.activeRole || 'customer';
   const uid = String(user.uid);
 
   if (role === 'admin') {
     return normalized;
   }
 
-  if (role === 'provider' || user.dbRole === 'provider') {
+  const actingAsCustomer = role === 'customer';
+  if (actingAsCustomer) {
+    const customerPrefix = `customers/${uid}/`;
+    const tempPrefix = `temp/${uid}/`;
+    if (
+      !normalized.startsWith(customerPrefix) &&
+      !normalized.startsWith(tempPrefix)
+    ) {
+      throw createHttpError(403, 'Not allowed to access this asset', 'Forbidden');
+    }
+    return normalized;
+  }
+
+  if (role === 'provider') {
     const prefix = `providers/${uid}/`;
     if (!normalized.startsWith(prefix)) {
       throw createHttpError(
@@ -216,16 +233,7 @@ function assertKeyAuthorizedForUser(key, user) {
     return normalized;
   }
 
-  // customer (default)
-  const customerPrefix = `customers/${uid}/`;
-  const tempPrefix = `temp/${uid}/`;
-  if (
-    !normalized.startsWith(customerPrefix) &&
-    !normalized.startsWith(tempPrefix)
-  ) {
-    throw createHttpError(403, 'Not allowed to access this asset', 'Forbidden');
-  }
-  return normalized;
+  throw createHttpError(403, 'Not allowed to access this asset', 'Forbidden');
 }
 
 /**

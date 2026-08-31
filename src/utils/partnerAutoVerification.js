@@ -126,7 +126,9 @@ function autoVerifyPartnerIfEligible(provider, user) {
       changed = true;
     }
 
-    if (isServiceInactive(provider, name)) {
+    // Do not turn on a service the Partner already switched off.
+    // Only lift inactivity that was blocking an unverified new service.
+    if (isServiceInactive(provider, name) && currentStatus !== 'approved') {
       setInactive(provider, name, false);
       changed = true;
     }
