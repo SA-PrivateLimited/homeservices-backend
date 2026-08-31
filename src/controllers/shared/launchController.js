@@ -17,6 +17,8 @@ const {
   normalizeCta,
   normalizeCloseMode,
   normalizeCountdownSeconds,
+  normalizeTimerEndsAt,
+  isGreetingTimerExpired,
   normalizeAnimationMode,
   resolveLaunchAnimation,
 } = require('../../utils/launchWishConfig');
@@ -27,7 +29,10 @@ const LAUNCH_STATES = Object.freeze({
 });
 
 function publicLaunchPayload(doc, {viewerSeen = false} = {}) {
-  const globalLaunch = doc?.websiteLaunchState === LAUNCH_STATES.LAUNCH;
+  const timerEndsAt = normalizeTimerEndsAt(doc?.websiteLaunchTimerEndsAt);
+  const expired = isGreetingTimerExpired(timerEndsAt);
+  const globalLaunch =
+    doc?.websiteLaunchState === LAUNCH_STATES.LAUNCH && !expired;
   const closeMode = normalizeCloseMode(doc?.websiteLaunchCloseMode);
   const waveId = String(doc?.websiteLaunchWaveId || '').trim() || 'default';
   let state = globalLaunch ? LAUNCH_STATES.LAUNCH : LAUNCH_STATES.NORMAL;
@@ -46,6 +51,7 @@ function publicLaunchPayload(doc, {viewerSeen = false} = {}) {
     countdownSeconds: normalizeCountdownSeconds(
       doc?.websiteLaunchCountdownSeconds,
     ),
+    timerEndsAt,
     animationMode,
     animation: resolveLaunchAnimation(animationMode, greeting),
     name: String(doc?.websiteLaunchName || '').trim(),
@@ -191,6 +197,9 @@ exports.updateLaunchConfig = async (req, res, next) => {
         body.countdownSeconds,
       );
     }
+    if (body.timerEndsAt !== undefined) {
+      updates.websiteLaunchTimerEndsAt = normalizeTimerEndsAt(body.timerEndsAt);
+    }
     if (body.animationMode !== undefined) {
       updates.websiteLaunchAnimation = normalizeAnimationMode(
         body.animationMode,
@@ -225,6 +234,7 @@ exports.updateLaunchConfig = async (req, res, next) => {
       updates.websiteLaunchGreeting === undefined &&
       updates.websiteLaunchCta === undefined &&
       updates.websiteLaunchCountdownSeconds === undefined &&
+      updates.websiteLaunchTimerEndsAt === undefined &&
       updates.websiteLaunchAnimation === undefined &&
       updates.websiteLaunchName === undefined &&
       updates.websiteLaunchMessage === undefined &&
@@ -232,7 +242,7 @@ exports.updateLaunchConfig = async (req, res, next) => {
     ) {
       throw createHttpError(
         400,
-        'Provide state, closeMode, eventName, greeting, cta, countdownSeconds, animationMode, name, message, and/or icon',
+        'Provide state, closeMode, eventName, greeting, cta, timerEndsAt, animationMode, name, message, and/or icon',
         'Bad Request',
       );
     }
@@ -247,7 +257,27 @@ exports.updateLaunchConfig = async (req, res, next) => {
       updates.websiteLaunchEventName !== undefined ||
       updates.websiteLaunchIcon !== undefined ||
       updates.websiteLaunchMessage !== undefined ||
-      updates.websiteLaunchName !== undefined;
+      updates.websiteLaunchName !== undefined ||
+      updates.websiteLaunchTimerEndsAt !== undefined;
+    const nextTimerIso =
+      updates.websiteLaunchTimerEndsAt !== undefined
+        ? normalizeTimerEndsAt(updates.websiteLaunchTimerEndsAt)
+        : normalizeTimerEndsAt(current?.websiteLaunchTimerEndsAt);
+    if (willBeLaunch && !nextTimerIso) {
+      throw createHttpError(
+        400,
+        'timerEndsAt is required when the greeting is shown',
+        'Bad Request',
+      );
+    }
+    if (willBeLaunch && isGreetingTimerExpired(nextTimerIso)) {
+      throw createHttpError(
+        400,
+        'timerEndsAt must be in the future',
+        'Bad Request',
+      );
+    }
+
     if (
       willBeLaunch &&
       contentChanged &&

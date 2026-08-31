@@ -47,7 +47,7 @@ test('countdown seconds stay between 0 and 30, default 10', () => {
   assert.equal(normalizeCountdownSeconds(-3), 0);
 });
 
-test('animation auto uses diyas for Diwali and crackers otherwise', () => {
+test('animation auto uses diyas for Diwali and sparkle otherwise', () => {
   const {
     resolveLaunchAnimation,
     normalizeAnimationMode,
@@ -55,19 +55,36 @@ test('animation auto uses diyas for Diwali and crackers otherwise', () => {
   } = require('../src/utils/launchWishConfig');
   assert.equal(normalizeAnimationMode(''), ANIMATION_MODES.AUTO);
   assert.equal(resolveLaunchAnimation('AUTO', 'Happy Diwali'), 'diyas');
-  assert.equal(resolveLaunchAnimation('AUTO', 'Happy Holi'), 'holi');
+  assert.equal(resolveLaunchAnimation('AUTO', 'Happy Holi'), 'sparkle');
   assert.equal(
     resolveLaunchAnimation('AUTO', 'Happy Independence Day'),
-    'jets',
+    'sparkle',
   );
-  assert.equal(resolveLaunchAnimation('AUTO', 'Merry Christmas'), 'snow');
-  assert.equal(resolveLaunchAnimation('JETS', 'Happy Holi'), 'jets');
+  assert.equal(resolveLaunchAnimation('AUTO', 'Merry Christmas'), 'sparkle');
+  assert.equal(resolveLaunchAnimation('JETS', 'Happy Holi'), 'sparkle');
+  assert.equal(resolveLaunchAnimation('CRACKERS', 'Happy Holi'), 'crackers');
   assert.equal(resolveLaunchAnimation('DIYAS', 'Happy Holi'), 'diyas');
   assert.equal(resolveLaunchAnimation('NONE', 'Happy Diwali'), 'none');
 });
 
-test('close mode defaults to GLOBAL', () => {
+test('greeting timer expiry is based on timerEndsAt', () => {
+  const {
+    normalizeTimerEndsAt,
+    isGreetingTimerExpired,
+  } = require('../src/utils/launchWishConfig');
+  assert.equal(normalizeTimerEndsAt(''), null);
+  assert.equal(normalizeTimerEndsAt('not-a-date'), null);
+  const future = new Date(Date.now() + 60_000).toISOString();
+  const past = new Date(Date.now() - 60_000).toISOString();
+  assert.equal(typeof normalizeTimerEndsAt(future), 'string');
+  assert.equal(isGreetingTimerExpired(future), false);
+  assert.equal(isGreetingTimerExpired(past), true);
+  assert.equal(isGreetingTimerExpired(null), false);
+});
+
+test('close mode defaults to PER_PERSON', () => {
   const {normalizeCloseMode, CLOSE_MODES} = require('../src/utils/launchWishConfig');
-  assert.equal(normalizeCloseMode(''), CLOSE_MODES.GLOBAL);
+  assert.equal(normalizeCloseMode(''), CLOSE_MODES.PER_PERSON);
+  assert.equal(normalizeCloseMode('GLOBAL'), CLOSE_MODES.GLOBAL);
   assert.equal(normalizeCloseMode('PER_PERSON'), CLOSE_MODES.PER_PERSON);
 });

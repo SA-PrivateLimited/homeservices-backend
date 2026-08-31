@@ -92,6 +92,19 @@ function normalizeCountdownSeconds(raw) {
   );
 }
 
+function normalizeTimerEndsAt(raw) {
+  if (raw == null || raw === '') return null;
+  const date = raw instanceof Date ? raw : new Date(raw);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function isGreetingTimerExpired(timerEndsAt, now = new Date()) {
+  const iso = normalizeTimerEndsAt(timerEndsAt);
+  if (!iso) return false;
+  return new Date(iso).getTime() <= now.getTime();
+}
+
 const ANIMATION_MODES = Object.freeze({
   AUTO: 'AUTO',
   CRACKERS: 'CRACKERS',
@@ -124,8 +137,12 @@ function normalizeAnimationMode(raw) {
 
 function resolveLaunchAnimation(mode, greeting) {
   const normalized = normalizeAnimationMode(mode);
+  if (normalized === ANIMATION_MODES.NONE) return ANIMATION_FX.none;
+  if (normalized === ANIMATION_MODES.DIYAS) return ANIMATION_FX.diyas;
+  if (normalized === ANIMATION_MODES.SPARKLE) return ANIMATION_FX.sparkle;
+  if (normalized === ANIMATION_MODES.CRACKERS) return ANIMATION_FX.crackers;
   if (normalized !== ANIMATION_MODES.AUTO) {
-    return ANIMATION_FX[normalized.toLowerCase()] || ANIMATION_FX.crackers;
+    return ANIMATION_FX.sparkle;
   }
   const text = String(greeting || '').toLowerCase();
   if (
@@ -136,33 +153,16 @@ function resolveLaunchAnimation(mode, greeting) {
   ) {
     return ANIMATION_FX.diyas;
   }
-  if (
-    text.includes('independence') ||
-    text.includes('republic') ||
-    text.includes('स्वतंत्रता') ||
-    text.includes('गणतंत्र')
-  ) {
-    return ANIMATION_FX.jets;
-  }
-  if (text.includes('holi') || text.includes('होली')) {
-    return ANIMATION_FX.holi;
-  }
-  if (text.includes('christmas') || text.includes('क्रिसमस')) {
-    return ANIMATION_FX.snow;
-  }
-  if (text.includes('new year') || text.includes('नव वर्ष')) {
-    return ANIMATION_FX.sparkle;
-  }
-  return ANIMATION_FX.crackers;
+  return ANIMATION_FX.sparkle;
 }
 
 function normalizeCloseMode(raw) {
   const value = String(raw || '')
     .trim()
     .toUpperCase();
-  return value === CLOSE_MODES.PER_PERSON
-    ? CLOSE_MODES.PER_PERSON
-    : CLOSE_MODES.GLOBAL;
+  return value === CLOSE_MODES.GLOBAL
+    ? CLOSE_MODES.GLOBAL
+    : CLOSE_MODES.PER_PERSON;
 }
 
 module.exports = {
@@ -185,6 +185,8 @@ module.exports = {
   isLegacyWebsiteLaunchCopy,
   normalizeCloseMode,
   normalizeCountdownSeconds,
+  normalizeTimerEndsAt,
+  isGreetingTimerExpired,
   normalizeAnimationMode,
   resolveLaunchAnimation,
 };

@@ -1,5 +1,5 @@
 /**
- * CustomerWeb launch gate — public status/complete; Super Admin configure.
+ * CustomerWeb greeting gate — public status/complete; Super Admin configure.
  */
 
 const express = require('express');
@@ -13,14 +13,14 @@ const {
   updateLaunchConfig,
 } = require('../../controllers/shared/launchController');
 
-/** GET /api/launch — public; optional JWT so per-person “already seen” works */
+/** GET /api/greeting — public; optional JWT so per-person “already seen” works */
 router.get('/', optionalAuth, logRequest, getLaunchStatus);
 
-/** POST /api/launch/complete — GLOBAL closes for all; PER_PERSON marks this visitor */
+/** POST /api/greeting/complete — GLOBAL closes for all; PER_PERSON marks this visitor */
 router.post('/complete', optionalAuth, logRequest, completeLaunch);
 
 /**
- * PUT /api/launch — Super Admin only
+ * PUT /api/greeting — Super Admin only
  * Configure state / name / message (CustomerWeb cannot set arbitrary state).
  */
 router.put(

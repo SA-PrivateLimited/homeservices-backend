@@ -77,15 +77,22 @@ const systemConfigSchema = new mongoose.Schema(
       trim: true,
       maxlength: 80,
     },
-    /** Countdown seconds on CustomerWeb after Continue. 0 skips the count. */
+    /** Countdown seconds (legacy). CustomerWeb now uses timerEndsAt. */
     websiteLaunchCountdownSeconds: {
       type: Number,
       default: 10,
       min: 0,
       max: 30,
     },
+    /** Special-occasion end time. After this, the greeting hides for everyone. */
+    websiteLaunchTimerEndsAt: {
+      type: Date,
+      default: null,
+    },
     /**
-     * AUTO matches the greeting. Or force crackers, diyas, jets, holi, snow, sparkle, none.
+     * AUTO: Diwali → diyas, otherwise sparkle.
+     * CRACKERS / DIYAS / SPARKLE / NONE force a look.
+     * Older JETS / HOLI / SNOW values still store; they render as sparkle.
      */
     websiteLaunchAnimation: {
       type: String,
@@ -122,12 +129,12 @@ const systemConfigSchema = new mongoose.Schema(
     },
     /**
      * GLOBAL — first Continue closes the greeting for everyone.
-     * PER_PERSON — each signed-in user (and each guest browser) sees it once.
+     * PER_PERSON — everyone who opens the app that day can see it; Continue hides it only for that person.
      */
     websiteLaunchCloseMode: {
       type: String,
       enum: ['GLOBAL', 'PER_PERSON'],
-      default: 'GLOBAL',
+      default: 'PER_PERSON',
     },
     /** Changes when a new greeting campaign starts so “seen once” resets. */
     websiteLaunchWaveId: {
