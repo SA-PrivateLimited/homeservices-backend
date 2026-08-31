@@ -9,6 +9,7 @@ module.exports = {
   sendFcm: notificationService.sendToToken,
   notifyUser: notificationService.notifyUser,
   notifyProvider: notificationService.notifyProvider,
+  notifyProvidersMulticast: notificationService.notifyProvidersMulticast,
   notifyAdmins: notificationService.notifyAdmins,
   registerDeviceToken: notificationService.registerDeviceToken,
   notifyTopic: notificationService.notifyTopic,

@@ -261,16 +261,22 @@ exports.getProviders = async (req, res, next) => {
     const CUSTOMER_LIST_EXCLUDE =
       '-documents -bankAccount -bankDetails -encryptedPin -pinHash -fcmToken -aadharNumber -aadhaarNumber -panNumber -gstNumber -rejectionReason';
 
+    const fetchLim = isAdmin ? lim : Math.min(100, Math.max(lim * 2, lim));
     let listQuery = Provider.find(query)
       .sort(ADMIN_LIST_SORT)
-      .limit(lim)
+      .limit(fetchLim)
       .skip(off);
     if (!isAdmin) {
       listQuery = listQuery.select(CUSTOMER_LIST_EXCLUDE);
     }
     const providers = await listQuery.lean();
 
-    const total = await Provider.countDocuments(query);
+    let total;
+    try {
+      total = await Provider.countDocuments(query).maxTimeMS(2500);
+    } catch {
+      total = off + providers.length + (providers.length >= lim ? lim : 0);
+    }
 
     let enriched = providers;
     if (isAdmin && providers.length > 0) {
@@ -316,6 +322,9 @@ exports.getProviders = async (req, res, next) => {
 
     if (viewerId && !isAdmin) {
       enriched = filterOutSelfProvider(enriched, viewerId);
+    }
+    if (!isAdmin && enriched.length > lim) {
+      enriched = enriched.slice(0, lim);
     }
 
     res.json({

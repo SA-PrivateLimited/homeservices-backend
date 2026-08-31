@@ -247,6 +247,8 @@ providerSchema.index({'address.city': 1});
 // Core matching predicate before service-type filter
 providerSchema.index({approvalStatus: 1, isActive: 1, isOnline: 1, 'location.districtId': 1});
 providerSchema.index({isActive: 1, approvalStatus: 1});
+providerSchema.index({updatedAt: -1, createdAt: -1});
+providerSchema.index({isOnline: -1, rating: -1, updatedAt: -1});
 
 const Provider = mongoose.model('Provider', providerSchema, 'providers');
 

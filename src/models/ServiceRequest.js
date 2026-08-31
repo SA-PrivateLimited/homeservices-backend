@@ -105,6 +105,11 @@ const serviceRequestSchema = new mongoose.Schema({
     index: true,
   },
   /** Providers who declined an open (broadcast) request while it stays pending */
+  /** Capped set that received socket/FCM for this open request — reuse on accept/cancel. */
+  notifiedProviderIds: {
+    type: [String],
+    default: [],
+  },
   declinedProviders: [
     {
       providerId: {type: String, required: true},

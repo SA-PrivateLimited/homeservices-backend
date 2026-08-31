@@ -7,16 +7,14 @@ const ServiceRequest = require('../../models/ServiceRequest');
 const Provider = require('../../models/Provider');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
 const {t} = require('../../utils/translations');
-const {notifyBooking, notifyAreaProviders} = require('../../realtime/socket');
-const {
-  findNearbyOpenPendingForProvider,
-  findProvidersInArea,
-} = require('../../utils/findProvidersInArea');
+const {notifyBooking} = require('../../realtime/socket');
+const {findNearbyOpenPendingForProvider} = require('../../utils/findProvidersInArea');
 const {
   findServiceRequestFlexible,
   saveServiceRequestFlexible,
 } = require('../../utils/findServiceRequestFlexible');
 const {notifyUser, notifyAdmins} = require('../../utils/notify');
+const {notifyStoredProviderIds} = require('../../utils/notifyMatchedProviders');
 const {onServiceRequestStatusChange} = require('../../services/activeServiceRequestService');
 const {
   redactServiceRequestForViewer,
@@ -367,31 +365,26 @@ exports.acceptServiceRequest = async (req, res, next) => {
     }
 
     try {
-      const customerAddress = serviceRequest.customerAddress;
-      if (customerAddress) {
-        const areaResult = await findProvidersInArea(
-          serviceType,
-          customerAddress,
-          {excludeUserId: serviceRequest.customerId},
-        );
-        await notifyAreaProviders({
-          providers: areaResult.providers || [],
-          excludeProviderId: providerId,
-          bookingData: sanitizeBookingNotifyPayload(
-            {
-              type: 'request-taken',
-              status: 'accepted',
-              acceptedByOther: true,
-              serviceRequestId: String(serviceRequest._id),
-              providerId,
-              providerName,
-              serviceType,
-              acceptedAt: acceptedAtIso,
-            },
-            {includeCustomerPhone: false},
-          ),
-        });
-      }
+      const storedIds = Array.isArray(serviceRequest.notifiedProviderIds)
+        ? serviceRequest.notifiedProviderIds
+        : [];
+      await notifyStoredProviderIds({
+        ids: storedIds,
+        excludeProviderId: providerId,
+        bookingData: sanitizeBookingNotifyPayload(
+          {
+            type: 'request-taken',
+            status: 'accepted',
+            acceptedByOther: true,
+            serviceRequestId: String(serviceRequest._id),
+            providerId,
+            providerName,
+            serviceType,
+            acceptedAt: acceptedAtIso,
+          },
+          {includeCustomerPhone: false},
+        ),
+      });
     } catch (areaErr) {
       console.warn(
         '⚠️ [acceptServiceRequest] Area taken notify:',

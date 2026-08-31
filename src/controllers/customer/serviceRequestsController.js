@@ -10,9 +10,13 @@ const AreaProviderDemand = require('../../models/AreaProviderDemand');
 const {logDatabaseOperation, logPerformance} = require('../../middleware/logger');
 const {t} = require('../../utils/translations');
 const mongoose = require('mongoose');
-const {notifyBooking, notifyAdminsRealtime, notifyAreaProviders} = require('../../realtime/socket');
+const {notifyBooking, notifyAdminsRealtime} = require('../../realtime/socket');
 const {findProvidersInArea} = require('../../utils/findProvidersInArea');
 const {notifyAdmins, notifyProvider} = require('../../utils/notify');
+const {
+  notifyMatchedProviders,
+  notifyStoredProviderIds,
+} = require('../../utils/notifyMatchedProviders');
 const {
   findActiveServiceRequest,
   acquireActiveRequestLock,
@@ -430,52 +434,21 @@ exports.createServiceRequest = async (req, res, next) => {
         {includeCustomerPhone: false},
       );
 
-      const emitPromises = providersToNotify.map(async (provider) => {
-        const providerId = provider._id.toString();
-        try {
-          const result = await notifyBooking({
-            providerId,
-            bookingData,
-          });
-          if (result.ok) {
-            console.log(
-              `✅ [WebSocket] Notification sent to provider ${providerId} via ${result.via}`,
-            );
-          } else {
-            console.warn(
-              `⚠️ [WebSocket] Failed to notify provider ${providerId}:`,
-              result.reason,
-            );
-          }
-        } catch (error) {
-          console.warn(
-            `⚠️ [WebSocket] Failed to notify provider ${providerId}:`,
-            error.message,
-          );
-        }
-
-        // FCM fallback when provider app is backgrounded / socket down
-        try {
-          await notifyProvider(providerId, {
-            title: 'New service request',
-            body: `${bookingData.customerName} needs ${serviceType} nearby`,
-            data: {
-              type: 'new-booking',
-              serviceRequestId: bookingData.serviceRequestId,
-              serviceType,
-            },
-          });
-        } catch (fcmErr) {
-          console.warn(
-            `⚠️ [FCM] Provider ${providerId}:`,
-            fcmErr.message,
-          );
-        }
+      const notifiedIds = await notifyMatchedProviders({
+        providers: providersToNotify,
+        bookingData,
+        fcm: {
+          title: 'New service request',
+          body: `${bookingData.customerName} needs ${serviceType} nearby`,
+          data: {
+            type: 'new-booking',
+            serviceRequestId: bookingData.serviceRequestId,
+            serviceType,
+          },
+        },
       });
-
-      Promise.all(emitPromises).catch((err) => {
-        console.warn('⚠️ [Notify] Some provider notifications failed:', err.message);
-      });
+      serviceRequest.notifiedProviderIds = notifiedIds;
+      await serviceRequest.save();
 
       // Admin realtime + FCM — strip phones from broadcast; admin APIs keep DB phones
       const adminPayload = sanitizeBookingNotifyPayload(
@@ -713,33 +686,21 @@ async function rematchProvidersAfterEdit(serviceRequest, userId) {
     {includeCustomerPhone: false},
   );
 
-  const emitPromises = providersToNotify.map(async (provider) => {
-    const providerId = provider._id.toString();
-    try {
-      await notifyBooking({providerId, bookingData});
-    } catch (error) {
-      console.warn(
-        `⚠️ [updateServiceRequest] Notify provider ${providerId}:`,
-        error.message,
-      );
-    }
-    try {
-      await notifyProvider(providerId, {
-        title: 'Updated service request',
-        body: `${bookingData.customerName} updated a ${serviceType} request nearby`,
-        data: {
-          type: 'updated-booking',
-          serviceRequestId: bookingData.serviceRequestId,
-          serviceType,
-        },
-      });
-    } catch (fcmErr) {
-      console.warn(`⚠️ [FCM] Provider ${providerId}:`, fcmErr.message);
-    }
+  const notifiedIds = await notifyMatchedProviders({
+    providers: providersToNotify,
+    bookingData,
+    fcm: {
+      title: 'Updated service request',
+      body: `${bookingData.customerName} updated a ${serviceType} request nearby`,
+      data: {
+        type: 'updated-booking',
+        serviceRequestId: bookingData.serviceRequestId,
+        serviceType,
+      },
+    },
   });
-  Promise.all(emitPromises).catch((err) => {
-    console.warn('⚠️ [updateServiceRequest] Some provider notifications failed:', err.message);
-  });
+  serviceRequest.notifiedProviderIds = notifiedIds;
+  await serviceRequest.save();
 
   try {
     await notifyAdminsRealtime(
@@ -1099,15 +1060,13 @@ exports.cancelServiceRequest = async (req, res, next) => {
       }
     }
 
-    if (wasOpenRequest && serviceRequest.customerAddress) {
+    if (wasOpenRequest) {
       try {
-        const areaResult = await findProvidersInArea(
-          serviceType,
-          serviceRequest.customerAddress,
-          {excludeUserId: userId},
-        );
-        await notifyAreaProviders({
-          providers: areaResult.providers || [],
+        const storedIds = Array.isArray(serviceRequest.notifiedProviderIds)
+          ? serviceRequest.notifiedProviderIds
+          : [];
+        await notifyStoredProviderIds({
+          ids: storedIds,
           bookingData: sanitizeBookingNotifyPayload(
             {
               type: 'request-cancelled',

@@ -24,6 +24,63 @@ async function notifyUser(userId, {title, body, data} = {}) {
   }
 }
 
+/**
+ * One multicast for a capped id list. Avoids N findById + N FCM sends.
+ */
+async function notifyProvidersMulticast(providerIds, {title, body, data} = {}) {
+  const ids = [
+    ...new Set(
+      (providerIds || []).map((id) => String(id || '').trim()).filter(Boolean),
+    ),
+  ];
+  if (!ids.length) return {sent: false, reason: 'no_providers', count: 0};
+
+  try {
+    const Provider = require('../models/Provider');
+    const User = require('../models/User');
+    const providers = await Provider.find({_id: {$in: ids}})
+      .select('_id fcmToken')
+      .lean();
+    const tokens = [];
+    const missing = [];
+    const have = new Set();
+    for (const p of providers) {
+      have.add(String(p._id));
+      if (p.fcmToken) tokens.push(p.fcmToken);
+      else missing.push(String(p._id));
+    }
+    for (const id of ids) {
+      if (!have.has(id)) missing.push(id);
+    }
+    if (missing.length) {
+      const users = await User.find({_id: {$in: missing}})
+        .select('fcmToken')
+        .lean();
+      for (const u of users) {
+        if (u?.fcmToken) tokens.push(u.fcmToken);
+      }
+    }
+    if (!firebaseService.isReady()) {
+      return {
+        sent: false,
+        reason: 'firebase_not_configured',
+        count: 0,
+        total: ids.length,
+      };
+    }
+    const result = await firebaseService.sendToTokens(tokens, {title, body, data});
+    return {
+      sent: result.sent,
+      count: result.successCount || 0,
+      total: ids.length,
+      failureCount: result.failureCount || 0,
+    };
+  } catch (err) {
+    console.warn('notifyProvidersMulticast failed:', err.message);
+    return {sent: false, reason: err.message, count: 0};
+  }
+}
+
 async function notifyProvider(providerId, {title, body, data} = {}) {
   if (!providerId) return {sent: false, reason: 'no_provider'};
   try {
@@ -142,6 +199,7 @@ module.exports = {
   sendToToken,
   notifyUser,
   notifyProvider,
+  notifyProvidersMulticast,
   notifyAdmins,
   registerDeviceToken,
   notifyTopic,
