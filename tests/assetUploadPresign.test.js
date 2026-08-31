@@ -90,6 +90,32 @@ describe('s3Keys service-request paths', () => {
       key,
     );
   });
+
+  it('authorizes dual-role customer JWT for customers/ photos even if dbRole is provider', () => {
+    const key = buildCustomerServiceRequestPhotoKey('u1', '.jpg');
+    assert.equal(
+      assertKeyAuthorizedForUser(key, {
+        uid: 'u1',
+        role: 'customer',
+        activeRole: 'customer',
+        dbRole: 'provider',
+      }),
+      key,
+    );
+  });
+
+  it('still requires providers/ keys when acting as provider', () => {
+    const key = buildCustomerServiceRequestPhotoKey('u1', '.jpg');
+    assert.throws(
+      () =>
+        assertKeyAuthorizedForUser(key, {
+          uid: 'u1',
+          role: 'provider',
+          dbRole: 'provider',
+        }),
+      (e) => e.statusCode === 403,
+    );
+  });
 });
 
 describe('uploadToken', () => {

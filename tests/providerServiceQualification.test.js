@@ -57,6 +57,27 @@ test('addServiceToProvider does not create a duplicate and keeps one Partner', (
   assert.equal(allServicesForProvider(provider).length, 2);
 });
 
+test('inactive primary is not shown; next active service is the customer headline', () => {
+  const provider = {
+    approvalStatus: 'approved',
+    serviceType: 'Tiles Mistry',
+    specialization: 'Tiles Mistry',
+    serviceCategories: ['Tiles Mistry', 'Plumber', 'Carpenter'],
+    serviceQualifications: [
+      {name: 'Tiles Mistry', verificationStatus: 'approved'},
+      {name: 'Plumber', verificationStatus: 'approved'},
+      {name: 'Carpenter', verificationStatus: 'approved'},
+    ],
+    inactiveServiceCategories: ['Tiles Mistry', 'Plumber'],
+  };
+  assert.deepEqual(activeServicesForProvider(provider), ['Carpenter']);
+  const publicView = applyCustomerServiceView(provider, '');
+  assert.equal(publicView.matchedService, 'Carpenter');
+  assert.equal(publicView.serviceType, 'Carpenter');
+  assert.equal(publicView.specialization, 'Carpenter');
+  assert.deepEqual(publicView.serviceCategories, ['Carpenter']);
+});
+
 test('unverified and inactive services are hidden from customers', () => {
   const provider = {
     approvalStatus: 'approved',

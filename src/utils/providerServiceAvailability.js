@@ -296,6 +296,7 @@ function applyCustomerServiceView(provider, serviceQuery) {
   raw.matchedService = matched;
   if (matched) {
     raw.specialization = matched;
+    raw.serviceType = matched;
   }
   delete raw.serviceQualifications;
   delete raw.inactiveServiceCategories;
