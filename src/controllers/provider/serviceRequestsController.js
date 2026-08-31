@@ -14,6 +14,7 @@ const {
   saveServiceRequestFlexible,
 } = require('../../utils/findServiceRequestFlexible');
 const {notifyUser, notifyAdmins} = require('../../utils/notify');
+const {customerPartnerAccepted} = require('../../utils/fcmCopy');
 const {notifyStoredProviderIds} = require('../../utils/notifyMatchedProviders');
 const {onServiceRequestStatusChange} = require('../../services/activeServiceRequestService');
 const {
@@ -394,17 +395,8 @@ exports.acceptServiceRequest = async (req, res, next) => {
 
     // Push via Mongo-stored FCM tokens (server-side). No client Firestore dependency.
     try {
-      const bodyParts = [
-        `${providerName} has accepted your ${serviceType} request`,
-      ];
-      if (problemShort) bodyParts.push(`Problem: ${problemShort}`);
-      if (phoneForCustomer) bodyParts.push(`Phone: ${phoneForCustomer}`);
-      bodyParts.push(`Accepted: ${new Date(serviceRequest.acceptedAt).toLocaleString()}`);
-      const body = bodyParts.join('. ');
-
       await notifyUser(serviceRequest.customerId, {
-        title: 'Service Request Accepted',
-        body,
+        ...customerPartnerAccepted({providerName, serviceType}),
         data: {
           type: 'service',
           status: 'accepted',
@@ -419,8 +411,8 @@ exports.acceptServiceRequest = async (req, res, next) => {
         },
       });
       await notifyAdmins({
-        title: 'Service Request Accepted',
-        body: `${providerName} accepted a ${serviceType} request`,
+        title: 'Partner accepted',
+        body: `${providerName || 'A partner'} accepted a ${serviceType} job`,
         data: {
           type: 'service',
           status: 'accepted',

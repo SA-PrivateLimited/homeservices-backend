@@ -15,6 +15,10 @@ const {
 const {
   attachCustomerProfileImages,
 } = require('../../utils/attachCustomerProfileImages');
+const {
+  customerWorkStarted,
+  customerJobCompleted,
+} = require('../../utils/fcmCopy');
 
 /** Providers must not see the customer verification PIN; phones follow contact rules. */
 function sanitizeJobCardForProvider(job, viewer, settings) {
@@ -303,17 +307,23 @@ exports.updateJobCardStatus = async (req, res, next) => {
     if (status === 'in-progress' && updatedJobCard?.customerId) {
       try {
         const {notifyUser} = require('../../utils/notify');
-        const pinText = (update.taskPIN || updatedJobCard.taskPIN)
-          ? ` Your verification PIN is: ${update.taskPIN || updatedJobCard.taskPIN}.`
-          : '';
+        const pin = String(update.taskPIN || updatedJobCard.taskPIN || '');
         await notifyUser(updatedJobCard.customerId, {
-          title: 'Service Started',
-          body: `${updatedJobCard.providerName || 'Provider'} has started your ${updatedJobCard.serviceType || 'service'}.${pinText}`,
+          ...customerWorkStarted({
+            providerName: updatedJobCard.providerName,
+            serviceType: updatedJobCard.serviceType,
+            pin,
+          }),
           data: {
             type: 'service',
             status: 'in-progress',
+            serviceRequestId: String(
+              updatedJobCard.serviceRequestId ||
+                updatedJobCard.bookingId ||
+                '',
+            ),
             jobCardId: String(jobCardId),
-            pin: String(update.taskPIN || updatedJobCard.taskPIN || ''),
+            pin,
           },
         });
       } catch (notifyErr) {
@@ -387,8 +397,10 @@ exports.updateJobCardStatus = async (req, res, next) => {
                 const {emitServiceCompleted} = require('../../realtime/socket');
                 const srId = String(sr._id);
                 await notifyUser(updatedJobCard.customerId, {
-                  title: 'Service Complete',
-                  body: `${updatedJobCard.providerName || 'Your partner'} has completed your ${updatedJobCard.serviceType || 'service'}.`,
+                  ...customerJobCompleted({
+                    providerName: updatedJobCard.providerName,
+                    serviceType: updatedJobCard.serviceType,
+                  }),
                   data: {
                     type: 'service',
                     status: 'completed',

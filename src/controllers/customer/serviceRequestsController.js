@@ -18,6 +18,11 @@ const {
   notifyStoredProviderIds,
 } = require('../../utils/notifyMatchedProviders');
 const {
+  partnerNewJob,
+  partnerJobUpdated,
+  partnerJobCancelled,
+} = require('../../utils/fcmCopy');
+const {
   findActiveServiceRequest,
   acquireActiveRequestLock,
   bindLockToRequest,
@@ -438,8 +443,10 @@ exports.createServiceRequest = async (req, res, next) => {
         providers: providersToNotify,
         bookingData,
         fcm: {
-          title: 'New service request',
-          body: `${bookingData.customerName} needs ${serviceType} nearby`,
+          ...partnerNewJob({
+            customerName: bookingData.customerName,
+            serviceType,
+          }),
           data: {
             type: 'new-booking',
             serviceRequestId: bookingData.serviceRequestId,
@@ -690,8 +697,10 @@ async function rematchProvidersAfterEdit(serviceRequest, userId) {
     providers: providersToNotify,
     bookingData,
     fcm: {
-      title: 'Updated service request',
-      body: `${bookingData.customerName} updated a ${serviceType} request nearby`,
+      ...partnerJobUpdated({
+        customerName: bookingData.customerName,
+        serviceType,
+      }),
       data: {
         type: 'updated-booking',
         serviceRequestId: bookingData.serviceRequestId,
@@ -1041,8 +1050,11 @@ exports.cancelServiceRequest = async (req, res, next) => {
 
       try {
         await notifyProvider(providerId, {
-          title: 'Customer cancelled the job',
-          body: `${customerName} cancelled their ${serviceType} request`,
+          ...partnerJobCancelled({
+            customerName,
+            serviceType,
+            reason: trimmedReason,
+          }),
           data: {
             type: 'job-cancelled',
             status: 'cancelled',
@@ -1050,6 +1062,7 @@ exports.cancelServiceRequest = async (req, res, next) => {
             serviceRequestId: srId,
             jobCardId: cancelledJobCardId || '',
             serviceType,
+            cancellationReason: trimmedReason,
           },
         });
       } catch (fcmErr) {
