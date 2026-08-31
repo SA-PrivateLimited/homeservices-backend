@@ -94,7 +94,7 @@ async function sendToToken(token, {title, body, data, android, apns} = {}) {
   const message = {
     token,
     notification: {
-      title: title || 'Homora',
+      title: title || 'Akanso',
       body: body || '',
     },
     data: Object.fromEntries(
@@ -129,7 +129,7 @@ async function sendToTokens(tokens, payload = {}) {
     const res = await firebaseAdmin.messaging().sendEachForMulticast({
       tokens: chunk,
       notification: {
-        title: payload.title || 'Homora',
+        title: payload.title || 'Akanso',
         body: payload.body || '',
       },
       data: Object.fromEntries(
@@ -159,7 +159,7 @@ async function sendToTopic(topic, {title, body, data} = {}) {
     const messageId = await firebaseAdmin.messaging().send({
       topic: name,
       notification: {
-        title: title || 'Homora',
+        title: title || 'Akanso',
         body: body || '',
       },
       data: Object.fromEntries(

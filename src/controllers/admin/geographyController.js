@@ -101,64 +101,39 @@ exports.listStates = async (req, res, next) => {
       .sort(ADMIN_LIST_SORT)
       .lean();
 
-    const providers = await Provider.find({
-      isActive: {$ne: false},
-      $or: [
-        {'location.stateId': {$exists: true, $ne: ''}},
-        {'location.state': {$exists: true, $ne: ''}},
-      ],
-    })
-      .select('_id location.stateId location.state rating totalReviews')
-      .lean();
-
-    const byStateId = new Map();
-    const byStateName = new Map();
-    for (const p of providers) {
-      const sid = (p.location?.stateId || '').trim();
-      const sname = (p.location?.state || '').trim().toLowerCase();
-      if (sid) {
-        if (!byStateId.has(sid)) byStateId.set(sid, []);
-        byStateId.get(sid).push(p);
-      }
-      if (sname) {
-        if (!byStateName.has(sname)) byStateName.set(sname, []);
-        byStateName.get(sname).push(p);
-      }
-    }
+    const grouped = await Provider.aggregate([
+      {$match: {isActive: {$ne: false}}},
+      {
+        $group: {
+          _id: '$location.stateId',
+          providerCount: {$sum: 1},
+          avgRating: {$avg: '$rating'},
+          totalReviews: {$sum: {$ifNull: ['$totalReviews', 0]}},
+        },
+      },
+    ]);
+    const byStateId = new Map(
+      grouped
+        .filter((row) => row._id)
+        .map((row) => [String(row._id), row]),
+    );
 
     const data = [];
     for (const state of states) {
-      const fromId = byStateId.get(state._id) || [];
-      const fromName = byStateName.get(String(state.name).toLowerCase()) || [];
-      const seen = new Set();
-      const group = [];
-      for (const p of [...fromId, ...fromName]) {
-        if (seen.has(p._id)) continue;
-        seen.add(p._id);
-        group.push(p);
-      }
-      const ids = group.map((p) => p._id);
-      const jobStats = await jobStatsForProviderIds(ids);
+      const row = byStateId.get(String(state._id)) || {};
       data.push({
         _id: state._id,
         name: state.name,
         code: state.code || '',
-        providerCount: group.length,
-        avgRating: avgRating(group),
-        totalReviews: totalReviewsSum(group),
+        providerCount: row.providerCount || 0,
+        avgRating: row.avgRating
+          ? Math.round(row.avgRating * 10) / 10
+          : 0,
+        totalReviews: row.totalReviews || 0,
         createdAt: state.createdAt,
         updatedAt: state.updatedAt,
-        jobStats,
+        jobStats: emptyJobStats(),
       });
-    }
-
-    // Unassigned bucket (providers without state)
-    const assignedIds = new Set();
-    for (const list of byStateId.values()) {
-      list.forEach((p) => assignedIds.add(p._id));
-    }
-    for (const list of byStateName.values()) {
-      list.forEach((p) => assignedIds.add(p._id));
     }
 
     res.json({
@@ -195,65 +170,53 @@ exports.listDistrictsByState = async (req, res, next) => {
       .sort(ADMIN_LIST_SORT)
       .lean();
 
-    const providers = await Provider.find({
-      isActive: {$ne: false},
-      $or: [
-        {'location.stateId': stateId},
-        {'location.state': new RegExp(`^${escapeRegex(state.name)}$`, 'i')},
-      ],
-    })
-      .select(
-        '_id location.districtId location.district location.city rating totalReviews serviceType specialization serviceCategories',
-      )
-      .lean();
-
-    const byDistrictId = new Map();
-    const byDistrictName = new Map();
-    for (const p of providers) {
-      const did = (p.location?.districtId || '').trim();
-      const dname = (
-        p.location?.district ||
-        p.location?.city ||
-        ''
-      )
-        .trim()
-        .toLowerCase();
-      if (did) {
-        if (!byDistrictId.has(did)) byDistrictId.set(did, []);
-        byDistrictId.get(did).push(p);
-      }
-      if (dname) {
-        if (!byDistrictName.has(dname)) byDistrictName.set(dname, []);
-        byDistrictName.get(dname).push(p);
-      }
-    }
+    const grouped = await Provider.aggregate([
+      {
+        $match: {
+          isActive: {$ne: false},
+          $or: [
+            {'location.stateId': stateId},
+            {
+              'location.state': new RegExp(
+                `^${escapeRegex(state.name)}$`,
+                'i',
+              ),
+            },
+          ],
+        },
+      },
+      {
+        $group: {
+          _id: '$location.districtId',
+          providerCount: {$sum: 1},
+          avgRating: {$avg: '$rating'},
+          totalReviews: {$sum: {$ifNull: ['$totalReviews', 0]}},
+        },
+      },
+    ]);
+    const byDistrictId = new Map(
+      grouped
+        .filter((row) => row._id)
+        .map((row) => [String(row._id), row]),
+    );
 
     const data = [];
     for (const district of districts) {
-      const fromId = byDistrictId.get(district._id) || [];
-      const fromName =
-        byDistrictName.get(String(district.name).toLowerCase()) || [];
-      const seen = new Set();
-      const group = [];
-      for (const p of [...fromId, ...fromName]) {
-        if (seen.has(p._id)) continue;
-        seen.add(p._id);
-        group.push(p);
-      }
-      const ids = group.map((p) => p._id);
-      const jobStats = await jobStatsForProviderIds(ids);
+      const row = byDistrictId.get(String(district._id)) || {};
       data.push({
         _id: district._id,
         name: district.name,
         stateId: district.stateId,
         stateName: district.stateName || state.name,
-        providerCount: group.length,
-        serviceBreakdown: serviceMembershipBreakdown(group),
-        avgRating: avgRating(group),
-        totalReviews: totalReviewsSum(group),
+        providerCount: row.providerCount || 0,
+        serviceBreakdown: [],
+        avgRating: row.avgRating
+          ? Math.round(row.avgRating * 10) / 10
+          : 0,
+        totalReviews: row.totalReviews || 0,
         createdAt: district.createdAt,
         updatedAt: district.updatedAt,
-        jobStats,
+        jobStats: emptyJobStats(),
       });
     }
 
@@ -287,7 +250,9 @@ exports.listProvidersByDistrict = async (req, res, next) => {
       });
     }
 
-    const providers = await Provider.find({
+    const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
+    const off = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const filter = {
       isActive: {$ne: false},
       $or: [
         {'location.districtId': districtId},
@@ -313,28 +278,30 @@ exports.listProvidersByDistrict = async (req, res, next) => {
           ],
         },
       ],
-    })
-      .sort(ADMIN_LIST_SORT)
-      .lean();
+    };
 
-    const data = [];
-    for (const p of providers) {
-      const jobStats = await jobStatsForProviderIds([p._id]);
-      data.push({
-        _id: p._id,
-        name: p.businessName || p.name || p.displayName || 'Provider',
-        phone: p.phone || p.phoneNumber || '',
-        serviceType: p.serviceType || p.specialization || '',
-        services: summarizePartnerServices(p),
-        approvalStatus: p.approvalStatus || 'pending',
-        rating: p.rating || 0,
-        totalReviews: p.totalReviews || 0,
-        location: p.location || {},
-        createdAt: p.createdAt,
-        updatedAt: p.updatedAt,
-        jobStats,
-      });
-    }
+    const [providers, total] = await Promise.all([
+      Provider.find(filter).sort(ADMIN_LIST_SORT).limit(lim).skip(off).lean(),
+      Provider.countDocuments(filter),
+    ]);
+
+    const pageIds = providers.map((p) => p._id);
+    const jobStats = await jobStatsForProviderIds(pageIds);
+
+    const data = providers.map((p) => ({
+      _id: p._id,
+      name: p.businessName || p.name || p.displayName || 'Provider',
+      phone: p.phone || p.phoneNumber || '',
+      serviceType: p.serviceType || p.specialization || '',
+      services: summarizePartnerServices(p),
+      approvalStatus: p.approvalStatus || 'pending',
+      rating: p.rating || 0,
+      totalReviews: p.totalReviews || 0,
+      location: p.location || {},
+      createdAt: p.createdAt,
+      updatedAt: p.updatedAt,
+      jobStats,
+    }));
 
     res.json({
       success: true,
@@ -350,6 +317,9 @@ exports.listProvidersByDistrict = async (req, res, next) => {
         },
       },
       count: data.length,
+      total,
+      limit: lim,
+      offset: off,
     });
   } catch (error) {
     next(error);

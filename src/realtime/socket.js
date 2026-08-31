@@ -232,7 +232,8 @@ async function notifyAreaProviders({
   bookingData,
   excludeProviderId,
 }) {
-  const list = Array.isArray(providers) ? providers : [];
+  const {MATCH_CAP} = require('../utils/findProvidersInArea');
+  const list = (Array.isArray(providers) ? providers : []).slice(0, MATCH_CAP);
   if (!list.length || !bookingData) {
     return {notified: 0, skipped: 0};
   }
