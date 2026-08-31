@@ -14,7 +14,7 @@ test('partner cancel copy is short and includes reason', () => {
     serviceType: 'Landlord',
     reason: 'Longer time',
   });
-  assert.equal(copy.title, 'Job cancelled');
+  assert.equal(copy.title, 'Job Cancelled update');
   assert.equal(
     copy.body,
     'sandeep k gupta cancelled the Landlord job. Reason: Longer time',
@@ -26,7 +26,7 @@ test('partner new job copy names the service', () => {
     customerName: 'Ravi',
     serviceType: 'Electrician',
   });
-  assert.equal(copy.title, 'New job nearby');
+  assert.equal(copy.title, 'New job update');
   assert.equal(copy.body, 'Ravi needs Electrician near you');
 });
 
@@ -35,7 +35,7 @@ test('partner updated copy stays specific', () => {
     customerName: 'Ravi',
     serviceType: 'Plumber',
   });
-  assert.equal(copy.title, 'Job updated');
+  assert.equal(copy.title, 'Job details update');
   assert.equal(copy.body, 'Ravi updated the Plumber job');
 });
 
@@ -44,7 +44,7 @@ test('customer accepted copy names the partner and service', () => {
     providerName: 'Ramesh',
     serviceType: 'Electrician',
   });
-  assert.equal(copy.title, 'Partner accepted');
+  assert.equal(copy.title, 'Job accepted update');
   assert.equal(copy.body, 'Ramesh accepted your Electrician job.');
 });
 
@@ -54,6 +54,6 @@ test('customer in-progress copy includes PIN when present', () => {
     serviceType: 'Electrician',
     pin: '4821',
   });
-  assert.equal(copy.title, 'Work started');
+  assert.equal(copy.title, 'Work started update');
   assert.equal(copy.body, 'Ramesh started your Electrician job. PIN: 4821');
 });

@@ -14,7 +14,7 @@ const {
   saveServiceRequestFlexible,
 } = require('../../utils/findServiceRequestFlexible');
 const {notifyUser, notifyAdmins} = require('../../utils/notify');
-const {customerPartnerAccepted} = require('../../utils/fcmCopy');
+const {customerPartnerAccepted, customerPartnerDeclined} = require('../../utils/fcmCopy');
 const {notifyStoredProviderIds} = require('../../utils/notifyMatchedProviders');
 const {onServiceRequestStatusChange} = require('../../services/activeServiceRequestService');
 const {
@@ -595,8 +595,7 @@ exports.rejectServiceRequest = async (req, res, next) => {
 
     try {
       await notifyUser(serviceRequest.customerId, {
-        title: 'Provider unavailable',
-        body: reason,
+        ...customerPartnerDeclined({reason}),
         data: {
           type: 'service',
           status: 'rejected',
