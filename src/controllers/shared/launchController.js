@@ -1,51 +1,90 @@
 /**
- * CustomerWeb controlled launch — status + completion.
- * Super Admin configures LAUNCH; public client may only complete LAUNCH → NORMAL.
+ * CustomerWeb greeting gate — Super Admin configures; public GET/complete.
  */
 
+const {randomUUID} = require('crypto');
 const SystemConfig = require('../../models/SystemConfig');
+const User = require('../../models/User');
 const {createHttpError} = require('../../utils/assetValidation');
 const {ensureConfig} = require('../../utils/superAdmin');
+const {
+  LAUNCH_WISH_ICONS,
+  LAUNCH_GREETING_PRESETS,
+  CLOSE_MODES,
+  normalizeEventName,
+  normalizeWishIcon,
+  normalizeGreeting,
+  normalizeCta,
+  normalizeCloseMode,
+  normalizeCountdownSeconds,
+  normalizeAnimationMode,
+  resolveLaunchAnimation,
+} = require('../../utils/launchWishConfig');
 
 const LAUNCH_STATES = Object.freeze({
   NORMAL: 'NORMAL',
   LAUNCH: 'LAUNCH',
 });
 
-function publicLaunchPayload(doc) {
-  const state =
-    doc?.websiteLaunchState === LAUNCH_STATES.LAUNCH
-      ? LAUNCH_STATES.LAUNCH
-      : LAUNCH_STATES.NORMAL;
+function publicLaunchPayload(doc, {viewerSeen = false} = {}) {
+  const globalLaunch = doc?.websiteLaunchState === LAUNCH_STATES.LAUNCH;
+  const closeMode = normalizeCloseMode(doc?.websiteLaunchCloseMode);
+  const waveId = String(doc?.websiteLaunchWaveId || '').trim() || 'default';
+  let state = globalLaunch ? LAUNCH_STATES.LAUNCH : LAUNCH_STATES.NORMAL;
+  if (globalLaunch && closeMode === CLOSE_MODES.PER_PERSON && viewerSeen) {
+    state = LAUNCH_STATES.NORMAL;
+  }
+  const greeting = normalizeGreeting(doc?.websiteLaunchGreeting);
+  const animationMode = normalizeAnimationMode(doc?.websiteLaunchAnimation);
   return {
     state,
+    closeMode,
+    waveId,
+    eventName: normalizeEventName(doc?.websiteLaunchEventName),
+    greeting,
+    cta: normalizeCta(doc?.websiteLaunchCta, greeting),
+    countdownSeconds: normalizeCountdownSeconds(
+      doc?.websiteLaunchCountdownSeconds,
+    ),
+    animationMode,
+    animation: resolveLaunchAnimation(animationMode, greeting),
     name: String(doc?.websiteLaunchName || '').trim(),
     message: String(doc?.websiteLaunchMessage || '').trim(),
+    icon: normalizeWishIcon(doc?.websiteLaunchIcon),
   };
 }
 
-/**
- * GET /api/launch — public
- */
+function viewerHasSeenWave(userDoc, waveId) {
+  const seen = String(userDoc?.websiteLaunchSeenWaveId || '').trim();
+  return Boolean(seen && waveId && seen === waveId);
+}
+
+function isAdminAudience(req) {
+  const role = req.user?.activeRole || req.user?.role;
+  return role === 'admin';
+}
+
 exports.getLaunchStatus = async (req, res, next) => {
   try {
     const doc = await SystemConfig.findById('global').lean();
+    const waveId = String(doc?.websiteLaunchWaveId || '').trim() || 'default';
+    const viewerSeen =
+      isAdminAudience(req) ? false : viewerHasSeenWave(req.userDoc, waveId);
     res.json({
       success: true,
-      data: publicLaunchPayload(doc),
+      data: publicLaunchPayload(doc, {viewerSeen}),
     });
   } catch (error) {
     next(error);
   }
 };
 
-/**
- * POST /api/launch/complete — public, idempotent LAUNCH → NORMAL only
- * Does not accept client-supplied state.
- */
 exports.completeLaunch = async (req, res, next) => {
   try {
     const existing = await SystemConfig.findById('global').lean();
+    const closeMode = normalizeCloseMode(existing?.websiteLaunchCloseMode);
+    const waveId =
+      String(existing?.websiteLaunchWaveId || '').trim() || 'default';
     const current =
       existing?.websiteLaunchState === LAUNCH_STATES.LAUNCH
         ? LAUNCH_STATES.LAUNCH
@@ -54,12 +93,24 @@ exports.completeLaunch = async (req, res, next) => {
     if (current === LAUNCH_STATES.NORMAL) {
       return res.json({
         success: true,
-        data: {
-          state: LAUNCH_STATES.NORMAL,
-          name: String(existing?.websiteLaunchName || '').trim(),
-          message: String(existing?.websiteLaunchMessage || '').trim(),
-        },
-        message: 'Website already launched',
+        data: publicLaunchPayload(existing, {viewerSeen: true}),
+        message: 'Greeting already closed',
+      });
+    }
+
+    if (closeMode === CLOSE_MODES.PER_PERSON) {
+      if (req.user?.uid) {
+        await User.findByIdAndUpdate(req.user.uid, {
+          $set: {
+            websiteLaunchSeenWaveId: waveId,
+            updatedAt: new Date(),
+          },
+        });
+      }
+      return res.json({
+        success: true,
+        data: publicLaunchPayload(existing, {viewerSeen: true}),
+        message: 'Greeting seen',
       });
     }
 
@@ -76,34 +127,30 @@ exports.completeLaunch = async (req, res, next) => {
       {new: true},
     );
 
-    // Race: another request already completed
     if (!updated) {
       const latest = await SystemConfig.findById('global').lean();
       return res.json({
         success: true,
-        data: publicLaunchPayload(latest),
-        message: 'Website already launched',
+        data: publicLaunchPayload(latest, {viewerSeen: true}),
+        message: 'Greeting already closed',
       });
     }
 
     res.json({
       success: true,
-      data: publicLaunchPayload(updated),
-      message: 'Website launched',
+      data: publicLaunchPayload(updated, {viewerSeen: true}),
+      message: 'Greeting closed for everyone',
     });
   } catch (error) {
     next(error);
   }
 };
 
-/**
- * PUT /api/launch — Super Admin only: set state / name / message
- * Body: { state?: 'LAUNCH'|'NORMAL', name?: string, message?: string }
- */
 exports.updateLaunchConfig = async (req, res, next) => {
   try {
     const body = req.body || {};
     const updates = {updatedAt: new Date(), updatedBy: req.user?.uid || null};
+    const current = await SystemConfig.findById('global').lean();
 
     if (body.state !== undefined) {
       const state = String(body.state || '')
@@ -119,9 +166,36 @@ exports.updateLaunchConfig = async (req, res, next) => {
       updates.websiteLaunchState = state;
       if (state === LAUNCH_STATES.LAUNCH) {
         updates.websiteLaunchCompletedAt = null;
+        if (current?.websiteLaunchState !== LAUNCH_STATES.LAUNCH) {
+          updates.websiteLaunchWaveId = randomUUID();
+        }
       }
     }
 
+    if (body.closeMode !== undefined) {
+      updates.websiteLaunchCloseMode = normalizeCloseMode(body.closeMode);
+    }
+    if (body.eventName !== undefined) {
+      updates.websiteLaunchEventName = normalizeEventName(body.eventName);
+    }
+    if (body.greeting !== undefined) {
+      updates.websiteLaunchGreeting = normalizeGreeting(body.greeting);
+    }
+    if (body.cta !== undefined) {
+      updates.websiteLaunchCta = String(body.cta || '')
+        .trim()
+        .slice(0, 80);
+    }
+    if (body.countdownSeconds !== undefined) {
+      updates.websiteLaunchCountdownSeconds = normalizeCountdownSeconds(
+        body.countdownSeconds,
+      );
+    }
+    if (body.animationMode !== undefined) {
+      updates.websiteLaunchAnimation = normalizeAnimationMode(
+        body.animationMode,
+      );
+    }
     if (body.name !== undefined) {
       updates.websiteLaunchName = String(body.name || '')
         .trim()
@@ -132,17 +206,54 @@ exports.updateLaunchConfig = async (req, res, next) => {
         .trim()
         .slice(0, 2000);
     }
+    if (body.icon !== undefined) {
+      const icon = String(body.icon || '').trim();
+      if (icon && !LAUNCH_WISH_ICONS.includes(icon)) {
+        throw createHttpError(
+          400,
+          `icon must be one of: ${LAUNCH_WISH_ICONS.join(', ')}`,
+          'Bad Request',
+        );
+      }
+      updates.websiteLaunchIcon = normalizeWishIcon(icon);
+    }
 
     if (
       updates.websiteLaunchState === undefined &&
+      updates.websiteLaunchCloseMode === undefined &&
+      updates.websiteLaunchEventName === undefined &&
+      updates.websiteLaunchGreeting === undefined &&
+      updates.websiteLaunchCta === undefined &&
+      updates.websiteLaunchCountdownSeconds === undefined &&
+      updates.websiteLaunchAnimation === undefined &&
       updates.websiteLaunchName === undefined &&
-      updates.websiteLaunchMessage === undefined
+      updates.websiteLaunchMessage === undefined &&
+      updates.websiteLaunchIcon === undefined
     ) {
       throw createHttpError(
         400,
-        'Provide state, name, and/or message',
+        'Provide state, closeMode, eventName, greeting, cta, countdownSeconds, animationMode, name, message, and/or icon',
         'Bad Request',
       );
+    }
+
+    const willBeLaunch =
+      updates.websiteLaunchState === LAUNCH_STATES.LAUNCH ||
+      (updates.websiteLaunchState === undefined &&
+        current?.websiteLaunchState === LAUNCH_STATES.LAUNCH);
+    const contentChanged =
+      updates.websiteLaunchGreeting !== undefined ||
+      updates.websiteLaunchCta !== undefined ||
+      updates.websiteLaunchEventName !== undefined ||
+      updates.websiteLaunchIcon !== undefined ||
+      updates.websiteLaunchMessage !== undefined ||
+      updates.websiteLaunchName !== undefined;
+    if (
+      willBeLaunch &&
+      contentChanged &&
+      updates.websiteLaunchWaveId === undefined
+    ) {
+      updates.websiteLaunchWaveId = randomUUID();
     }
 
     await ensureConfig();
@@ -163,4 +274,7 @@ exports.updateLaunchConfig = async (req, res, next) => {
 };
 
 exports.LAUNCH_STATES = LAUNCH_STATES;
+exports.CLOSE_MODES = CLOSE_MODES;
 exports.publicLaunchPayload = publicLaunchPayload;
+exports.LAUNCH_WISH_ICONS = LAUNCH_WISH_ICONS;
+exports.LAUNCH_GREETING_PRESETS = LAUNCH_GREETING_PRESETS;

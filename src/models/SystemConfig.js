@@ -56,6 +56,58 @@ const systemConfigSchema = new mongoose.Schema(
       trim: true,
       maxlength: 200,
     },
+    /** Product / event name on the launch page. Default Akanso — not client branding. */
+    websiteLaunchEventName: {
+      type: String,
+      default: 'Akanso',
+      trim: true,
+      maxlength: 80,
+    },
+    /** Festival / occasion line (Happy Holi, Happy Diwali, or custom). */
+    websiteLaunchGreeting: {
+      type: String,
+      default: 'Happy Holi',
+      trim: true,
+      maxlength: 80,
+    },
+    /** Continue button on CustomerWeb. Empty follows the greeting. */
+    websiteLaunchCta: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 80,
+    },
+    /** Countdown seconds on CustomerWeb after Continue. 0 skips the count. */
+    websiteLaunchCountdownSeconds: {
+      type: Number,
+      default: 10,
+      min: 0,
+      max: 30,
+    },
+    /**
+     * AUTO matches the greeting. Or force crackers, diyas, jets, holi, snow, sparkle, none.
+     */
+    websiteLaunchAnimation: {
+      type: String,
+      enum: [
+        'AUTO',
+        'CRACKERS',
+        'DIYAS',
+        'JETS',
+        'HOLI',
+        'SNOW',
+        'SPARKLE',
+        'NONE',
+      ],
+      default: 'AUTO',
+    },
+    /** Material icon for the personal wish (allowlisted). */
+    websiteLaunchIcon: {
+      type: String,
+      default: 'celebration',
+      trim: true,
+      maxlength: 64,
+    },
     /** Tribute message shown on CustomerWeb launch page (backend-driven). */
     websiteLaunchMessage: {
       type: String,
@@ -67,6 +119,22 @@ const systemConfigSchema = new mongoose.Schema(
     websiteLaunchCompletedAt: {
       type: Date,
       default: null,
+    },
+    /**
+     * GLOBAL — first Continue closes the greeting for everyone.
+     * PER_PERSON — each signed-in user (and each guest browser) sees it once.
+     */
+    websiteLaunchCloseMode: {
+      type: String,
+      enum: ['GLOBAL', 'PER_PERSON'],
+      default: 'GLOBAL',
+    },
+    /** Changes when a new greeting campaign starts so “seen once” resets. */
+    websiteLaunchWaveId: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 80,
     },
     /**
      * Partner go-live verification:

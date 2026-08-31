@@ -4,7 +4,7 @@
 
 const express = require('express');
 const router = express.Router();
-const {requireRole} = require('../../middleware/auth');
+const {requireRole, optionalAuth} = require('../../middleware/auth');
 const {requireSuperAdmin} = require('../../middleware/requireSuperAdmin');
 const {logRequest} = require('../../middleware/logger');
 const {
@@ -13,11 +13,11 @@ const {
   updateLaunchConfig,
 } = require('../../controllers/shared/launchController');
 
-/** GET /api/launch — public launch status + tribute config */
-router.get('/', logRequest, getLaunchStatus);
+/** GET /api/launch — public; optional JWT so per-person “already seen” works */
+router.get('/', optionalAuth, logRequest, getLaunchStatus);
 
-/** POST /api/launch/complete — public idempotent LAUNCH → NORMAL */
-router.post('/complete', logRequest, completeLaunch);
+/** POST /api/launch/complete — GLOBAL closes for all; PER_PERSON marks this visitor */
+router.post('/complete', optionalAuth, logRequest, completeLaunch);
 
 /**
  * PUT /api/launch — Super Admin only
