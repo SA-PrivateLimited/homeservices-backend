@@ -1290,8 +1290,11 @@ exports.createUserByAdmin = async (req, res, next) => {
           requestedName: name,
           displayId,
         });
-      } else if (!name) {
-        resolvedName = resolveInitialProviderName(name);
+      } else {
+        resolvedName = resolveInitialProviderName({
+          requestedName: name,
+          displayId,
+        });
       }
     }
 
@@ -1334,8 +1337,9 @@ exports.createUserByAdmin = async (req, res, next) => {
         if (!existing) {
           await Provider.create({
             _id,
-            name: name || resolveInitialProviderName(name),
-            displayName: name || resolveInitialProviderName(name),
+            name: resolvedName || resolveInitialProviderName({displayId}),
+            displayName:
+              resolvedName || resolveInitialProviderName({displayId}),
             phoneNumber: synced.phoneNumber || synced.phone || undefined,
             serviceType: serviceType || undefined,
             specialization: serviceType || undefined,

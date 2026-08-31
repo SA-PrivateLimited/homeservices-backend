@@ -270,9 +270,17 @@ async function ensureProviderProfile(user, fullName) {
   const Provider = require('../models/Provider');
   const existing = await Provider.findById(user._id);
   if (existing) return existing;
-  const providerName = resolveInitialProviderName(
-    fullName || user.name || user.displayName,
-  );
+  if (!user.customerDisplayId) {
+    user.customerDisplayId = await allocateCustomerDisplayId();
+    if (typeof user.save === 'function') {
+      await user.save();
+    }
+  }
+  const providerName = resolveInitialProviderName({
+    requestedName: fullName || user.name || user.displayName,
+    existingName: user.name || user.displayName,
+    displayId: user.customerDisplayId,
+  });
   return Provider.create({
     _id: user._id,
     name: providerName,
@@ -465,7 +473,7 @@ exports.register = async (req, res, next) => {
       displayId = await allocateCustomerDisplayId();
       resolvedName =
         role === 'provider'
-          ? resolveInitialProviderName(fullName)
+          ? resolveInitialProviderName({requestedName: fullName, displayId})
           : resolveInitialCustomerName({requestedName: fullName, displayId});
     }
 
@@ -1680,7 +1688,7 @@ exports.registerWithOtp = async (req, res, next) => {
       const displayId = await allocateCustomerDisplayId();
       resolvedName =
         requestedRole === 'provider'
-          ? resolveInitialProviderName(requestedName)
+          ? resolveInitialProviderName({requestedName, displayId})
           : resolveInitialCustomerName({requestedName, displayId});
       user = await User.create({
         _id: crypto.randomUUID(),
@@ -1727,7 +1735,10 @@ exports.registerWithOtp = async (req, res, next) => {
       if (!user.name && !user.displayName) {
         resolvedName =
           requestedRole === 'provider'
-            ? resolveInitialProviderName(requestedName)
+            ? resolveInitialProviderName({
+                requestedName,
+                displayId: user.customerDisplayId,
+              })
             : resolveInitialCustomerName({
                 requestedName,
                 displayId: user.customerDisplayId,
