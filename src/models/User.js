@@ -275,6 +275,13 @@ const userSchema = new mongoose.Schema({
     default: null,
     index: true,
   },
+  /** Last festival-greeting wave this user already continued past. */
+  websiteLaunchSeenWaveId: {
+    type: String,
+    default: '',
+    trim: true,
+    maxlength: 80,
+  },
   /**
    * Independent Customer access. False blocks Customer login only.
    * Partner access is Provider.isActive.
