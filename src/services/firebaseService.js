@@ -85,6 +85,31 @@ async function verifyPhoneIdToken(idToken, expectedPhone) {
   };
 }
 
+function stringifyFcmData(title, body, data) {
+  const merged = {
+    ...(data || {}),
+    title: title || data?.title || 'Akanso',
+    body: body || data?.body || '',
+  };
+  return Object.fromEntries(
+    Object.entries(merged).map(([k, v]) => [k, String(v ?? '')]),
+  );
+}
+
+/**
+ * Web/PWA FCM must be data-only. A `notification` payload is auto-shown on
+ * Chrome and skipped by our SW on iOS — so iPhone PWAs showed nothing.
+ * The service worker calls showNotification once from data.title/body.
+ */
+function webPushMessage(title, body, data) {
+  return {
+    data: stringifyFcmData(title, body, data),
+    webpush: {
+      headers: {Urgency: 'high'},
+    },
+  };
+}
+
 async function sendToToken(token, {title, body, data, android, apns} = {}) {
   assertReady();
   if (!token) {
@@ -93,13 +118,7 @@ async function sendToToken(token, {title, body, data, android, apns} = {}) {
 
   const message = {
     token,
-    notification: {
-      title: title || 'Akanso',
-      body: body || '',
-    },
-    data: Object.fromEntries(
-      Object.entries(data || {}).map(([k, v]) => [k, String(v ?? '')]),
-    ),
+    ...webPushMessage(title, body, data),
   };
   if (android) message.android = android;
   if (apns) message.apns = apns;
@@ -123,18 +142,13 @@ async function sendToTokens(tokens, payload = {}) {
   let successCount = 0;
   let failureCount = 0;
   const CHUNK = 500;
+  const base = webPushMessage(payload.title, payload.body, payload.data);
 
   for (let i = 0; i < list.length; i += CHUNK) {
     const chunk = list.slice(i, i + CHUNK);
     const res = await firebaseAdmin.messaging().sendEachForMulticast({
       tokens: chunk,
-      notification: {
-        title: payload.title || 'Akanso',
-        body: payload.body || '',
-      },
-      data: Object.fromEntries(
-        Object.entries(payload.data || {}).map(([k, v]) => [k, String(v ?? '')]),
-      ),
+      ...base,
     });
     successCount += res.successCount;
     failureCount += res.failureCount;
@@ -158,13 +172,7 @@ async function sendToTopic(topic, {title, body, data} = {}) {
   try {
     const messageId = await firebaseAdmin.messaging().send({
       topic: name,
-      notification: {
-        title: title || 'Akanso',
-        body: body || '',
-      },
-      data: Object.fromEntries(
-        Object.entries(data || {}).map(([k, v]) => [k, String(v ?? '')]),
-      ),
+      ...webPushMessage(title, body, data),
     });
     return {sent: true, messageId};
   } catch (err) {
