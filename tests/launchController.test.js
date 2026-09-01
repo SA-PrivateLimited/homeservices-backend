@@ -6,13 +6,35 @@ const {describe, test} = require('node:test');
 const assert = require('node:assert/strict');
 const {
   LAUNCH_STATES,
+  CLOSE_MODES,
   publicLaunchPayload,
 } = require('../src/controllers/shared/launchController');
+const {
+  DEFAULT_EVENT_NAME,
+  DEFAULT_GREETING,
+  DEFAULT_WISH_ICON,
+  DEFAULT_COUNTDOWN_SECONDS,
+  ANIMATION_MODES,
+} = require('../src/utils/launchWishConfig');
+
+const defaultPublicFields = {
+  closeMode: CLOSE_MODES.PER_PERSON,
+  waveId: 'default',
+  eventName: DEFAULT_EVENT_NAME,
+  greeting: DEFAULT_GREETING,
+  cta: DEFAULT_GREETING,
+  countdownSeconds: DEFAULT_COUNTDOWN_SECONDS,
+  timerEndsAt: null,
+  animationMode: ANIMATION_MODES.AUTO,
+  animation: 'sparkle',
+  icon: DEFAULT_WISH_ICON,
+};
 
 describe('publicLaunchPayload', () => {
   test('defaults missing doc to NORMAL with empty tribute fields', () => {
     assert.deepEqual(publicLaunchPayload(null), {
       state: LAUNCH_STATES.NORMAL,
+      ...defaultPublicFields,
       name: '',
       message: '',
     });
@@ -27,6 +49,7 @@ describe('publicLaunchPayload', () => {
       }),
       {
         state: 'LAUNCH',
+        ...defaultPublicFields,
         name: 'Ada',
         message: 'Tribute',
       },
@@ -42,5 +65,18 @@ describe('publicLaunchPayload', () => {
       }).state,
       'NORMAL',
     );
+  });
+
+  test('PER_PERSON launch is NORMAL for a visitor who already saw this wave', () => {
+    const payload = publicLaunchPayload(
+      {
+        websiteLaunchState: 'LAUNCH',
+        websiteLaunchWaveId: 'wave-1',
+        websiteLaunchCloseMode: 'PER_PERSON',
+      },
+      {viewerSeen: true},
+    );
+    assert.equal(payload.state, LAUNCH_STATES.NORMAL);
+    assert.equal(payload.waveId, 'wave-1');
   });
 });
