@@ -18,6 +18,7 @@ const {
 const {
   buildCustomerServiceRequestPhotoKey,
   buildProviderRequestPhotoKey,
+  buildAdminCreativeKey,
   assertKeyAuthorizedForUser,
   isSensitiveObjectKey,
   keyFromUrlOrKey,
@@ -67,6 +68,11 @@ describe('normalizePhotoReferences', () => {
 });
 
 describe('s3Keys service-request paths', () => {
+  it('builds admin creative keys under admin/creatives', () => {
+    const key = buildAdminCreativeKey('.png');
+    assert.match(key, /^admin\/creatives\/[0-9a-f-]{36}\.png$/);
+  });
+
   it('builds customer pending photo keys', () => {
     const key = buildCustomerServiceRequestPhotoKey('cust_1', '.jpg');
     assert.match(

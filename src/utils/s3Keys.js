@@ -106,6 +106,12 @@ function buildAdminAssetKey(adminId, extension) {
   return `admin/${id}/${buildUniqueFilename(extension)}`;
 }
 
+/** Public Akanso creative images for later download/share. */
+function buildAdminCreativeKey(extension) {
+  assertRootPrefix('admin');
+  return `admin/creatives/${buildUniqueFilename(extension)}`;
+}
+
 /** White-label client logos — under services/* (IAM-allowed) */
 function buildClientLogoKey(clientId, extension) {
   const id = assertSafeId(clientId, 'clientId');
@@ -336,6 +342,7 @@ module.exports = {
   buildProviderDocumentKey,
   buildCustomerProfileKey,
   buildAdminAssetKey,
+  buildAdminCreativeKey,
   buildClientLogoKey,
   buildCategoryImageKey,
   buildServiceImageKey,

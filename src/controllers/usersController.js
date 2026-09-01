@@ -1220,6 +1220,12 @@ exports.createUserByAdmin = async (req, res, next) => {
       req.body.location?.districtId ||
       ''
     ).trim();
+    const block = (req.body.block || req.body.location?.block || '').trim();
+    const blockId = (
+      req.body.blockId ||
+      req.body.location?.blockId ||
+      ''
+    ).trim();
     const pincode = String(
       req.body.pincode || req.body.location?.pincode || '',
     ).trim();
@@ -1230,7 +1236,15 @@ exports.createUserByAdmin = async (req, res, next) => {
       ''
     ).trim();
     const location =
-      address || city || state || district || stateId || districtId || pincode
+      address ||
+      city ||
+      state ||
+      district ||
+      stateId ||
+      districtId ||
+      block ||
+      blockId ||
+      pincode
         ? {
             address: address || undefined,
             city: city || district || undefined,
@@ -1238,6 +1252,8 @@ exports.createUserByAdmin = async (req, res, next) => {
             district: district || undefined,
             stateId: stateId || undefined,
             districtId: districtId || undefined,
+            block: block || undefined,
+            blockId: blockId || undefined,
             pincode: pincode || undefined,
             country: 'IN',
           }
