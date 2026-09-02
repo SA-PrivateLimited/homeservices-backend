@@ -18,6 +18,7 @@ const {
 } = require('../src/utils/launchWishConfig');
 
 const defaultPublicFields = {
+  occasionActive: false,
   closeMode: CLOSE_MODES.PER_PERSON,
   waveId: 'default',
   eventName: DEFAULT_EVENT_NAME,
@@ -27,7 +28,13 @@ const defaultPublicFields = {
   timerEndsAt: null,
   animationMode: ANIMATION_MODES.AUTO,
   animation: 'sparkle',
+  name: '',
+  message: '',
+  doodleEnabled: false,
+  doodleEndsAt: null,
+  doodleActive: false,
   icon: DEFAULT_WISH_ICON,
+  logoAccentUrl: '',
 };
 
 describe('publicLaunchPayload', () => {
@@ -35,8 +42,6 @@ describe('publicLaunchPayload', () => {
     assert.deepEqual(publicLaunchPayload(null), {
       state: LAUNCH_STATES.NORMAL,
       ...defaultPublicFields,
-      name: '',
-      message: '',
     });
   });
 
@@ -50,6 +55,7 @@ describe('publicLaunchPayload', () => {
       {
         state: 'LAUNCH',
         ...defaultPublicFields,
+        occasionActive: true,
         name: 'Ada',
         message: 'Tribute',
       },
