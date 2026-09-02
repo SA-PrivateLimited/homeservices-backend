@@ -394,7 +394,7 @@ exports.updateJobCardStatus = async (req, res, next) => {
             if (status === 'completed') {
               try {
                 const {notifyUser} = require('../../utils/notify');
-                const {emitServiceCompleted} = require('../../realtime/socket');
+                const {notifyServiceCompleted} = require('../../realtime/socket');
                 const srId = String(sr._id);
                 await notifyUser(updatedJobCard.customerId, {
                   ...customerJobCompleted({
@@ -408,7 +408,17 @@ exports.updateJobCardStatus = async (req, res, next) => {
                     jobCardId: String(jobCardId),
                   },
                 });
-                emitServiceCompleted({
+                await notifyBooking({
+                  customerId: sr.customerId,
+                  bookingData: {
+                    type: 'service-request-status',
+                    serviceRequestId: srId,
+                    status: 'completed',
+                    providerName: updatedJobCard.providerName,
+                    serviceType: updatedJobCard.serviceType,
+                  },
+                });
+                await notifyServiceCompleted({
                   customerId: updatedJobCard.customerId,
                   jobCardId: String(jobCardId),
                   consultationId: srId,
