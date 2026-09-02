@@ -55,7 +55,7 @@ exports.getMyJobCards = async (req, res, next) => {
     }
 
     const jobCards = await JobCard.find(query)
-      .sort({createdAt: -1})
+      .sort({updatedAt: -1, createdAt: -1})
       .limit(parseInt(limit))
       .skip(parseInt(offset))
       .lean();
