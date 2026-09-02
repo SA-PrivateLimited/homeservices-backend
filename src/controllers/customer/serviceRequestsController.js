@@ -43,6 +43,32 @@ function newObjectIdString() {
   return new (require('mongodb').ObjectId)().toString();
 }
 
+const LIVE_REQUEST_STATUSES = ['pending', 'accepted', 'in-progress'];
+const ENDED_REQUEST_STATUSES = ['cancelled', 'rejected'];
+
+/** Map list chips to Mongo status: now = live, cancelled includes rejected, all excludes ended. */
+function customerListStatusQuery(status) {
+  if (status == null || status === '') return {};
+  const raw = String(status).trim().toLowerCase();
+  if (raw === 'now' || raw === 'live') {
+    return {status: {$in: LIVE_REQUEST_STATUSES}};
+  }
+  if (raw === 'cancelled' || raw === 'canceled') {
+    return {status: {$in: ENDED_REQUEST_STATUSES}};
+  }
+  if (raw === 'all') {
+    return {status: {$nin: ENDED_REQUEST_STATUSES}};
+  }
+  if (raw.includes(',')) {
+    const parts = raw
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    return parts.length ? {status: {$in: parts}} : {};
+  }
+  return {status: raw};
+}
+
 /**
  * Get customer's service requests
  */
@@ -52,15 +78,12 @@ exports.getMyServiceRequests = async (req, res, next) => {
     const {status, limit = 50, offset = 0} = req.query;
     const lang = req.lang || 'en';
 
-    const query = {customerId: req.user.uid};
-    if (status) {
-      query.status = status;
-    }
+    const query = {customerId: req.user.uid, ...customerListStatusQuery(status)};
 
     logDatabaseOperation('find', 'serviceRequests', query);
 
     const serviceRequests = await ServiceRequest.find(query)
-      .sort({createdAt: -1})
+      .sort({updatedAt: -1, createdAt: -1})
       .limit(parseInt(limit))
       .skip(parseInt(offset))
       .lean();
