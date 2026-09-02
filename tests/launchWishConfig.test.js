@@ -15,8 +15,19 @@ test('empty event name becomes Akanso, not a white-label brand', () => {
 
 test('unknown wish icon falls back to celebration', () => {
   assert.equal(normalizeWishIcon(''), DEFAULT_WISH_ICON);
-  assert.equal(normalizeWishIcon('homora'), DEFAULT_WISH_ICON);
+  assert.equal(normalizeWishIcon('foo-bar'), DEFAULT_WISH_ICON);
   assert.equal(normalizeWishIcon('favorite'), 'favorite');
+  assert.equal(normalizeWishIcon('local_fire_department'), 'local_fire_department');
+});
+
+test('logo accent url must be http(s) or empty', () => {
+  const {normalizeLogoAccentUrl} = require('../src/utils/launchWishConfig');
+  assert.equal(normalizeLogoAccentUrl(''), '');
+  assert.equal(normalizeLogoAccentUrl('not-a-url'), '');
+  assert.equal(
+    normalizeLogoAccentUrl('https://assets.akanso.in/services/pwa/diya.png'),
+    'https://assets.akanso.in/services/pwa/diya.png',
+  );
 });
 
 test('legacy website-launch copy is not shown to customers', () => {
@@ -80,6 +91,18 @@ test('greeting timer expiry is based on timerEndsAt', () => {
   assert.equal(isGreetingTimerExpired(future), false);
   assert.equal(isGreetingTimerExpired(past), true);
   assert.equal(isGreetingTimerExpired(null), false);
+});
+
+test('logo doodle is independent of greeting launch state', () => {
+  const {isDoodleActive, normalizeDoodleEnabled} = require('../src/utils/launchWishConfig');
+  const future = new Date(Date.now() + 60_000).toISOString();
+  const past = new Date(Date.now() - 60_000).toISOString();
+  assert.equal(normalizeDoodleEnabled(true), true);
+  assert.equal(normalizeDoodleEnabled('false'), false);
+  assert.equal(isDoodleActive(true, future), true);
+  assert.equal(isDoodleActive(false, future), false);
+  assert.equal(isDoodleActive(true, past), false);
+  assert.equal(isDoodleActive(true, null), false);
 });
 
 test('close mode defaults to PER_PERSON', () => {

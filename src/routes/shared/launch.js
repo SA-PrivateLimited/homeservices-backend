@@ -11,17 +11,34 @@ const {
   getLaunchStatus,
   completeLaunch,
   updateLaunchConfig,
+  getDoodleConfig,
+  updateDoodleConfig,
 } = require('../../controllers/shared/launchController');
 
 /** GET /api/greeting — public; optional JWT so per-person “already seen” works */
 router.get('/', optionalAuth, logRequest, getLaunchStatus);
 
+/** GET /api/greeting/doodle — public logo-doodle status (admin-controlled) */
+router.get('/doodle', optionalAuth, logRequest, getDoodleConfig);
+
 /** POST /api/greeting/complete — GLOBAL closes for all; PER_PERSON marks this visitor */
 router.post('/complete', optionalAuth, logRequest, completeLaunch);
 
 /**
+ * PUT /api/greeting/doodle — Super Admin only
+ * Show/hide logo doodle, until when, icon, image URL.
+ */
+router.put(
+  '/doodle',
+  requireRole('admin'),
+  requireSuperAdmin,
+  logRequest,
+  updateDoodleConfig,
+);
+
+/**
  * PUT /api/greeting — Super Admin only
- * Configure state / name / message (CustomerWeb cannot set arbitrary state).
+ * Greeting overlay only (not the logo doodle).
  */
 router.put(
   '/',

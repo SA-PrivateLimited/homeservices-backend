@@ -52,9 +52,29 @@ function normalizeEventName(raw) {
   return value;
 }
 
+const MATERIAL_ICON_LIGATURE = /^[a-z][a-z0-9_]{0,63}$/;
+
 function normalizeWishIcon(raw) {
-  const value = String(raw || '').trim();
-  return LAUNCH_WISH_ICONS.includes(value) ? value : DEFAULT_WISH_ICON;
+  const value = String(raw || '')
+    .trim()
+    .toLowerCase();
+  if (MATERIAL_ICON_LIGATURE.test(value)) return value;
+  return DEFAULT_WISH_ICON;
+}
+
+/** Optional YouTube-style image beside the product logo. */
+function normalizeLogoAccentUrl(raw) {
+  const value = String(raw || '')
+    .trim()
+    .slice(0, 500);
+  if (!value) return '';
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return '';
+    return parsed.toString();
+  } catch {
+    return '';
+  }
 }
 
 function normalizeGreeting(raw) {
@@ -103,6 +123,17 @@ function isGreetingTimerExpired(timerEndsAt, now = new Date()) {
   const iso = normalizeTimerEndsAt(timerEndsAt);
   if (!iso) return false;
   return new Date(iso).getTime() <= now.getTime();
+}
+
+function normalizeDoodleEnabled(raw) {
+  return raw === true || raw === 'true' || raw === 1 || raw === '1';
+}
+
+function isDoodleActive(enabled, doodleEndsAt, now = new Date()) {
+  if (!normalizeDoodleEnabled(enabled)) return false;
+  const iso = normalizeTimerEndsAt(doodleEndsAt);
+  if (!iso) return false;
+  return new Date(iso).getTime() > now.getTime();
 }
 
 const ANIMATION_MODES = Object.freeze({
@@ -180,6 +211,7 @@ module.exports = {
   ANIMATION_FX,
   normalizeEventName,
   normalizeWishIcon,
+  normalizeLogoAccentUrl,
   normalizeGreeting,
   normalizeCta,
   isLegacyWebsiteLaunchCopy,
@@ -187,6 +219,8 @@ module.exports = {
   normalizeCountdownSeconds,
   normalizeTimerEndsAt,
   isGreetingTimerExpired,
+  normalizeDoodleEnabled,
+  isDoodleActive,
   normalizeAnimationMode,
   resolveLaunchAnimation,
 };

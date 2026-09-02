@@ -108,6 +108,25 @@ const systemConfigSchema = new mongoose.Schema(
       ],
       default: 'AUTO',
     },
+    /** Optional doodle image URL shown beside the CustomerWeb logo. */
+    websiteLaunchLogoAccentUrl: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 500,
+    },
+    /**
+     * Logo doodle is independent of the greeting overlay.
+     * When true, show icon/URL beside the logo until doodleEndsAt.
+     */
+    websiteLaunchDoodleEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    websiteLaunchDoodleEndsAt: {
+      type: Date,
+      default: null,
+    },
     /** Material icon for the personal wish (allowlisted). */
     websiteLaunchIcon: {
       type: String,

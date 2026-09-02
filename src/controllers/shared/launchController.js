@@ -13,12 +13,15 @@ const {
   CLOSE_MODES,
   normalizeEventName,
   normalizeWishIcon,
+  normalizeLogoAccentUrl,
   normalizeGreeting,
   normalizeCta,
   normalizeCloseMode,
   normalizeCountdownSeconds,
   normalizeTimerEndsAt,
   isGreetingTimerExpired,
+  normalizeDoodleEnabled,
+  isDoodleActive,
   normalizeAnimationMode,
   resolveLaunchAnimation,
 } = require('../../utils/launchWishConfig');
@@ -27,6 +30,19 @@ const LAUNCH_STATES = Object.freeze({
   NORMAL: 'NORMAL',
   LAUNCH: 'LAUNCH',
 });
+
+function publicDoodlePayload(doc) {
+  return {
+    doodleEnabled: normalizeDoodleEnabled(doc?.websiteLaunchDoodleEnabled),
+    doodleEndsAt: normalizeTimerEndsAt(doc?.websiteLaunchDoodleEndsAt),
+    doodleActive: isDoodleActive(
+      doc?.websiteLaunchDoodleEnabled,
+      doc?.websiteLaunchDoodleEndsAt,
+    ),
+    icon: normalizeWishIcon(doc?.websiteLaunchIcon),
+    logoAccentUrl: normalizeLogoAccentUrl(doc?.websiteLaunchLogoAccentUrl),
+  };
+}
 
 function publicLaunchPayload(doc, {viewerSeen = false} = {}) {
   const timerEndsAt = normalizeTimerEndsAt(doc?.websiteLaunchTimerEndsAt);
@@ -43,6 +59,7 @@ function publicLaunchPayload(doc, {viewerSeen = false} = {}) {
   const animationMode = normalizeAnimationMode(doc?.websiteLaunchAnimation);
   return {
     state,
+    occasionActive: globalLaunch,
     closeMode,
     waveId,
     eventName: normalizeEventName(doc?.websiteLaunchEventName),
@@ -56,7 +73,7 @@ function publicLaunchPayload(doc, {viewerSeen = false} = {}) {
     animation: resolveLaunchAnimation(animationMode, greeting),
     name: String(doc?.websiteLaunchName || '').trim(),
     message: String(doc?.websiteLaunchMessage || '').trim(),
-    icon: normalizeWishIcon(doc?.websiteLaunchIcon),
+    ...publicDoodlePayload(doc),
   };
 }
 
@@ -215,17 +232,6 @@ exports.updateLaunchConfig = async (req, res, next) => {
         .trim()
         .slice(0, 2000);
     }
-    if (body.icon !== undefined) {
-      const icon = String(body.icon || '').trim();
-      if (icon && !LAUNCH_WISH_ICONS.includes(icon)) {
-        throw createHttpError(
-          400,
-          `icon must be one of: ${LAUNCH_WISH_ICONS.join(', ')}`,
-          'Bad Request',
-        );
-      }
-      updates.websiteLaunchIcon = normalizeWishIcon(icon);
-    }
 
     if (
       updates.websiteLaunchState === undefined &&
@@ -237,12 +243,11 @@ exports.updateLaunchConfig = async (req, res, next) => {
       updates.websiteLaunchTimerEndsAt === undefined &&
       updates.websiteLaunchAnimation === undefined &&
       updates.websiteLaunchName === undefined &&
-      updates.websiteLaunchMessage === undefined &&
-      updates.websiteLaunchIcon === undefined
+      updates.websiteLaunchMessage === undefined
     ) {
       throw createHttpError(
         400,
-        'Provide state, closeMode, eventName, greeting, cta, timerEndsAt, animationMode, name, message, and/or icon',
+        'Provide state, closeMode, eventName, greeting, cta, timerEndsAt, animationMode, name, and/or message',
         'Bad Request',
       );
     }
@@ -255,7 +260,6 @@ exports.updateLaunchConfig = async (req, res, next) => {
       updates.websiteLaunchGreeting !== undefined ||
       updates.websiteLaunchCta !== undefined ||
       updates.websiteLaunchEventName !== undefined ||
-      updates.websiteLaunchIcon !== undefined ||
       updates.websiteLaunchMessage !== undefined ||
       updates.websiteLaunchName !== undefined ||
       updates.websiteLaunchTimerEndsAt !== undefined;
@@ -296,7 +300,97 @@ exports.updateLaunchConfig = async (req, res, next) => {
     res.json({
       success: true,
       data: publicLaunchPayload(updated),
-      message: 'Launch configuration updated',
+      message: 'Greeting configuration updated',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getDoodleConfig = async (req, res, next) => {
+  try {
+    const doc = await SystemConfig.findById('global').lean();
+    res.json({
+      success: true,
+      data: publicDoodlePayload(doc),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.updateDoodleConfig = async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const current = await SystemConfig.findById('global').lean();
+    const updates = {updatedAt: new Date(), updatedBy: req.user?.uid || null};
+
+    if (body.logoAccentUrl !== undefined) {
+      updates.websiteLaunchLogoAccentUrl = normalizeLogoAccentUrl(
+        body.logoAccentUrl,
+      );
+    }
+    if (body.icon !== undefined) {
+      updates.websiteLaunchIcon = normalizeWishIcon(body.icon);
+    }
+    if (body.doodleEnabled !== undefined) {
+      updates.websiteLaunchDoodleEnabled = normalizeDoodleEnabled(
+        body.doodleEnabled,
+      );
+    }
+    if (body.doodleEndsAt !== undefined) {
+      updates.websiteLaunchDoodleEndsAt = normalizeTimerEndsAt(
+        body.doodleEndsAt,
+      );
+    }
+
+    if (
+      updates.websiteLaunchLogoAccentUrl === undefined &&
+      updates.websiteLaunchIcon === undefined &&
+      updates.websiteLaunchDoodleEnabled === undefined &&
+      updates.websiteLaunchDoodleEndsAt === undefined
+    ) {
+      throw createHttpError(
+        400,
+        'Provide doodleEnabled, doodleEndsAt, icon, and/or logoAccentUrl',
+        'Bad Request',
+      );
+    }
+
+    const doodleWillBeOn =
+      updates.websiteLaunchDoodleEnabled === true ||
+      (updates.websiteLaunchDoodleEnabled === undefined &&
+        normalizeDoodleEnabled(current?.websiteLaunchDoodleEnabled));
+    const nextDoodleEnds =
+      updates.websiteLaunchDoodleEndsAt !== undefined
+        ? normalizeTimerEndsAt(updates.websiteLaunchDoodleEndsAt)
+        : normalizeTimerEndsAt(current?.websiteLaunchDoodleEndsAt);
+    if (doodleWillBeOn && !nextDoodleEnds) {
+      throw createHttpError(
+        400,
+        'doodleEndsAt is required when the logo doodle is shown',
+        'Bad Request',
+      );
+    }
+    if (doodleWillBeOn && isGreetingTimerExpired(nextDoodleEnds)) {
+      throw createHttpError(
+        400,
+        'doodleEndsAt must be in the future',
+        'Bad Request',
+      );
+    }
+
+    await ensureConfig();
+    const updated = await SystemConfig.findByIdAndUpdate(
+      'global',
+      {$set: updates},
+      {new: true},
+    );
+
+    res.json({
+      success: true,
+      data: publicDoodlePayload(updated),
+      message: 'Logo doodle updated',
     });
   } catch (error) {
     next(error);
@@ -306,5 +400,6 @@ exports.updateLaunchConfig = async (req, res, next) => {
 exports.LAUNCH_STATES = LAUNCH_STATES;
 exports.CLOSE_MODES = CLOSE_MODES;
 exports.publicLaunchPayload = publicLaunchPayload;
+exports.publicDoodlePayload = publicDoodlePayload;
 exports.LAUNCH_WISH_ICONS = LAUNCH_WISH_ICONS;
 exports.LAUNCH_GREETING_PRESETS = LAUNCH_GREETING_PRESETS;
