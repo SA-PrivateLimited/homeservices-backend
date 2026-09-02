@@ -140,6 +140,7 @@ exports.getProviders = async (req, res, next) => {
       minRating,
       approvalStatus, // Allow filtering by approval status
       includeInactive,
+      onboardingSource,
       limit = 50,
       offset = 0,
     } = req.query;
@@ -158,6 +159,21 @@ exports.getProviders = async (req, res, next) => {
     // If admin and no approvalStatus filter, show all providers
 
     const andClauses = [];
+
+    if (isAdmin && onboardingSource) {
+      const src = String(onboardingSource).trim().toLowerCase();
+      if (src === 'unknown') {
+        andClauses.push({
+          $or: [
+            {onboardingSource: {$exists: false}},
+            {onboardingSource: null},
+            {onboardingSource: ''},
+          ],
+        });
+      } else if (src === 'self' || src === 'admin' || src === 'admin_bulk') {
+        query.onboardingSource = src;
+      }
+    }
 
     // Filters - check both serviceType (string) and serviceCategories (array) fields
     if (serviceType) {
@@ -259,7 +275,7 @@ exports.getProviders = async (req, res, next) => {
     const off = Math.max(parseInt(offset, 10) || 0, 0);
 
     const CUSTOMER_LIST_EXCLUDE =
-      '-documents -bankAccount -bankDetails -encryptedPin -pinHash -fcmToken -aadharNumber -aadhaarNumber -panNumber -gstNumber -rejectionReason';
+      '-documents -bankAccount -bankDetails -encryptedPin -pinHash -fcmToken -aadharNumber -aadhaarNumber -panNumber -gstNumber -rejectionReason -onboardingSource -addedByAdminId';
 
     const fetchLim = isAdmin ? lim : Math.min(100, Math.max(lim * 2, lim));
     let listQuery = Provider.find(query)

@@ -10,6 +10,7 @@ const Provider = require('../../models/Provider');
 const JobCard = require('../../models/JobCard');
 const User = require('../../models/User');
 const {ensureGeographySeeded} = require('../../utils/geographySeed');
+const {parseAdminOnboardingSource} = require('../../utils/onboardingSource');
 const {syncPhoneFields} = require('../../utils/phone');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
@@ -499,6 +500,10 @@ exports.addProviderToDistrict = async (req, res, next) => {
       verified: true,
       approvedAt: new Date(),
       isActive: true,
+      onboardingSource: parseAdminOnboardingSource(
+        req.body.onboardingSource,
+      ),
+      addedByAdminId: req.user?.uid || undefined,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
