@@ -110,6 +110,22 @@ const providerSchema = new mongoose.Schema({
     default: true,
     index: true,
   },
+  /**
+   * How this Partner was created.
+   * self = signed up / enabled Partner in the app
+   * admin = added one-by-one in Admin
+   * admin_bulk = Excel / bulk onboarding
+   * Missing on older rows — Admin shows as unknown.
+   */
+  onboardingSource: {
+    type: String,
+    enum: ['self', 'admin', 'admin_bulk'],
+    index: true,
+  },
+  addedByAdminId: {
+    type: String,
+    trim: true,
+  },
   deactivatedAt: Date,
   deactivationReason: {
     type: String,
@@ -246,7 +262,7 @@ providerSchema.index({'address.pincode': 1});
 providerSchema.index({'address.city': 1});
 // Core matching predicate before service-type filter
 providerSchema.index({approvalStatus: 1, isActive: 1, isOnline: 1, 'location.districtId': 1});
-providerSchema.index({isActive: 1, approvalStatus: 1});
+providerSchema.index({onboardingSource: 1, createdAt: -1});
 providerSchema.index({updatedAt: -1, createdAt: -1});
 providerSchema.index({isOnline: -1, rating: -1, updatedAt: -1});
 

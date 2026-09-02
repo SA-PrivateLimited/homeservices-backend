@@ -47,6 +47,7 @@ const {
 } = require('../constants/permissions');
 const {isSuperAdminElevated} = require('../middleware/requirePermission');
 const ADMIN_LIST_SORT = require('../utils/adminListSort');
+const {parseAdminOnboardingSource} = require('../utils/onboardingSource');
 
 const PASSWORD_SALT_ROUNDS = 12;
 const MIN_PASSWORD_LENGTH = 8;
@@ -1390,6 +1391,10 @@ exports.createUserByAdmin = async (req, res, next) => {
             isOnline: false,
             isAvailable: true,
             isActive: true,
+            onboardingSource: parseAdminOnboardingSource(
+              req.body.onboardingSource,
+            ),
+            addedByAdminId: req.user?.uid || undefined,
             createdAt: new Date(),
             updatedAt: new Date(),
           });
