@@ -122,6 +122,15 @@ const providerSchema = new mongoose.Schema({
     enum: ['self', 'admin', 'admin_bulk'],
     index: true,
   },
+  /**
+   * Customers may send an in-app Request to this Partner.
+   * Admin/bulk create defaults false; self-signup defaults true.
+   * Missing on older rows — treated as true except admin/admin_bulk source.
+   */
+  showRequestService: {
+    type: Boolean,
+    index: true,
+  },
   addedByAdminId: {
     type: String,
     trim: true,
@@ -263,6 +272,7 @@ providerSchema.index({'address.city': 1});
 // Core matching predicate before service-type filter
 providerSchema.index({approvalStatus: 1, isActive: 1, isOnline: 1, 'location.districtId': 1});
 providerSchema.index({onboardingSource: 1, createdAt: -1});
+providerSchema.index({showRequestService: 1, approvalStatus: 1, isActive: 1});
 providerSchema.index({updatedAt: -1, createdAt: -1});
 providerSchema.index({isOnline: -1, rating: -1, updatedAt: -1});
 

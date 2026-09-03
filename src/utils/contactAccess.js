@@ -35,6 +35,8 @@ const PUBLIC_PROVIDER_STRIP_FIELDS = [
   'aadhaarNumber',
   'gstNumber',
   'rejectionReason',
+  'onboardingSource',
+  'addedByAdminId',
   'deactivationReason',
   'deactivatedBy',
   'approvedBy',

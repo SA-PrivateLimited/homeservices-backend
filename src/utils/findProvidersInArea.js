@@ -50,6 +50,7 @@ async function findMatchingProviders(
     approvalStatus: 'approved',
     isAvailable: {$ne: false},
     isActive: {$ne: false},
+    showRequestService: {$ne: false},
     ...selfExclude,
     $and: [serviceTypeClause(serviceType), geoClause],
   };

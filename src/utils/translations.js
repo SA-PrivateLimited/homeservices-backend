@@ -21,6 +21,8 @@ const translations = {
       invalidAddress: 'Invalid address. Address and pincode are required',
       serviceTypeRequired: 'Service type is required',
       created: 'Service request created successfully',
+      requestServiceOff:
+        'This partner is not accepting in-app service requests yet. You can still call them if their number is shown.',
       updated: 'Service request updated successfully',
       noLongerEditable: 'This request was accepted by a provider and can no longer be edited.',
       activeExists: 'You already have an active request for this service. Please wait for it to be completed or cancelled before creating another request.',
@@ -52,6 +54,8 @@ const translations = {
       invalidAddress: 'अमान्य पता। पता और पिनकोड आवश्यक हैं',
       serviceTypeRequired: 'सेवा प्रकार आवश्यक है',
       created: 'सेवा अनुरोध सफलतापूर्वक बनाया गया',
+      requestServiceOff:
+        'यह पार्टनर अभी ऐप पर काम का अनुरोध नहीं ले रहे। अगर नंबर दिख रहा है तो आप कॉल कर सकते हैं।',
       updated: 'सेवा अनुरोध सफलतापूर्वक अपडेट किया गया',
       noLongerEditable: 'इस अनुरोध को प्रदाता ने स्वीकार कर लिया है, इसलिए अब इसे बदला नहीं जा सकता।',
       activeExists: 'इस सेवा के लिए आपका एक अनुरोध पहले से सक्रिय है। नया अनुरोध करने से पहले कृपया मौजूदा अनुरोध पूरा या रद्द होने तक प्रतीक्षा करें।',
