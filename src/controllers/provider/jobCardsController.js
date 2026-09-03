@@ -18,6 +18,7 @@ const {
 const {
   customerWorkStarted,
   customerJobCompleted,
+  customerJobCancelled,
 } = require('../../utils/fcmCopy');
 
 /** Providers must not see the customer verification PIN; phones follow contact rules. */
@@ -387,6 +388,43 @@ exports.updateJobCardStatus = async (req, res, next) => {
                 console.warn(
                   '⚠️  Could not emit in-progress service-request-status:',
                   socketErr.message,
+                );
+              }
+            }
+
+            if (next === 'cancelled') {
+              try {
+                const {notifyUser} = require('../../utils/notify');
+                const srId = String(sr._id);
+                await notifyUser(updatedJobCard.customerId, {
+                  ...customerJobCancelled({
+                    providerName: updatedJobCard.providerName,
+                    serviceType: updatedJobCard.serviceType,
+                    reason: cancellationReason || sr.cancellationReason,
+                  }),
+                  data: {
+                    type: 'service',
+                    status: 'cancelled',
+                    serviceRequestId: srId,
+                    jobCardId: String(jobCardId),
+                  },
+                });
+                await notifyBooking({
+                  customerId: sr.customerId,
+                  bookingData: {
+                    type: 'service-request-status',
+                    serviceRequestId: srId,
+                    status: 'cancelled',
+                    providerName: updatedJobCard.providerName,
+                    serviceType: updatedJobCard.serviceType,
+                    cancellationReason:
+                      cancellationReason || sr.cancellationReason,
+                  },
+                });
+              } catch (cancelErr) {
+                console.warn(
+                  '⚠️  Customer cancel notify failed:',
+                  cancelErr.message,
                 );
               }
             }

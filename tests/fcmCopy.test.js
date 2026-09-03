@@ -6,6 +6,7 @@ const {
   partnerJobCancelled,
   customerPartnerAccepted,
   customerWorkStarted,
+  customerJobCancelled,
 } = require('../src/utils/fcmCopy');
 
 test('partner cancel copy is short and includes reason', () => {
@@ -46,6 +47,19 @@ test('customer accepted copy names the partner and service', () => {
   });
   assert.equal(copy.title, 'Job accepted update');
   assert.equal(copy.body, 'Ramesh accepted your Electrician job.');
+});
+
+test('customer cancel copy includes partner, service, and reason', () => {
+  const copy = customerJobCancelled({
+    providerName: 'Ramesh',
+    serviceType: 'Electrician',
+    reason: 'Could not reach',
+  });
+  assert.equal(copy.title, 'Job cancelled update');
+  assert.equal(
+    copy.body,
+    'Ramesh cancelled your Electrician job. Reason: Could not reach',
+  );
 });
 
 test('customer in-progress copy includes PIN when present', () => {

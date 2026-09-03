@@ -71,6 +71,18 @@ function customerJobCompleted({providerName, serviceType} = {}) {
   };
 }
 
+function customerJobCancelled({providerName, serviceType, reason} = {}) {
+  const who = clip(providerName, 40) || 'Your partner';
+  const service = clip(serviceType, 40) || 'service';
+  const reasonText = clip(reason, 70);
+  return {
+    title: 'Job cancelled update',
+    body: reasonText
+      ? `${who} cancelled your ${service} job. Reason: ${reasonText}`
+      : `${who} cancelled your ${service} job.`,
+  };
+}
+
 function customerPartnerDeclined({reason} = {}) {
   return {
     title: 'Partner not available update',
@@ -85,5 +97,6 @@ module.exports = {
   customerPartnerAccepted,
   customerWorkStarted,
   customerJobCompleted,
+  customerJobCancelled,
   customerPartnerDeclined,
 };

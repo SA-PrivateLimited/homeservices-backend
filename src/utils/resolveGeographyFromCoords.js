@@ -109,11 +109,92 @@ function findBlockMatch(blocks, candidates) {
   return null;
 }
 
-function pickAddressLine(address) {
+function isSamePlace(a, b) {
+  return Boolean(a && b && namesMatch(a, b));
+}
+
+function pickStreet(address, districtName, stateName) {
   if (!address || typeof address !== 'object') return '';
-  return [address.road, address.neighbourhood, address.suburb, address.village]
+  const road =
+    address.road ||
+    address.pedestrian ||
+    address.residential ||
+    address.footway ||
+    address.path ||
+    '';
+  const house = address.house_number ? String(address.house_number).trim() : '';
+  const street = [house, road].filter(Boolean).join(' ').trim();
+  if (street && !isSamePlace(street, districtName) && !isSamePlace(street, stateName)) {
+    return street;
+  }
+
+  const locality = [
+    address.neighbourhood,
+    address.suburb,
+    address.hamlet,
+    address.quarter,
+    address.village,
+  ]
     .filter(Boolean)
+    .find(
+      (part) =>
+        !isSamePlace(part, districtName) &&
+        !isSamePlace(part, stateName) &&
+        !isSamePlace(part, road),
+    );
+  return locality || '';
+}
+
+function pickLandmark(address, geoName, street, districtName) {
+  if (!address || typeof address !== 'object') return '';
+  const candidates = [
+    address.amenity,
+    address.shop,
+    address.building,
+    address.tourism,
+    address.leisure,
+    address.historic,
+    geoName,
+    address.neighbourhood,
+    address.suburb,
+  ].filter(Boolean);
+  return (
+    candidates.find(
+      (part) =>
+        !isSamePlace(part, street) &&
+        !isSamePlace(part, districtName) &&
+        !isSamePlace(part, address.road),
+    ) || ''
+  );
+}
+
+function pickFromDisplayName(displayName, skipNames) {
+  const skip = new Set(
+    (skipNames || []).map(normalizeGeoName).filter(Boolean),
+  );
+  skip.add('india');
+  return String(displayName || '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const n = normalizeGeoName(part);
+      if (!n || skip.has(n)) return false;
+      if (/^\d{6}$/.test(part.replace(/\s/g, ''))) return false;
+      return true;
+    })
+    .slice(0, 2)
     .join(', ');
+}
+
+function pickAddressLine(address, geo, districtName, stateName) {
+  const street = pickStreet(address, districtName, stateName);
+  if (street) return street;
+  return pickFromDisplayName(geo?.display_name, [
+    districtName,
+    stateName,
+    pickPincode(address),
+  ]);
 }
 
 function pickPincode(address) {
@@ -130,7 +211,8 @@ async function reverseGeocode(lat, lon) {
         lon,
         format: 'json',
         addressdetails: 1,
-        zoom: 14,
+        // 18 = building/street. 14 only returns city/district, so house/road stay empty.
+        zoom: 18,
       },
       headers: {
         'User-Agent': USER_AGENT,
@@ -226,6 +308,13 @@ async function resolveGeographyFromCoords(lat, lon) {
   const districtName = district?.name || '';
   const blockName = block?.name || '';
   const label = [blockName, districtName, stateName].filter(Boolean).join(', ');
+  const addressLine = pickAddressLine(address, geo, districtName, stateName);
+  const landmark = pickLandmark(
+    address,
+    geo?.name,
+    addressLine,
+    districtName,
+  );
 
   return {
     stateId: state._id,
@@ -236,7 +325,8 @@ async function resolveGeographyFromCoords(lat, lon) {
     districtName,
     label,
     pincode: pickPincode(address),
-    addressLine: pickAddressLine(address),
+    addressLine,
+    landmark,
   };
 }
 
