@@ -1394,6 +1394,7 @@ exports.createUserByAdmin = async (req, res, next) => {
             onboardingSource: parseAdminOnboardingSource(
               req.body.onboardingSource,
             ),
+            showRequestService: false,
             addedByAdminId: req.user?.uid || undefined,
             createdAt: new Date(),
             updatedAt: new Date(),

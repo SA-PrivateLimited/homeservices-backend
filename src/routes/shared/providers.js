@@ -24,6 +24,7 @@ const {
   updateProviderServiceQualification,
   updateProviderServiceProfile,
   updateMyStatus,
+  updateMyShowRequestService,
   updateProviderApproval,
   updateProvider,
   uploadProviderDocument,
@@ -147,6 +148,17 @@ router.put(
   requireRole('provider'),
   logRequest,
   updateMyStatus,
+);
+
+/**
+ * PUT /api/providers/me/show-request-service
+ * Partner: customers may send in-app requests
+ */
+router.put(
+  '/me/show-request-service',
+  requireRole('provider'),
+  logRequest,
+  updateMyShowRequestService,
 );
 
 /**

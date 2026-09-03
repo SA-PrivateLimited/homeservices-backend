@@ -12,6 +12,7 @@ const {t} = require('../../utils/translations');
 const mongoose = require('mongoose');
 const {notifyBooking, notifyAdminsRealtime} = require('../../realtime/socket');
 const {findProvidersInArea} = require('../../utils/findProvidersInArea');
+const {isShowRequestServiceEnabled} = require('../../utils/showRequestService');
 const {notifyAdmins, notifyProvider} = require('../../utils/notify');
 const {
   notifyMatchedProviders,
@@ -225,7 +226,9 @@ exports.createServiceRequest = async (req, res, next) => {
         _id: targetedProviderId,
         approvalStatus: 'approved',
       })
-        .select('_id name phone specialization specialty serviceCategories')
+        .select(
+          '_id name phone specialization specialty serviceCategories showRequestService onboardingSource',
+        )
         .lean();
 
       if (!targetedProvider) {
@@ -233,6 +236,18 @@ exports.createServiceRequest = async (req, res, next) => {
           success: false,
           error: t('serviceRequests.providerNotFound', lang) || 'Provider not found or not approved',
           message: t('serviceRequests.providerNotFound', lang) || 'Provider not found or not approved',
+        });
+      }
+
+      if (!isShowRequestServiceEnabled(targetedProvider)) {
+        return res.status(400).json({
+          success: false,
+          error:
+            t('serviceRequests.requestServiceOff', lang) ||
+            'This partner is not accepting in-app service requests yet.',
+          message:
+            t('serviceRequests.requestServiceOff', lang) ||
+            'This partner is not accepting in-app service requests yet.',
         });
       }
 

@@ -52,6 +52,10 @@ const {
 const {
   applyLinkedProfileImageFallback,
 } = require('../../utils/resolvePartnerProfileImage');
+const {
+  applyShowRequestService,
+  parseShowRequestService,
+} = require('../../utils/showRequestService');
 
 async function providerPayloadWithPolicy(provider) {
   if (!provider) return provider;
@@ -60,6 +64,7 @@ async function providerPayloadWithPolicy(provider) {
     isOfflineOpenRequestsEnabled(),
   ]);
   const raw = provider.toObject ? provider.toObject() : {...provider};
+  applyShowRequestService(raw);
   return {...raw, partnerVerificationMode: mode, allowOfflineProviderOpenRequests};
 }
 
@@ -275,7 +280,7 @@ exports.getProviders = async (req, res, next) => {
     const off = Math.max(parseInt(offset, 10) || 0, 0);
 
     const CUSTOMER_LIST_EXCLUDE =
-      '-documents -bankAccount -bankDetails -encryptedPin -pinHash -fcmToken -aadharNumber -aadhaarNumber -panNumber -gstNumber -rejectionReason -onboardingSource -addedByAdminId';
+      '-documents -bankAccount -bankDetails -encryptedPin -pinHash -fcmToken -aadharNumber -aadhaarNumber -panNumber -gstNumber -rejectionReason -addedByAdminId';
 
     const fetchLim = isAdmin ? lim : Math.min(100, Math.max(lim * 2, lim));
     let listQuery = Provider.find(query)
@@ -305,6 +310,7 @@ exports.getProviders = async (req, res, next) => {
         enriched = providers.map((p) => {
           const u = byId.get(p._id);
           const flags = adminProfileFlags(u || {role: 'provider'}, p);
+          applyShowRequestService(p);
           return {
             ...p,
             phone: p.phone || p.phoneNumber || u?.phone || u?.phoneNumber,
@@ -333,7 +339,9 @@ exports.getProviders = async (req, res, next) => {
             ? isServiceCustomerVisible(p, serviceQuery)
             : hasAnyCustomerVisibleService(p),
         )
-        .map((p) => publicProviderRow(p, settings, serviceQuery));
+        .map((p) =>
+          publicProviderRow(applyShowRequestService(p), settings, serviceQuery),
+        );
     }
 
     if (viewerId && !isAdmin) {
@@ -444,6 +452,8 @@ exports.getProviderById = async (req, res, next) => {
       }
     }
 
+    applyShowRequestService(providerData);
+
     const isAdmin = req.user && req.user.role === 'admin';
     const isSelfProvider =
       req.user &&
@@ -532,6 +542,9 @@ exports.updateMyProfile = async (req, res, next) => {
     delete updateData.serviceCategories;
     delete updateData.serviceQualifications;
     delete updateData.inactiveServiceCategories;
+    delete updateData.showRequestService;
+    delete updateData.onboardingSource;
+    delete updateData.addedByAdminId;
 
     // Keep location + address in sync when either is sent
     if (updateData.address && typeof updateData.address === 'object') {
@@ -1312,6 +1325,55 @@ exports.updateProviderServiceProfile = async (req, res, next) => {
 };
 
 /**
+ * Partner toggles whether customers can send in-app requests.
+ * PUT /api/providers/me/show-request-service
+ * Body: { showRequestService: boolean }
+ */
+exports.updateMyShowRequestService = async (req, res, next) => {
+  try {
+    await connectDB();
+    const parsed = parseShowRequestService(req.body?.showRequestService);
+    if (parsed === null) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'showRequestService must be true or false.',
+      });
+    }
+
+    const provider = await Provider.findByIdAndUpdate(
+      req.user.uid,
+      {$set: {showRequestService: parsed, updatedAt: new Date()}},
+      {new: true},
+    );
+
+    if (!provider) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'Provider profile not found.',
+      });
+    }
+
+    const linkedUser = await User.findById(req.user.uid)
+      .select('profileImage photoURL')
+      .lean();
+    const payload = await providerPayloadWithPolicy(provider);
+    applyLinkedProfileImageFallback(payload, linkedUser);
+
+    res.json({
+      success: true,
+      data: payload,
+      message: parsed
+        ? 'Customers can now request you in the app.'
+        : 'Customers will not see Request a service for you.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Update provider online/offline status (provider only)
  */
 exports.updateMyStatus = async (req, res, next) => {
@@ -1404,6 +1466,15 @@ exports.updateProvider = async (req, res, next) => {
     delete updateData._id;
     delete updateData.createdAt;
     delete updateData.serviceQualifications;
+
+    if (updateData.showRequestService !== undefined) {
+      const parsed = parseShowRequestService(updateData.showRequestService);
+      if (parsed === null) {
+        delete updateData.showRequestService;
+      } else {
+        updateData.showRequestService = parsed;
+      }
+    }
 
     const existing = await Provider.findById(providerId);
     if (!existing) {
