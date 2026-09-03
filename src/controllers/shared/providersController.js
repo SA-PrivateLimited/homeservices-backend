@@ -56,6 +56,10 @@ const {
   applyShowRequestService,
   parseShowRequestService,
 } = require('../../utils/showRequestService');
+const {
+  applyShowContactToUser,
+  parseShowContactToUser,
+} = require('../../utils/showContactToUser');
 
 async function providerPayloadWithPolicy(provider) {
   if (!provider) return provider;
@@ -65,6 +69,7 @@ async function providerPayloadWithPolicy(provider) {
   ]);
   const raw = provider.toObject ? provider.toObject() : {...provider};
   applyShowRequestService(raw);
+  applyShowContactToUser(raw);
   return {...raw, partnerVerificationMode: mode, allowOfflineProviderOpenRequests};
 }
 
@@ -311,6 +316,7 @@ exports.getProviders = async (req, res, next) => {
           const u = byId.get(p._id);
           const flags = adminProfileFlags(u || {role: 'provider'}, p);
           applyShowRequestService(p);
+          applyShowContactToUser(p);
           return {
             ...p,
             phone: p.phone || p.phoneNumber || u?.phone || u?.phoneNumber,
@@ -340,7 +346,11 @@ exports.getProviders = async (req, res, next) => {
             : hasAnyCustomerVisibleService(p),
         )
         .map((p) =>
-          publicProviderRow(applyShowRequestService(p), settings, serviceQuery),
+          publicProviderRow(
+            applyShowContactToUser(applyShowRequestService(p)),
+            settings,
+            serviceQuery,
+          ),
         );
     }
 
@@ -453,6 +463,7 @@ exports.getProviderById = async (req, res, next) => {
     }
 
     applyShowRequestService(providerData);
+    applyShowContactToUser(providerData);
 
     const isAdmin = req.user && req.user.role === 'admin';
     const isSelfProvider =
@@ -543,6 +554,7 @@ exports.updateMyProfile = async (req, res, next) => {
     delete updateData.serviceQualifications;
     delete updateData.inactiveServiceCategories;
     delete updateData.showRequestService;
+    delete updateData.showContactToUser;
     delete updateData.onboardingSource;
     delete updateData.addedByAdminId;
 
@@ -1473,6 +1485,15 @@ exports.updateProvider = async (req, res, next) => {
         delete updateData.showRequestService;
       } else {
         updateData.showRequestService = parsed;
+      }
+    }
+
+    if (updateData.showContactToUser !== undefined) {
+      const parsed = parseShowContactToUser(updateData.showContactToUser);
+      if (parsed === null) {
+        delete updateData.showContactToUser;
+      } else {
+        updateData.showContactToUser = parsed;
       }
     }
 

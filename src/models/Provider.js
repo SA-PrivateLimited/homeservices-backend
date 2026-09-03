@@ -131,6 +131,15 @@ const providerSchema = new mongoose.Schema({
     type: Boolean,
     index: true,
   },
+  /**
+   * Customers may see Call on Browse / Partner details.
+   * Default on. Missing on older rows — treated as true.
+   */
+  showContactToUser: {
+    type: Boolean,
+    default: true,
+    index: true,
+  },
   addedByAdminId: {
     type: String,
     trim: true,

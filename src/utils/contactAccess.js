@@ -13,6 +13,7 @@ const {
   providerServiceType,
 } = require('./providerContactPolicy');
 const {getContactSettingsSync} = require('../services/contactPolicyService');
+const {isShowContactToUserEnabled} = require('./showContactToUser');
 
 const CONTACT_ALLOWED_STATUSES = new Set([
   'accepted',
@@ -211,6 +212,7 @@ function toPublicProvider(provider, {revealPhone = false, policy} = {}) {
   if (policy) {
     out.providerContactPolicy = policy;
   }
+  out.showContactToUser = isShowContactToUserEnabled(raw);
   const publicName = resolveProviderPublicName(out);
   if (publicName) {
     out.name = publicName;
@@ -227,10 +229,11 @@ function toPublicProviderForSettings(provider, settings) {
     settings,
     providerServiceType(provider),
   );
-  const revealPhone = customerMaySeeProviderPhone(policy, {
-    hasJob: false,
-    hasProvider: false,
-  });
+  const revealPhone =
+    customerMaySeeProviderPhone(policy, {
+      hasJob: false,
+      hasProvider: false,
+    }) && isShowContactToUserEnabled(provider);
   return toPublicProvider(provider, {revealPhone, policy});
 }
 
