@@ -11,6 +11,7 @@ const {
   canAccessProviderContact,
   canAccessCustomerContact,
   toPublicProvider,
+  toPublicProviderForSettings,
   redactServiceRequestForViewer,
 } = require('../src/utils/contactAccess');
 
@@ -219,6 +220,16 @@ describe('toPublicProvider', () => {
     assert.equal(out.phoneNumber, '9111111111');
     assert.equal(out.contactAvailable, true);
     assert.equal(out.providerContactPolicy, 'DIRECT');
+  });
+
+  it('omits phone when showContactToUser is false even if policy would reveal', () => {
+    const out = toPublicProviderForSettings(
+      {_id: 'p1', name: 'Ada', phone: '9111111111', showContactToUser: false},
+      {providerContactPolicy: 'DIRECT', serviceOverrides: {}},
+    );
+    assert.equal(out.phone, undefined);
+    assert.equal(out.contactAvailable, false);
+    assert.equal(out.showContactToUser, false);
   });
 });
 
