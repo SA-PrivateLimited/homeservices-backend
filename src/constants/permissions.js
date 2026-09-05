@@ -40,6 +40,16 @@ const PERMISSIONS = Object.freeze({
   /** Manage other admin accounts (invite / permissions). Super Admin elevation still required. */
   ADMINS_VIEW: 'admins.view',
   ADMINS_MANAGE: 'admins.manage',
+
+  /** Internal HR — Akanso employees (not marketplace partners). */
+  EMPLOYEES_VIEW: 'employees.view',
+  EMPLOYEES_CREATE: 'employees.create',
+  EMPLOYEES_UPDATE: 'employees.update',
+  EMPLOYEES_SALARY: 'employees.salary',
+  EMPLOYEES_DOCUMENTS: 'employees.documents',
+  EMPLOYEES_ID_CARD: 'employees.id-card',
+  EMPLOYEES_DEACTIVATE: 'employees.deactivate',
+  EMPLOYEES_DELETE: 'employees.delete',
 });
 
 /** All known permission string values. */
@@ -113,6 +123,20 @@ const PERMISSION_MODULES = Object.freeze([
       PERMISSIONS.CLIENTS_CREATE,
       PERMISSIONS.CLIENTS_UPDATE,
       PERMISSIONS.CLIENTS_DELETE,
+    ],
+  },
+  {
+    id: 'employees',
+    label: 'HR / Employees',
+    permissions: [
+      PERMISSIONS.EMPLOYEES_VIEW,
+      PERMISSIONS.EMPLOYEES_CREATE,
+      PERMISSIONS.EMPLOYEES_UPDATE,
+      PERMISSIONS.EMPLOYEES_SALARY,
+      PERMISSIONS.EMPLOYEES_DOCUMENTS,
+      PERMISSIONS.EMPLOYEES_ID_CARD,
+      PERMISSIONS.EMPLOYEES_DEACTIVATE,
+      PERMISSIONS.EMPLOYEES_DELETE,
     ],
   },
 ]);

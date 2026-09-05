@@ -137,6 +137,8 @@ app.use('/api/admins', require('./routes/admin/admins'));
 app.use('/api/admin/area-provider-demands', require('./routes/admin/areaProviderDemands'));
 app.use('/api/admin/backups', require('./routes/admin/backups'));
 app.use('/api/admin/creatives', require('./routes/admin/creatives'));
+app.use('/api/admin/employees', require('./routes/admin/employees'));
+app.use('/api/employees', require('./routes/employeesPublic'));
 
 // Realtime HTTP emit (compat with mobile clients; same host as API)
 mountEmitHttpRoutes(app);
