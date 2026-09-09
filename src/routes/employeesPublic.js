@@ -4,10 +4,10 @@
 
 const express = require('express');
 const router = express.Router();
-const {logRequest} = require('../../middleware/logger');
+const {logRequest} = require('../middleware/logger');
 const {
   verifyEmployeePublic,
-} = require('../../controllers/admin/employeesController');
+} = require('../controllers/admin/employeesController');
 
 router.get('/verify/:token', logRequest, verifyEmployeePublic);
 
