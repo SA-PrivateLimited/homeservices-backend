@@ -9,6 +9,35 @@ function rewriteLegacyAssetHost(url) {
   );
 }
 
+function rewriteStoredAssetValue(value) {
+  if (typeof value === 'string') return rewriteLegacyAssetHost(value);
+  if (Array.isArray(value)) return value.map(rewriteStoredAssetValue);
+  if (value && typeof value === 'object' && typeof value.url === 'string') {
+    return {...value, url: rewriteLegacyAssetHost(value.url)};
+  }
+  return value;
+}
+
+/** Stored CDN URLs keep the old host until rewritten on read. */
+function rewriteStoredAssetFields(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  for (const field of [
+    'profileImage',
+    'photoURL',
+    'photo',
+    'customerProfileImage',
+    'providerProfileImage',
+  ]) {
+    if (typeof payload[field] === 'string') {
+      payload[field] = rewriteLegacyAssetHost(payload[field]);
+    }
+  }
+  if (payload.photos != null) {
+    payload.photos = rewriteStoredAssetValue(payload.photos);
+  }
+  return payload;
+}
+
 function resolvePartnerProfileImage(provider, user) {
   const partnerUrl = rewriteLegacyAssetHost(
     provider?.profileImage || provider?.photo || '',
@@ -23,10 +52,12 @@ function applyLinkedProfileImageFallback(payload, user) {
   if (!payload) return payload;
   const image = resolvePartnerProfileImage(payload, user);
   if (image) payload.profileImage = image;
-  return payload;
+  return rewriteStoredAssetFields(payload);
 }
 
 module.exports = {
+  rewriteLegacyAssetHost,
+  rewriteStoredAssetFields,
   resolvePartnerProfileImage,
   applyLinkedProfileImageFallback,
 };

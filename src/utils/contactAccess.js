@@ -14,6 +14,7 @@ const {
 } = require('./providerContactPolicy');
 const {getContactSettingsSync} = require('../services/contactPolicyService');
 const {isShowContactToUserEnabled} = require('./showContactToUser');
+const {rewriteStoredAssetFields} = require('./resolvePartnerProfileImage');
 
 const CONTACT_ALLOWED_STATUSES = new Set([
   'accepted',
@@ -218,7 +219,7 @@ function toPublicProvider(provider, {revealPhone = false, policy} = {}) {
     out.name = publicName;
     out.displayName = publicName;
   }
-  return out;
+  return rewriteStoredAssetFields(out);
 }
 
 /**

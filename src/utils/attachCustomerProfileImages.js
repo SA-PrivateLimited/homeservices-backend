@@ -3,10 +3,13 @@
  */
 
 const User = require('../models/User');
+const {rewriteLegacyAssetHost} = require('./resolvePartnerProfileImage');
 
 function pickProfileImage(user) {
   if (!user) return undefined;
-  const url = String(user.profileImage || user.photoURL || '').trim();
+  const url = rewriteLegacyAssetHost(
+    user.profileImage || user.photoURL || '',
+  ).trim();
   return url || undefined;
 }
 
