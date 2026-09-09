@@ -1,6 +1,8 @@
 /**
  * Server-side image normalize / compress (Sharp).
  * One delivery file — no original+variants. Prefer smaller size; never enlarge.
+ *
+ * Profile photos target ≤100KB for browse/list speed and S3 cost.
  */
 
 const sharp = require('sharp');
@@ -9,9 +11,22 @@ const {createHttpError} = require('../utils/assetValidation');
 /** @typedef {'profile'|'photo'|'logo'} OptimizeKind */
 
 const PROFILES = Object.freeze({
-  profile: {maxEdge: 800, quality: 78},
-  photo: {maxEdge: 1200, quality: 80},
-  logo: {maxEdge: 512, quality: 85},
+  // Browse lists show many avatars — keep these tiny.
+  profile: {
+    maxEdge: 640,
+    quality: 72,
+    maxBytes: 100 * 1024,
+  },
+  photo: {
+    maxEdge: 1200,
+    quality: 78,
+    maxBytes: 250 * 1024,
+  },
+  logo: {
+    maxEdge: 512,
+    quality: 82,
+    maxBytes: 80 * 1024,
+  },
 });
 
 const PURPOSE_TO_KIND = Object.freeze({
@@ -21,7 +36,7 @@ const PURPOSE_TO_KIND = Object.freeze({
   'service-request-photo': 'photo',
   'provider-request-photo': 'photo',
   'job-completion-photo': 'photo',
-  'temp': 'photo',
+  temp: 'photo',
 });
 
 function kindForPurpose(purpose) {
@@ -32,7 +47,7 @@ function kindForObjectKey(key) {
   const k = String(key || '').toLowerCase();
   if (k.includes('/profile/')) return 'profile';
   if (k.includes('/logo/') || k.includes('/creatives/')) return 'logo';
-  if (k.includes('/documents/')) return null; // never recompress docs here
+  if (k.includes('/documents/')) return null;
   return 'photo';
 }
 
@@ -54,17 +69,13 @@ function extensionForKey(key) {
 }
 
 /**
- * Choose output format that stays compatible with the object key extension.
  * Prefer JPEG for photos (smaller, universal). Keep WebP keys as WebP.
  */
 function resolveOutputFormat(key, inputMime) {
   const ext = extensionForKey(key);
   if (ext === 'webp') return 'webp';
   if (ext === 'jpg' || ext === 'jpeg') return 'jpeg';
-  if (ext === 'png') {
-    // Photos: convert PNG → JPEG for size. Logos with transparency stay PNG.
-    return 'jpeg';
-  }
+  if (ext === 'png') return 'jpeg';
   const mime = String(inputMime || '').toLowerCase();
   if (mime === 'image/webp') return 'webp';
   if (mime === 'image/png') return 'jpeg';
@@ -83,10 +94,45 @@ function extensionForFormat(format) {
   return '.jpg';
 }
 
+async function encodeAt(buffer, {maxEdge, quality, format}) {
+  let img = sharp(buffer, {failOn: 'none'}).rotate();
+  const meta = await img.metadata();
+  const width = meta.width || 0;
+  const height = meta.height || 0;
+  const maxDim = Math.max(width, height);
+
+  img = sharp(buffer, {failOn: 'none'}).rotate();
+  if (maxDim > maxEdge) {
+    img = img.resize({
+      width: maxEdge,
+      height: maxEdge,
+      fit: 'inside',
+      withoutEnlargement: true,
+    });
+  }
+  img = img.withMetadata({orientation: undefined});
+
+  let out;
+  if (format === 'webp') {
+    out = await img.webp({quality, effort: 4}).toBuffer({resolveWithObject: true});
+  } else if (format === 'png') {
+    out = await img.png({compressionLevel: 9}).toBuffer({resolveWithObject: true});
+  } else {
+    out = await img
+      .jpeg({quality, mozjpeg: true, chromaSubsampling: '4:2:0'})
+      .toBuffer({resolveWithObject: true});
+  }
+
+  return {
+    buffer: out.data,
+    width: out.info?.width || width,
+    height: out.info?.height || height,
+  };
+}
+
 /**
  * @param {Buffer} buffer
- * @param {{ kind?: OptimizeKind, purpose?: string, key?: string, minBytesToProcess?: number }} [options]
- * @returns {Promise<{ buffer: Buffer, contentType: string, extension: string, width: number, height: number, originalBytes: number, optimizedBytes: number, skipped: boolean, reason?: string }>}
+ * @param {{ kind?: OptimizeKind, purpose?: string, key?: string, contentType?: string, minBytesToProcess?: number, maxBytes?: number }} [options]
  */
 async function optimizeImageBuffer(buffer, options = {}) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
@@ -94,7 +140,6 @@ async function optimizeImageBuffer(buffer, options = {}) {
   }
 
   const originalBytes = buffer.length;
-  const minBytes = options.minBytesToProcess ?? 40 * 1024;
   const kind =
     options.kind ||
     (options.purpose ? kindForPurpose(options.purpose) : null) ||
@@ -116,18 +161,13 @@ async function optimizeImageBuffer(buffer, options = {}) {
   }
 
   const profile = PROFILES[kind] || PROFILES.photo;
+  const maxBytes = options.maxBytes ?? profile.maxBytes ?? 250 * 1024;
+  const minBytes = options.minBytesToProcess ?? Math.min(40 * 1024, maxBytes);
   const format = resolveOutputFormat(options.key, options.contentType);
-
-  let pipeline;
-  try {
-    pipeline = sharp(buffer, {failOn: 'none'}).rotate();
-  } catch (err) {
-    throw createHttpError(400, 'Invalid or corrupt image', 'Bad Request');
-  }
 
   let meta;
   try {
-    meta = await pipeline.metadata();
+    meta = await sharp(buffer, {failOn: 'none'}).rotate().metadata();
   } catch {
     throw createHttpError(400, 'Invalid or corrupt image', 'Bad Request');
   }
@@ -135,12 +175,14 @@ async function optimizeImageBuffer(buffer, options = {}) {
   const width = meta.width || 0;
   const height = meta.height || 0;
   const maxDim = Math.max(width, height);
-  const needsResize = maxDim > profile.maxEdge;
-  const alreadySmall =
-    originalBytes < minBytes && !needsResize && format === 'jpeg' &&
-    (meta.format === 'jpeg' || meta.format === 'jpg');
 
-  if (alreadySmall) {
+  // Only skip when already under the hard size budget.
+  if (
+    originalBytes <= maxBytes &&
+    originalBytes < minBytes &&
+    maxDim <= profile.maxEdge &&
+    (meta.format === 'jpeg' || meta.format === 'jpg' || format === 'jpeg')
+  ) {
     return {
       buffer,
       contentType: contentTypeForFormat(format),
@@ -154,36 +196,47 @@ async function optimizeImageBuffer(buffer, options = {}) {
     };
   }
 
-  let img = sharp(buffer, {failOn: 'none'}).rotate();
-  if (needsResize) {
-    img = img.resize({
-      width: profile.maxEdge,
-      height: profile.maxEdge,
-      fit: 'inside',
-      withoutEnlargement: true,
+  const attempts = [
+    {maxEdge: profile.maxEdge, quality: profile.quality},
+    {maxEdge: profile.maxEdge, quality: Math.max(50, profile.quality - 10)},
+    {maxEdge: Math.round(profile.maxEdge * 0.85), quality: Math.max(48, profile.quality - 14)},
+    {maxEdge: Math.round(profile.maxEdge * 0.7), quality: Math.max(45, profile.quality - 18)},
+    {maxEdge: Math.round(profile.maxEdge * 0.55), quality: 42},
+    {maxEdge: Math.min(400, profile.maxEdge), quality: 38},
+  ];
+
+  let best = null;
+  for (const attempt of attempts) {
+    const encoded = await encodeAt(buffer, {
+      maxEdge: attempt.maxEdge,
+      quality: attempt.quality,
+      format,
     });
+    if (!best || encoded.buffer.length < best.buffer.length) {
+      best = encoded;
+    }
+    if (encoded.buffer.length <= maxBytes) {
+      best = encoded;
+      break;
+    }
   }
 
-  img = img.withMetadata({orientation: undefined});
-
-  let out;
-  if (format === 'webp') {
-    out = await img.webp({quality: profile.quality, effort: 4}).toBuffer({
-      resolveWithObject: true,
-    });
-  } else if (format === 'png') {
-    out = await img.png({compressionLevel: 8}).toBuffer({resolveWithObject: true});
-  } else {
-    out = await img
-      .jpeg({quality: profile.quality, mozjpeg: true})
-      .toBuffer({resolveWithObject: true});
+  if (!best) {
+    return {
+      buffer,
+      contentType: options.contentType || contentTypeForFormat(format),
+      extension: extensionForFormat(format),
+      width,
+      height,
+      originalBytes,
+      optimizedBytes: originalBytes,
+      skipped: true,
+      reason: 'encode-failed',
+    };
   }
 
-  const optimized = out.data;
-  const outMeta = out.info || {};
-
-  // Prefer the smaller payload. If resize was required, keep the resized file.
-  if (optimized.length >= originalBytes && !needsResize) {
+  // Never store a larger file than the input.
+  if (best.buffer.length >= originalBytes) {
     return {
       buffer,
       contentType: options.contentType || contentTypeForFormat(format),
@@ -198,20 +251,17 @@ async function optimizeImageBuffer(buffer, options = {}) {
   }
 
   return {
-    buffer: optimized,
+    buffer: best.buffer,
     contentType: contentTypeForFormat(format),
     extension: extensionForFormat(format),
-    width: outMeta.width || width,
-    height: outMeta.height || height,
+    width: best.width,
+    height: best.height,
     originalBytes,
-    optimizedBytes: optimized.length,
+    optimizedBytes: best.buffer.length,
     skipped: false,
   };
 }
 
-/**
- * Replace file extension on an object key when format changes (e.g. .png → .jpg).
- */
 function alignKeyExtension(key, extension) {
   const ext = extension.startsWith('.') ? extension : `.${extension}`;
   if (!key || !/\.[a-z0-9]+$/i.test(key)) return `${key}${ext}`;

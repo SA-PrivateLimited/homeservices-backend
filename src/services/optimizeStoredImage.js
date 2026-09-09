@@ -23,7 +23,7 @@ async function streamToBuffer(body) {
 
 /**
  * @param {string} key
- * @param {{ userId?: string, dryRun?: boolean, force?: boolean }} [options]
+ * @param {{ userId?: string, dryRun?: boolean, force?: boolean, kind?: 'profile'|'photo'|'logo' }} [options]
  */
 async function optimizeStoredImage(key, options = {}) {
   const normalizedKey = key;
@@ -34,7 +34,8 @@ async function optimizeStoredImage(key, options = {}) {
       reason: 'sensitive-document',
     };
   }
-  if (kindForObjectKey(normalizedKey) == null) {
+  const inferredKind = options.kind || kindForObjectKey(normalizedKey);
+  if (inferredKind == null && !options.kind) {
     return {
       key: normalizedKey,
       skipped: true,
@@ -58,6 +59,7 @@ async function optimizeStoredImage(key, options = {}) {
   const result = await optimizeImageBuffer(input, {
     key: normalizedKey,
     contentType: contentType || 'image/jpeg',
+    kind: inferredKind || 'photo',
   });
 
   if (result.skipped || result.optimizedBytes >= originalBytes) {
