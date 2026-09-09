@@ -130,6 +130,16 @@ async function gatherKeys(only) {
   return keys;
 }
 
+const SOURCE_KIND = {
+  'provider-profile': 'profile',
+  'customer-profile': 'profile',
+  'employee-photo': 'profile',
+  'provider-showcase': 'photo',
+  'service-request-photo': 'photo',
+  'client-logo': 'logo',
+  creative: 'logo',
+};
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const mongoUri =
@@ -163,6 +173,7 @@ async function main() {
       const result = await optimizeStoredImage(key, {
         dryRun: args.dryRun,
         userId: 'recompress-script',
+        kind: SOURCE_KIND[source] || undefined,
       });
       originalTotal += result.originalBytes || 0;
       if (result.skipped) {
