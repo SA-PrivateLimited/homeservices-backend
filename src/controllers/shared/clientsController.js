@@ -18,7 +18,13 @@ const {keyFromUrlOrKey} = require('../../utils/s3Keys');
 function resolvePublicLogoUrl(logoUrl) {
   const raw = String(logoUrl || '').trim();
   if (!raw) return '';
-  if (/^https:\/\/assets\.(akanso\.in|akansho\.com)\//i.test(raw)) return raw;
+  if (/^https?:\/\/assets\.akanso\.in\//i.test(raw)) {
+    return raw.replace(
+      /^https?:\/\/assets\.akanso\.in\//i,
+      'https://assets.akansho.com/',
+    );
+  }
+  if (/^https:\/\/assets\.akansho\.com\//i.test(raw)) return raw;
   if (/^https?:\/\//i.test(raw)) {
     try {
       const parsed = new URL(raw);
