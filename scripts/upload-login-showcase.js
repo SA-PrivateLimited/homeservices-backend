@@ -1,5 +1,5 @@
 /**
- * Upload Customer Web login showcase PNGs to S3 (CloudFront: assets.akanso.in).
+ * Upload Customer Web login showcase PNGs to S3 (CloudFront: assets.akansho.com).
  * Usage: node scripts/upload-login-showcase.js
  */
 require('dotenv').config();

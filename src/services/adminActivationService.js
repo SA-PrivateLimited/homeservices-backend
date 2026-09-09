@@ -41,7 +41,7 @@ function generateActivationToken() {
   return crypto.randomBytes(32).toString('base64url');
 }
 
-const PRODUCTION_ADMIN_ORIGIN = 'https://admin.akanso.in';
+const PRODUCTION_ADMIN_ORIGIN = 'https://admin.akansho.com';
 const DEFAULT_LOCAL_ADMIN_ORIGIN = 'http://localhost:5173';
 
 const ALLOWED_ADMIN_ORIGINS = new Set([

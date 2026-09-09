@@ -91,7 +91,7 @@ exports.createContactRecommendation = async (req, res, next) => {
           success: false,
           error: 'Conflict',
           code: 'ALREADY_PARTNER',
-          message: 'This mobile number is already registered as an Akanso Partner.',
+          message: 'This mobile number is already registered as an Akansho Partner.',
         });
       }
 
@@ -100,7 +100,7 @@ exports.createContactRecommendation = async (req, res, next) => {
           success: false,
           error: 'Conflict',
           code: 'ALREADY_SUGGESTED',
-          message: 'This contact has already been suggested to Akanso.',
+          message: 'This contact has already been suggested to Akansho.',
         });
       }
 
@@ -109,7 +109,7 @@ exports.createContactRecommendation = async (req, res, next) => {
           success: false,
           error: 'Conflict',
           code: 'ALREADY_CUSTOMER',
-          message: 'This mobile number belongs to an existing Akanso customer.',
+          message: 'This mobile number belongs to an existing Akansho customer.',
         });
       }
     }

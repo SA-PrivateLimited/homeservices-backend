@@ -7,7 +7,7 @@
  * Local/dev: AWS_S3_LOCAL_FALLBACK=true writes to ./uploads (no AWS needed),
  *   or AWS_PROFILE / SSO. Static keys are not injected into S3Client.
  *
- * Public asset URLs always use AWS_CLOUDFRONT_DOMAIN (assets.akanso.in),
+ * Public asset URLs always use AWS_CLOUDFRONT_DOMAIN (assets.akansho.com),
  * never raw S3 bucket URLs or the *.cloudfront.net distribution hostname.
  */
 
@@ -40,7 +40,7 @@ function getBucket() {
 }
 
 function getCloudFrontDomain() {
-  return (process.env.AWS_CLOUDFRONT_DOMAIN || 'assets.akanso.in')
+  return (process.env.AWS_CLOUDFRONT_DOMAIN || 'assets.akansho.com')
     .replace(/^https?:\/\//, '')
     .replace(/\/+$/, '');
 }
@@ -137,7 +137,7 @@ function resetS3ClientForTests() {
 
 /**
  * Canonical public CDN URL for an object key.
- * Always https://{AWS_CLOUDFRONT_DOMAIN}/<key> (e.g. assets.akanso.in).
+ * Always https://{AWS_CLOUDFRONT_DOMAIN}/<key> (e.g. assets.akansho.com).
  * Never emits raw S3 URLs or *.cloudfront.net distribution hostnames.
  */
 function generateCloudFrontUrl(key) {
@@ -150,7 +150,7 @@ function generateCloudFrontUrl(key) {
   ) {
     throw createHttpError(
       500,
-      'AWS_CLOUDFRONT_DOMAIN must be the canonical CDN host (assets.akanso.in), not an S3 or *.cloudfront.net hostname',
+      'AWS_CLOUDFRONT_DOMAIN must be the canonical CDN host (assets.akansho.com), not an S3 or *.cloudfront.net hostname',
       'Config Error',
     );
   }

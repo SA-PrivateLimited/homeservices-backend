@@ -564,7 +564,7 @@ exports.getGeographyMeta = async (req, res, next) => {
 };
 
 /**
- * Resolve GPS coordinates to Akanso state/district (public — server-side geocode).
+ * Resolve GPS coordinates to Akansho state/district (public — server-side geocode).
  */
 exports.resolveLocationFromCoordinates = async (req, res, next) => {
   try {

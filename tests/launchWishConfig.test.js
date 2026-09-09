@@ -7,10 +7,10 @@ const {
   normalizeWishIcon,
 } = require('../src/utils/launchWishConfig');
 
-test('empty event name becomes Akanso, not a white-label brand', () => {
+test('empty event name becomes Akansho, not a white-label brand', () => {
   assert.equal(normalizeEventName(''), DEFAULT_EVENT_NAME);
-  assert.equal(normalizeEventName('   '), 'Akanso');
-  assert.equal(normalizeEventName('Akanso'), 'Akanso');
+  assert.equal(normalizeEventName('   '), 'Akansho');
+  assert.equal(normalizeEventName('Akansho'), 'Akansho');
 });
 
 test('unknown wish icon falls back to celebration', () => {
@@ -25,8 +25,8 @@ test('logo accent url must be http(s) or empty', () => {
   assert.equal(normalizeLogoAccentUrl(''), '');
   assert.equal(normalizeLogoAccentUrl('not-a-url'), '');
   assert.equal(
-    normalizeLogoAccentUrl('https://assets.akanso.in/services/pwa/diya.png'),
-    'https://assets.akanso.in/services/pwa/diya.png',
+    normalizeLogoAccentUrl('https://assets.akansho.com/services/pwa/diya.png'),
+    'https://assets.akansho.com/services/pwa/diya.png',
   );
 });
 

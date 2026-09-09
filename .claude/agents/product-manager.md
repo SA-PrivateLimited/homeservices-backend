@@ -31,7 +31,7 @@ The spec must contain:
 
 ## Embedded repo context
 
-homeServicesBackend is the source of truth for Akanso business state.
+homeServicesBackend is the source of truth for Akansho business state.
 
 ### Spec must account for
 - customer/provider/admin/shared route families

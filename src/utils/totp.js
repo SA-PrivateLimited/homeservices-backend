@@ -7,16 +7,18 @@ const {generateSecret, generateURI, verifySync} = require('otplib');
 const QRCode = require('qrcode');
 const {encryptToken, decryptToken} = require('./tokenEncryption');
 
-const ISSUER = process.env.MFA_ISSUER || 'Home Services Admin';
+const ISSUER_ADMIN = process.env.MFA_ISSUER || 'Akansho Admin';
+const ISSUER_EMPLOYEE =
+  process.env.MFA_ISSUER_EMPLOYEE || process.env.MFA_ISSUER || 'Akansho Employee';
 
 function generateTotpSecret() {
   return generateSecret();
 }
 
-function buildOtpauthUrl(email, secret) {
-  const label = (email || 'admin').trim() || 'admin';
+function buildOtpauthUrl(email, secret, issuer = ISSUER_ADMIN) {
+  const label = (email || 'user').trim() || 'user';
   return generateURI({
-    issuer: ISSUER,
+    issuer,
     label,
     secret,
   });
@@ -61,7 +63,9 @@ function verifyTotpCode(secret, code) {
 }
 
 module.exports = {
-  ISSUER,
+  ISSUER: ISSUER_ADMIN,
+  ISSUER_ADMIN,
+  ISSUER_EMPLOYEE,
   generateTotpSecret,
   buildOtpauthUrl,
   buildQrDataUrl,

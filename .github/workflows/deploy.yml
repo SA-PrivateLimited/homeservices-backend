@@ -23,8 +23,8 @@ env:
   DEPLOY_USER: ${{ vars.DEPLOY_USER || 'ubuntu' }}
   DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/var/www/homeservices-backend' }}
   RESTART_COMMAND: ${{ vars.RESTART_COMMAND || 'pm2 restart HomeServicesBackend' }}
-  SITE_HOST: api.akanso.in
-  HEALTH_URL: https://api.akanso.in/health
+  SITE_HOST: api.akansho.com
+  HEALTH_URL: https://api.akansho.com/health
 
 jobs:
   deploy:

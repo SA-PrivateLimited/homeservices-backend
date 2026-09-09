@@ -1,12 +1,12 @@
 /**
  * CustomerWeb launch tribute — event name + personal-wish icon.
- * Event name is NOT white-label branding (Homora etc.). Default is Akanso.
+ * Event name is NOT white-label branding (Homora etc.). Default is Akansho.
  */
 
-const DEFAULT_EVENT_NAME = 'Akanso';
+const DEFAULT_EVENT_NAME = 'Akansho';
 const DEFAULT_WISH_ICON = 'celebration';
 const DEFAULT_GREETING = 'Happy Holi';
-const GUEST_FAMILY_NAME = 'Akanso Family';
+const GUEST_FAMILY_NAME = 'Akansho Family';
 
 const LAUNCH_WISH_ICONS = Object.freeze([
   'celebration',

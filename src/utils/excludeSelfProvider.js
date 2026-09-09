@@ -1,5 +1,5 @@
 /**
- * Exclude the current Akanso user's own Partner profile from discovery lists.
+ * Exclude the current Akansho user's own Partner profile from discovery lists.
  * Provider._id === User._id in this codebase.
  */
 

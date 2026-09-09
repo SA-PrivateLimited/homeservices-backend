@@ -88,7 +88,7 @@ async function verifyPhoneIdToken(idToken, expectedPhone) {
 function stringifyFcmData(title, body, data) {
   const merged = {
     ...(data || {}),
-    title: title || data?.title || 'Akanso',
+    title: title || data?.title || 'Akansho',
     body: body || data?.body || '',
   };
   return Object.fromEntries(
@@ -110,6 +110,25 @@ function webPushMessage(title, body, data) {
   };
 }
 
+/**
+ * Android native tray. Do not set a top-level `notification` key —
+ * Chrome would auto-display and the PWA SW would double-fire / skip on iOS.
+ */
+function androidPush(title, body, extra) {
+  const {notification: extraNotif, ...rest} = extra || {};
+  return {
+    priority: 'high',
+    ...rest,
+    notification: {
+      title: title || 'Akansho',
+      body: body || '',
+      channelId: 'service_requests',
+      sound: 'default',
+      ...extraNotif,
+    },
+  };
+}
+
 async function sendToToken(token, {title, body, data, android, apns} = {}) {
   assertReady();
   if (!token) {
@@ -119,8 +138,8 @@ async function sendToToken(token, {title, body, data, android, apns} = {}) {
   const message = {
     token,
     ...webPushMessage(title, body, data),
+    android: androidPush(title, body, android),
   };
-  if (android) message.android = android;
   if (apns) message.apns = apns;
 
   try {
@@ -149,6 +168,7 @@ async function sendToTokens(tokens, payload = {}) {
     const res = await firebaseAdmin.messaging().sendEachForMulticast({
       tokens: chunk,
       ...base,
+      android: androidPush(payload.title, payload.body, payload.android),
     });
     successCount += res.successCount;
     failureCount += res.failureCount;
@@ -173,6 +193,7 @@ async function sendToTopic(topic, {title, body, data} = {}) {
     const messageId = await firebaseAdmin.messaging().send({
       topic: name,
       ...webPushMessage(title, body, data),
+      android: androidPush(title, body),
     });
     return {sent: true, messageId};
   } catch (err) {

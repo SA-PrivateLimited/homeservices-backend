@@ -1,5 +1,5 @@
 /**
- * Reverse geocode GPS → Akanso state/district (server-side Nominatim).
+ * Reverse geocode GPS → Akansho state/district (server-side Nominatim).
  * Browsers cannot call Nominatim directly (CORS).
  */
 
@@ -12,7 +12,7 @@ const {ensureGeographySeeded} = require('./geographySeed');
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/reverse';
 const USER_AGENT =
   process.env.NOMINATIM_USER_AGENT ||
-  'AkansoHomeServices/1.0 (contact: support@akanso.in)';
+  'AkanshoHomeServices/1.0 (contact: support@akansho.com)';
 
 function makeError(code, message) {
   const err = new Error(message || code);

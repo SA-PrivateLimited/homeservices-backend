@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 
 process.env.AWS_REGION = 'eu-north-1';
 process.env.AWS_S3_BUCKET = 'akanso-assets';
-process.env.AWS_CLOUDFRONT_DOMAIN = 'assets.akanso.in';
+process.env.AWS_CLOUDFRONT_DOMAIN = 'assets.akansho.com';
 process.env.AWS_S3_LOCAL_FALLBACK = 'false';
 process.env.NODE_ENV = 'test';
 
@@ -50,11 +50,11 @@ describe('normalizePhotoReferences', () => {
   it('accepts owned CloudFront keys/urls', () => {
     const key = 'customers/cust_abc/service-requests/pending/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jpg';
     const urls = normalizePhotoReferences(
-      [{key, url: `https://assets.akanso.in/${key}`}],
+      [{key, url: `https://assets.akansho.com/${key}`}],
       customer,
     );
     assert.equal(urls.length, 1);
-    assert.equal(urls[0], `https://assets.akanso.in/${key}`);
+    assert.equal(urls[0], `https://assets.akansho.com/${key}`);
   });
 
   it('rejects another customer key', () => {

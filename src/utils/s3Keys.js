@@ -106,7 +106,7 @@ function buildAdminAssetKey(adminId, extension) {
   return `admin/${id}/${buildUniqueFilename(extension)}`;
 }
 
-/** Public Akanso creative images for later download/share. */
+/** Public Akansho creative images for later download/share. */
 function buildAdminCreativeKey(extension) {
   assertRootPrefix('admin');
   return `admin/creatives/${buildUniqueFilename(extension)}`;
@@ -254,12 +254,12 @@ function keyFromUrlOrKey(urlOrKey) {
   }
   const raw = urlOrKey.trim();
   const domain = (
-    process.env.AWS_CLOUDFRONT_DOMAIN || 'assets.akanso.in'
+    process.env.AWS_CLOUDFRONT_DOMAIN || 'assets.akansho.com'
   )
     .replace(/^https?:\/\//, '')
     .replace(/\/+$/, '');
   const acceptedHosts = new Set(
-    [domain]
+    [domain, 'assets.akanso.in']
       .concat(
         String(process.env.AWS_CLOUDFRONT_DISTRIBUTION_HOSTNAME || '')
           .split(',')
