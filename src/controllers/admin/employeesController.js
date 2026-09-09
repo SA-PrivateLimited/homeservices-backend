@@ -5,6 +5,7 @@
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 const Employee = require('../../models/Employee');
+const EmployeeLookup = require('../../models/EmployeeLookup');
 const {nextEmployeeCode} = require('../../utils/employeeCode');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 const {localTenDigits, toE164} = require('../../utils/phone');
@@ -99,6 +100,17 @@ function sanitizeForClient(doc, {includeSalary} = {includeSalary: false}) {
     delete result.currentSalary;
   }
 
+  delete result.passwordHash;
+  delete result.totpSecretEncrypted;
+  delete result.inviteTokenHash;
+  result.accountStatus = o.accountStatus || 'none';
+  result.profileAccess = o.profileAccess || 'view';
+  result.canRaiseRequest = Boolean(o.canRaiseRequest);
+  result.totpEnabled = Boolean(o.totpEnabled);
+  result.inviteSentAt = o.inviteSentAt || null;
+  result.inviteExpiresAt = o.inviteExpiresAt || null;
+  result.inviteAcceptedAt = o.inviteAcceptedAt || null;
+
   return result;
 }
 
@@ -120,6 +132,11 @@ function listProjection() {
     address: 1,
     reportingManagerName: 1,
     reportingManagerCode: 1,
+    accountStatus: 1,
+    profileAccess: 1,
+    canRaiseRequest: 1,
+    totpEnabled: 1,
+    inviteSentAt: 1,
     createdAt: 1,
     updatedAt: 1,
   };
@@ -223,19 +240,37 @@ exports.listEmployees = async (req, res, next) => {
 };
 
 /**
- * GET /api/admin/employees/meta — departments / professions for filters
+ * GET /api/admin/employees/meta — departments / designations / professions
  */
 exports.getEmployeeMeta = async (req, res, next) => {
   try {
-    const [departments, professions] = await Promise.all([
-      Employee.distinct('department', {department: {$nin: [null, '']}}),
-      Employee.distinct('profession', {profession: {$nin: [null, '']}}),
-    ]);
+    const [departmentsUsed, designationsUsed, professionsUsed, lookups] =
+      await Promise.all([
+        Employee.distinct('department', {department: {$nin: [null, '']}}),
+        Employee.distinct('designation', {designation: {$nin: [null, '']}}),
+        Employee.distinct('profession', {profession: {$nin: [null, '']}}),
+        EmployeeLookup.find({}).sort({label: 1}).lean(),
+      ]);
+
+    const byKind = (kind) =>
+      lookups.filter((l) => l.kind === kind).map((l) => l.label);
+
+    const merge = (used, catalog) =>
+      [...new Set([...catalog, ...used].map((s) => String(s || '').trim()).filter(Boolean))].sort(
+        (a, b) => a.localeCompare(b),
+      );
+
     res.json({
       success: true,
       data: {
-        departments: departments.filter(Boolean).sort(),
-        professions: professions.filter(Boolean).sort(),
+        departments: merge(departmentsUsed, byKind('department')),
+        designations: merge(designationsUsed, byKind('designation')),
+        professions: merge(professionsUsed, byKind('profession')),
+        lookups: {
+          department: lookups.filter((l) => l.kind === 'department'),
+          designation: lookups.filter((l) => l.kind === 'designation'),
+          profession: lookups.filter((l) => l.kind === 'profession'),
+        },
         employmentTypes: Employee.EMPLOYMENT_TYPES,
         statuses: Employee.EMPLOYEE_STATUSES,
         documentTypes: Employee.DOCUMENT_TYPES,
@@ -245,6 +280,98 @@ exports.getEmployeeMeta = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * GET /api/admin/employees/lookups?kind=department
+ */
+exports.listLookups = async (req, res, next) => {
+  try {
+    const kind = String(req.query.kind || '').trim();
+    const query = {};
+    if (kind && EmployeeLookup.KINDS.includes(kind)) query.kind = kind;
+    const rows = await EmployeeLookup.find(query).sort({kind: 1, label: 1}).lean();
+    res.json({success: true, data: rows});
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/admin/employees/lookups
+ */
+exports.createLookup = async (req, res, next) => {
+  try {
+    const who = actor(req);
+    const kind = String(req.body?.kind || '').trim();
+    const label = String(req.body?.label || '').trim();
+    if (!EmployeeLookup.KINDS.includes(kind)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'Invalid lookup kind',
+      });
+    }
+    if (!label) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'Label is required',
+      });
+    }
+    try {
+      const doc = await EmployeeLookup.create({
+        kind,
+        label,
+        createdBy: who.id,
+      });
+      res.status(201).json({success: true, data: doc, message: 'Added'});
+    } catch (err) {
+      if (err && err.code === 11000) {
+        return res.status(409).json({
+          success: false,
+          error: 'Conflict',
+          message: 'This value already exists',
+        });
+      }
+      throw err;
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * DELETE /api/admin/employees/lookups/:id
+ */
+exports.deleteLookup = async (req, res, next) => {
+  try {
+    const doc = await EmployeeLookup.findByIdAndDelete(req.params.id);
+    if (!doc) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not Found',
+        message: 'Lookup not found',
+      });
+    }
+    res.json({success: true, message: 'Removed'});
+  } catch (error) {
+    next(error);
+  }
+};
+
+async function ensureLookup(kind, label, createdBy) {
+  const value = String(label || '').trim();
+  if (!value || !EmployeeLookup.KINDS.includes(kind)) return;
+  try {
+    await EmployeeLookup.updateOne(
+      {kind, label: value},
+      {$setOnInsert: {kind, label: value, createdBy: createdBy || ''}},
+      {upsert: true},
+    );
+  } catch {
+    /* ignore race */
+  }
+}
 
 /**
  * GET /api/admin/employees/:id
@@ -381,6 +508,10 @@ exports.createEmployee = async (req, res, next) => {
         esi: String(body.bank.esi || '').trim(),
       };
     }
+
+    await ensureLookup('department', employee.department, who.id);
+    await ensureLookup('designation', employee.designation, who.id);
+    await ensureLookup('profession', employee.profession, who.id);
 
     await employee.save();
 
@@ -557,6 +688,10 @@ exports.updateEmployee = async (req, res, next) => {
         who,
       );
     }
+
+    await ensureLookup('department', employee.department, who.id);
+    await ensureLookup('designation', employee.designation, who.id);
+    await ensureLookup('profession', employee.profession, who.id);
 
     await employee.save();
     const includeSalary = canSeeSalary(req);
@@ -946,9 +1081,42 @@ exports.generateIdCard = async (req, res, next) => {
       `${req.protocol}://${req.get('host')}`;
     const verifyUrl = `${String(base).replace(/\/$/, '')}/api/employees/verify/${employee.verificationToken}`;
 
-    const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
+    const addr = employee.address || {};
+    const locationParts = [
+      employee.workLocation,
+      addr.city,
+      addr.district,
+      addr.state,
+    ].filter(Boolean);
+    const location =
+      locationParts.join(', ') || employee.workLocation || '';
+
+    /** Identity payload for scanners — no salary, bank, or private documents. */
+    const identityPayload = {
+      org: 'Akansho',
+      type: 'employee_identity',
+      verify: verifyUrl,
+      employeeCode: employee.employeeCode,
+      fullName: employee.fullName,
+      profession: employee.profession || '',
+      designation: employee.designation || '',
+      department: employee.department || '',
+      employmentType: employee.employmentType || '',
+      phone: employee.phone || '',
+      email: employee.email || '',
+      experienceYears: employee.professionalExperienceYears || 0,
+      workLocation: employee.workLocation || '',
+      location,
+      joiningDate: employee.joiningDate
+        ? new Date(employee.joiningDate).toISOString().slice(0, 10)
+        : '',
+      status: employee.status,
+      reportingManager: employee.reportingManagerName || '',
+    };
+
+    const qrDataUrl = await QRCode.toDataURL(JSON.stringify(identityPayload), {
       margin: 1,
-      width: 256,
+      width: 280,
       errorCorrectionLevel: 'M',
     });
 
@@ -962,26 +1130,11 @@ exports.generateIdCard = async (req, res, next) => {
     employee.updatedBy = who.id;
     await employee.save();
 
-    const addr = employee.address || {};
-    const locationParts = [
-      employee.workLocation,
-      addr.city,
-      addr.district,
-      addr.state,
-    ].filter(Boolean);
-
     res.json({
       success: true,
       data: {
-        employeeCode: employee.employeeCode,
-        fullName: employee.fullName,
-        profession: employee.profession || employee.designation || '',
-        designation: employee.designation || '',
+        ...identityPayload,
         photoUrl: employee.photoUrl || '',
-        phone: employee.phone,
-        experienceYears: employee.professionalExperienceYears || 0,
-        location: locationParts.join(', ') || employee.workLocation || '',
-        status: employee.status,
         verificationUrl: verifyUrl,
         qrDataUrl,
         generatedAt: new Date().toISOString(),
@@ -1017,7 +1170,7 @@ exports.deleteEmployee = async (req, res, next) => {
 };
 
 /**
- * GET /api/employees/verify/:token — public, minimal identity only
+ * GET /api/employees/verify/:token — public identity (no salary / documents)
  */
 exports.verifyEmployeePublic = async (req, res, next) => {
   try {
@@ -1031,7 +1184,7 @@ exports.verifyEmployeePublic = async (req, res, next) => {
     }
     const employee = await Employee.findOne({verificationToken: token})
       .select(
-        'employeeCode fullName profession designation photoUrl status workLocation',
+        'employeeCode fullName profession designation department employmentType phone email photoUrl status workLocation address professionalExperienceYears joiningDate reportingManagerName reportingManagerCode',
       )
       .lean();
     if (!employee) {
@@ -1041,16 +1194,37 @@ exports.verifyEmployeePublic = async (req, res, next) => {
         message: 'Employee verification not found',
       });
     }
+    const addr = employee.address || {};
+    const location = [
+      employee.workLocation,
+      addr.city,
+      addr.district,
+      addr.state,
+    ]
+      .filter(Boolean)
+      .join(', ');
+
     res.json({
       success: true,
       data: {
+        organization: 'Akansho',
+        type: 'employee_identity',
         employeeCode: employee.employeeCode,
         fullName: employee.fullName,
-        profession: employee.profession || employee.designation || '',
+        profession: employee.profession || '',
+        designation: employee.designation || '',
+        department: employee.department || '',
+        employmentType: employee.employmentType || '',
+        phone: employee.phone || '',
+        email: employee.email || '',
         photoUrl: employee.photoUrl || '',
         status: employee.status,
         workLocation: employee.workLocation || '',
-        organization: 'Akanso',
+        location,
+        experienceYears: employee.professionalExperienceYears || 0,
+        joiningDate: employee.joiningDate || null,
+        reportingManager: employee.reportingManagerName || '',
+        reportingManagerCode: employee.reportingManagerCode || '',
       },
     });
   } catch (error) {
@@ -1061,3 +1235,81 @@ exports.verifyEmployeePublic = async (req, res, next) => {
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+/**
+ * POST /api/admin/employees/:id/invitation
+ */
+exports.inviteEmployee = async (req, res, next) => {
+  try {
+    const who = actor(req);
+    const {
+      createEmployeeInvitation,
+    } = require('../../services/employeeInviteService');
+    const origin =
+      req.body?.adminWebOrigin ||
+      req.get('origin') ||
+      req.headers.origin ||
+      '';
+    const data = await createEmployeeInvitation(req.params.id, {
+      origin,
+      createdBy: who.id,
+      createdByName: who.name,
+    });
+    res.status(201).json({
+      success: true,
+      data,
+      message:
+        'Invitation created. Share the WhatsApp link or activation link with the employee.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/admin/employees/:id/invitation/revoke
+ */
+exports.revokeEmployeeInvite = async (req, res, next) => {
+  try {
+    const who = actor(req);
+    const {
+      revokeEmployeeInvitation,
+    } = require('../../services/employeeInviteService');
+    const employee = await revokeEmployeeInvitation(req.params.id, {
+      createdBy: who.id,
+      createdByName: who.name,
+    });
+    res.json({
+      success: true,
+      data: employee,
+      message: 'Invitation revoked',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PATCH /api/admin/employees/:id/access
+ */
+exports.updateEmployeeAccess = async (req, res, next) => {
+  try {
+    const who = actor(req);
+    const {
+      updateEmployeeAccess,
+    } = require('../../services/employeeInviteService');
+    const employee = await updateEmployeeAccess(req.params.id, {
+      profileAccess: req.body?.profileAccess,
+      canRaiseRequest: req.body?.canRaiseRequest,
+      createdBy: who.id,
+      createdByName: who.name,
+    });
+    res.json({
+      success: true,
+      data: employee,
+      message: 'Employee access updated',
+    });
+  } catch (error) {
+    next(error);
+  }
+};

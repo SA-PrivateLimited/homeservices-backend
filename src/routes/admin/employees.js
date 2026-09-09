@@ -64,6 +64,27 @@ router.get(
   ctrl.getEmployeeMeta,
 );
 router.get(
+  '/lookups',
+  ...gate,
+  requirePermission(PERMISSIONS.EMPLOYEES_VIEW),
+  logRequest,
+  ctrl.listLookups,
+);
+router.post(
+  '/lookups',
+  ...gate,
+  requirePermission(PERMISSIONS.EMPLOYEES_UPDATE),
+  logRequest,
+  ctrl.createLookup,
+);
+router.delete(
+  '/lookups/:id',
+  ...gate,
+  requirePermission(PERMISSIONS.EMPLOYEES_UPDATE),
+  logRequest,
+  ctrl.deleteLookup,
+);
+router.get(
   '/',
   ...gate,
   requirePermission(PERMISSIONS.EMPLOYEES_VIEW),
@@ -97,6 +118,27 @@ router.patch(
   requirePermission(PERMISSIONS.EMPLOYEES_DEACTIVATE),
   logRequest,
   ctrl.updateEmployeeStatus,
+);
+router.post(
+  '/:id/invitation',
+  ...gate,
+  requirePermission(PERMISSIONS.EMPLOYEES_UPDATE),
+  logRequest,
+  ctrl.inviteEmployee,
+);
+router.post(
+  '/:id/invitation/revoke',
+  ...gate,
+  requirePermission(PERMISSIONS.EMPLOYEES_UPDATE),
+  logRequest,
+  ctrl.revokeEmployeeInvite,
+);
+router.patch(
+  '/:id/access',
+  ...gate,
+  requirePermission(PERMISSIONS.EMPLOYEES_UPDATE),
+  logRequest,
+  ctrl.updateEmployeeAccess,
 );
 router.post(
   '/:id/compensation',
