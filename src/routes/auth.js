@@ -1,7 +1,7 @@
 /**
  * Auth routes — JWT (HMAC/HS256)
  * Primary: phone + PIN
- * Phone OTP proof: Firebase Phone Auth idToken (default) or Twilio code (fallback)
+ * Phone OTP proof: Firebase Phone Auth idToken
  */
 
 const express = require('express');
@@ -33,6 +33,13 @@ const {
   activationSetPassword,
   activationVerifyMfa,
 } = require('../controllers/adminActivationController');
+const {
+  validateEmployeeActivation,
+  employeeActivationSetPassword,
+  employeeActivationVerifyMfa,
+  employeeLogin,
+  employeeLoginMfa,
+} = require('../controllers/employeeAuthController');
 const {optionalAuth, verifyAuth} = require('../middleware/auth');
 const {logRequest} = require('../middleware/logger');
 
@@ -41,7 +48,7 @@ router.get('/health', (req, res) => {
     success: true,
     message: 'Auth routes active',
     otpProviderHint:
-      'Firebase Phone Auth idToken (default) or AUTH_OTP_PROVIDER=twilio',
+      'Firebase Phone Auth idToken',
     routes: [
       'POST /api/auth/phone/lookup',
       'POST /api/auth/phone/register-pin',
@@ -79,6 +86,21 @@ router.get('/activate', logRequest, validateActivation);
 router.post('/activate/password', logRequest, activationSetPassword);
 router.post('/activate/mfa', logRequest, activationVerifyMfa);
 
+// Employee invitation activation + login (TOTP — separate from Admin)
+router.get('/employee/activate', logRequest, validateEmployeeActivation);
+router.post(
+  '/employee/activate/password',
+  logRequest,
+  employeeActivationSetPassword,
+);
+router.post(
+  '/employee/activate/mfa',
+  logRequest,
+  employeeActivationVerifyMfa,
+);
+router.post('/employee/login', logRequest, employeeLogin);
+router.post('/employee/login/mfa', logRequest, employeeLoginMfa);
+
 // Primary customer auth (PIN)
 router.post('/phone/lookup', lookupPhone);
 router.post('/phone/register-pin', registerPin);
@@ -103,7 +125,7 @@ router.post(
 );
 router.post('/context/exchange', logRequest, exchangeContextHandoff);
 
-// OTP — Firebase Phone Auth (client) or Twilio (AUTH_OTP_PROVIDER=twilio)
+// OTP — Firebase Phone Auth (client SDK + idToken)
 router.post('/phone/send-otp', sendPhoneOtp);
 router.post('/phone/verify-otp', verifyPhoneOtp);
 
