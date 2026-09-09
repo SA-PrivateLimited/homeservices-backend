@@ -309,12 +309,15 @@ exports.activateClient = async (req, res, next) => {
 exports.uploadClientLogo = async (req, res, next) => {
   try {
     const s3 = require('../../services/s3.service');
-    const {validateImageBuffer} = require('../../utils/assetValidation');
     const {
       buildClientLogoKey,
       keyFromUrlOrKey,
       normalizeObjectKey,
     } = require('../../utils/s3Keys');
+    const {
+      prepareOptimizedImageUpload,
+      IMAGE_CACHE_CONTROL,
+    } = require('../../services/prepareImageUpload');
 
     const {clientId} = req.params;
     const client = await Client.findById(clientId);
@@ -333,13 +336,19 @@ exports.uploadClientLogo = async (req, res, next) => {
       });
     }
 
-    const validated = validateImageBuffer(req.file.buffer, req.file.mimetype);
-    const key = buildClientLogoKey(clientId, validated.extension);
+    const prepared = await prepareOptimizedImageUpload(
+      req.file.buffer,
+      req.file.mimetype,
+      {kind: 'logo', allowSvg: true},
+    );
+    // Logos: prefer optimized raster; SVG passthrough from prepare when not optimizable
+    const key = buildClientLogoKey(clientId, prepared.extension);
     const uploaded = await s3.uploadFile({
-      body: req.file.buffer,
+      body: prepared.buffer,
       key,
-      contentType: validated.contentType,
+      contentType: prepared.contentType,
       userId: req.user?.uid,
+      cacheControl: IMAGE_CACHE_CONTROL,
     });
 
     const previous = client.logoUrl;

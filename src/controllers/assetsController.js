@@ -34,6 +34,12 @@ const {
   isSensitiveObjectKey,
 } = require('../utils/s3Keys');
 const {signUploadToken, verifyUploadToken} = require('../utils/uploadToken');
+const {
+  prepareOptimizedImageUpload,
+  IMAGE_CACHE_CONTROL,
+} = require('../services/prepareImageUpload');
+const {optimizeStoredImage} = require('../services/optimizeStoredImage');
+const {isOptimizableImageMime} = require('../services/imageOptimize');
 
 const UPLOAD_PURPOSES = new Set([
   'service-request-photo',
@@ -404,19 +410,32 @@ exports.directUpload = async (req, res, next) => {
       throw createHttpError(400, 'Empty file', 'Bad Request');
     }
 
-    // Magic-byte validation
+    // Magic-byte validation + image compress for local/direct uploads
+    let uploadBody = buffer;
+    let uploadContentType = tokenPayload.contentType;
     if (tokenPayload.contentType === 'application/pdf') {
       const {validateDocumentBuffer} = require('../utils/assetValidation');
       validateDocumentBuffer(buffer, tokenPayload.contentType);
+    } else if (isOptimizableImageMime(tokenPayload.contentType)) {
+      const prepared = await prepareOptimizedImageUpload(
+        buffer,
+        tokenPayload.contentType,
+        {purpose: 'temp'},
+      );
+      uploadBody = prepared.buffer;
+      uploadContentType = prepared.contentType;
     } else {
       validateImageBuffer(buffer, tokenPayload.contentType);
     }
 
     const uploaded = await s3.uploadFile({
-      body: buffer,
+      body: uploadBody,
       key: tokenPayload.key,
-      contentType: tokenPayload.contentType,
+      contentType: uploadContentType,
       userId: tokenPayload.userId,
+      cacheControl: isOptimizableImageMime(uploadContentType)
+        ? IMAGE_CACHE_CONTROL
+        : undefined,
     });
 
     res.json({
@@ -447,10 +466,11 @@ exports.uploadProviderProfileImage = async (req, res, next) => {
       throw createHttpError(400, 'Image file is required (field: file)', 'Bad Request');
     }
 
-    const validated = validateImageBuffer(req.file.buffer, req.file.mimetype);
-    if (validated.contentType === 'image/svg+xml') {
-      throw createHttpError(400, 'SVG is not allowed for profile images', 'Bad Request');
-    }
+    const prepared = await prepareOptimizedImageUpload(
+      req.file.buffer,
+      req.file.mimetype,
+      {purpose: 'provider-profile'},
+    );
 
     const providerId = req.user.uid;
     const provider = await Provider.findById(providerId);
@@ -458,12 +478,13 @@ exports.uploadProviderProfileImage = async (req, res, next) => {
       throw createHttpError(404, 'Provider not found', 'Not Found');
     }
 
-    const key = buildProviderProfileKey(providerId, validated.extension);
+    const key = buildProviderProfileKey(providerId, prepared.extension);
     const uploaded = await s3.uploadFile({
-      body: req.file.buffer,
+      body: prepared.buffer,
       key,
-      contentType: validated.contentType,
+      contentType: prepared.contentType,
       userId: providerId,
+      cacheControl: IMAGE_CACHE_CONTROL,
     });
 
     const previous = provider.profileImage;
@@ -511,10 +532,11 @@ exports.uploadCustomerProfileImage = async (req, res, next) => {
       throw createHttpError(400, 'Image file is required (field: file)', 'Bad Request');
     }
 
-    const validated = validateImageBuffer(req.file.buffer, req.file.mimetype);
-    if (validated.contentType === 'image/svg+xml') {
-      throw createHttpError(400, 'SVG is not allowed for profile images', 'Bad Request');
-    }
+    const prepared = await prepareOptimizedImageUpload(
+      req.file.buffer,
+      req.file.mimetype,
+      {purpose: 'customer-profile'},
+    );
 
     const userId = req.user.uid;
     const user = await User.findById(userId);
@@ -522,12 +544,13 @@ exports.uploadCustomerProfileImage = async (req, res, next) => {
       throw createHttpError(404, 'User not found', 'Not Found');
     }
 
-    const key = buildCustomerProfileKey(userId, validated.extension);
+    const key = buildCustomerProfileKey(userId, prepared.extension);
     const uploaded = await s3.uploadFile({
-      body: req.file.buffer,
+      body: prepared.buffer,
       key,
-      contentType: validated.contentType,
+      contentType: prepared.contentType,
       userId,
+      cacheControl: IMAGE_CACHE_CONTROL,
     });
 
     const previous = user.profileImage;
@@ -555,6 +578,38 @@ exports.uploadCustomerProfileImage = async (req, res, next) => {
         profileImage: uploaded.url,
       },
       message: 'Profile image uploaded successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/assets/optimize
+ * Re-compress an already-uploaded image the caller owns (presign path).
+ * Body: { key } or { url }
+ * Same object key is overwritten only when the new file is smaller.
+ */
+exports.optimizeAsset = async (req, res, next) => {
+  try {
+    if (!req.user?.uid) {
+      throw createHttpError(401, 'Authentication required', 'Unauthorized');
+    }
+    const raw = req.body?.key || req.body?.url;
+    if (!raw) {
+      throw createHttpError(400, 'key or url is required', 'Bad Request');
+    }
+    const key = assertKeyAuthorizedForUser(keyFromUrlOrKey(raw), req.user);
+    const result = await optimizeStoredImage(key, {
+      userId: req.user.uid,
+      dryRun: false,
+    });
+    res.json({
+      success: true,
+      data: result,
+      message: result.skipped
+        ? 'Asset left unchanged'
+        : 'Asset optimized successfully',
     });
   } catch (error) {
     next(error);

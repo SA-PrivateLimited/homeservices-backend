@@ -9,7 +9,8 @@
     "check:api": "node scripts/check-api.js",
     "seed:jh-blocks": "node src/scripts/seedJharkhandBlocksOnce.js",
     "test": "node --test tests/**/*.test.js",
-    "backfill:show-request-service": "node src/scripts/backfillShowRequestService.js"
+    "backfill:show-request-service": "node src/scripts/backfillShowRequestService.js",
+    "assets:recompress": "node scripts/recompress-assets.js"
   },
   "keywords": [
     "home-services",
@@ -39,6 +40,7 @@
     "multer": "^2.2.0",
     "otplib": "^13.4.1",
     "qrcode": "^1.5.4",
+    "sharp": "^0.33.5",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
