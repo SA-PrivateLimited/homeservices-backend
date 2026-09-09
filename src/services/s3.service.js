@@ -245,7 +245,7 @@ async function uploadToLocalDisk({body, key, contentType, userId}) {
 /**
  * Upload a Buffer (or Uint8Array) to S3 (or local disk in dev fallback).
  */
-async function uploadFile({body, key, contentType, userId} = {}) {
+async function uploadFile({body, key, contentType, userId, cacheControl} = {}) {
   const normalizedKey = normalizeObjectKey(key);
   if (!body || !(Buffer.isBuffer(body) || body instanceof Uint8Array)) {
     throw createHttpError(400, 'Upload body must be a Buffer', 'Bad Request');
@@ -266,16 +266,18 @@ async function uploadFile({body, key, contentType, userId} = {}) {
   }
 
   const bucket = getBucket();
+  const putInput = {
+    Bucket: bucket,
+    Key: normalizedKey,
+    Body: body,
+    ContentType: contentType,
+  };
+  if (cacheControl) {
+    putInput.CacheControl = cacheControl;
+  }
 
   try {
-    await getS3Client().send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: normalizedKey,
-        Body: body,
-        ContentType: contentType,
-      }),
-    );
+    await getS3Client().send(new PutObjectCommand(putInput));
 
     const result = {
       key: normalizedKey,

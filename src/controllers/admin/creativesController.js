@@ -2,7 +2,6 @@ const {randomUUID} = require('crypto');
 const {pipeline} = require('stream/promises');
 const BrandCreative = require('../../models/BrandCreative');
 const s3 = require('../../services/s3.service');
-const {validateImageBuffer} = require('../../utils/assetValidation');
 const {buildAdminCreativeKey} = require('../../utils/s3Keys');
 
 function safeDownloadName(originalName, extension) {
@@ -60,20 +59,22 @@ exports.uploadCreative = async (req, res, next) => {
         message: 'Choose an image (JPEG, PNG, or WebP).',
       });
     }
-    const validated = validateImageBuffer(req.file.buffer, req.file.mimetype);
-    if (validated.contentType === 'image/svg+xml') {
-      return res.status(400).json({
-        success: false,
-        error: 'Bad Request',
-        message: 'Use JPEG, PNG, or WebP for creatives.',
-      });
-    }
-    const key = buildAdminCreativeKey(validated.extension);
+    const {
+      prepareOptimizedImageUpload,
+      IMAGE_CACHE_CONTROL,
+    } = require('../../services/prepareImageUpload');
+    const prepared = await prepareOptimizedImageUpload(
+      req.file.buffer,
+      req.file.mimetype,
+      {purpose: 'provider-showcase'},
+    );
+    const key = buildAdminCreativeKey(prepared.extension);
     const uploaded = await s3.uploadFile({
-      body: req.file.buffer,
+      body: prepared.buffer,
       key,
-      contentType: validated.contentType,
+      contentType: prepared.contentType,
       userId: req.user?.uid,
+      cacheControl: IMAGE_CACHE_CONTROL,
     });
     const label = String(req.body?.label || '').trim().slice(0, 120);
     const originalName = String(req.file.originalname || '').slice(0, 200);

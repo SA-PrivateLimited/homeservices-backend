@@ -12,6 +12,7 @@ const {
   uploadProviderProfileImage,
   uploadCustomerProfileImage,
   deleteAsset,
+  optimizeAsset,
   createUploadUrl,
   directUpload,
 } = require('../controllers/assetsController');
@@ -28,6 +29,12 @@ router.post('/upload-url', verifyAuth, logRequest, createUploadUrl);
  * Auth is the HMAC token (not Bearer), so no verifyAuth.
  */
 router.put('/direct-upload/:token', directUpload);
+
+/**
+ * POST /api/assets/optimize
+ * Re-compress an owned image object in place when smaller.
+ */
+router.post('/optimize', verifyAuth, logRequest, optimizeAsset);
 
 /**
  * DELETE /api/assets

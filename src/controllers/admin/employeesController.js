@@ -1009,19 +1009,27 @@ exports.uploadPhoto = async (req, res, next) => {
     }
 
     const s3 = require('../../services/s3.service');
-    const {validateImageBuffer} = require('../../utils/assetValidation');
     const {buildAdminAssetKey, keyFromUrlOrKey, normalizeObjectKey} = require('../../utils/s3Keys');
+    const {
+      prepareOptimizedImageUpload,
+      IMAGE_CACHE_CONTROL,
+    } = require('../../services/prepareImageUpload');
 
-    const validated = validateImageBuffer(req.file.buffer, req.file.mimetype);
+    const prepared = await prepareOptimizedImageUpload(
+      req.file.buffer,
+      req.file.mimetype,
+      {purpose: 'customer-profile'},
+    );
     const key = buildAdminAssetKey(
       `emp_${String(employee._id)}`,
-      validated.extension,
+      prepared.extension,
     );
     const uploaded = await s3.uploadFile({
-      body: req.file.buffer,
+      body: prepared.buffer,
       key,
-      contentType: validated.contentType,
+      contentType: prepared.contentType,
       userId: who.id,
+      cacheControl: IMAGE_CACHE_CONTROL,
     });
 
     const previous = employee.photoUrl;
