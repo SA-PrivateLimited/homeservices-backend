@@ -41,7 +41,7 @@ const PERMISSIONS = Object.freeze({
   ADMINS_VIEW: 'admins.view',
   ADMINS_MANAGE: 'admins.manage',
 
-  /** Internal HR — Akanso employees (not marketplace partners). */
+  /** Internal HR — Akansho employees (not marketplace partners). */
   EMPLOYEES_VIEW: 'employees.view',
   EMPLOYEES_CREATE: 'employees.create',
   EMPLOYEES_UPDATE: 'employees.update',

@@ -260,7 +260,7 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
-  /** Partner may also request services as a customer (same Akanso user). */
+  /** Partner may also request services as a customer (same Akansho user). */
   customerProfileEnabled: {
     type: Boolean,
     default: false,

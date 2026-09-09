@@ -33,7 +33,7 @@ router.put('/direct-upload/:token', directUpload);
  * DELETE /api/assets
  * Delete an object the caller is authorized to manage.
  * Body: { "key": "providers/<id>/profile/<uuid>.webp" }
- *    or { "url": "https://assets.akanso.in/..." }
+ *    or { "url": "https://assets.akansho.com/..." }
  */
 router.delete('/', verifyAuth, logRequest, deleteAsset);
 

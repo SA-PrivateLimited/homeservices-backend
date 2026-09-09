@@ -56,10 +56,10 @@ const systemConfigSchema = new mongoose.Schema(
       trim: true,
       maxlength: 200,
     },
-    /** Product / event name on the launch page. Default Akanso — not client branding. */
+    /** Product / event name on the launch page. Default Akansho — not client branding. */
     websiteLaunchEventName: {
       type: String,
-      default: 'Akanso',
+      default: 'Akansho',
       trim: true,
       maxlength: 80,
     },

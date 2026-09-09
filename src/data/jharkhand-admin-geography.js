@@ -1,7 +1,7 @@
 /**
  * Jharkhand administrative geography master data (ops seed source).
  * Hierarchy in source: India → Jharkhand → Division → District → Block.
- * Akanso uses District → Block only (division is not stored).
+ * Akansho uses District → Block only (division is not stored).
  *
  * Official/display names kept as provided by the source.
  */

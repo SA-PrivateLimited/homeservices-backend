@@ -128,7 +128,7 @@ function parseBackupPayload(raw) {
   }
   if (!parsed || parsed.format !== BACKUP_FORMAT || !parsed.collections) {
     const err = new Error(
-      'This file is not an Akanso database backup. Download a fresh backup from this page.',
+      'This file is not an Akansho database backup. Download a fresh backup from this page.',
     );
     err.statusCode = 400;
     throw err;

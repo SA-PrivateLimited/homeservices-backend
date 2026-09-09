@@ -283,7 +283,7 @@ Update ECS service (keep existing env/secrets)
     ↓
 Wait until stable
     ↓
-GET https://api.akanso.in/health
+GET https://api.akansho.com/health
 ```
 
 Manual run: **Actions → Deploy production → Run workflow**.
@@ -303,7 +303,7 @@ Defaults (AWS account `715831355325`):
 | ECR repository | `akanso-api` (created on first deploy if missing) |
 | ECS cluster | `akanso` |
 | ECS service / container | `akanso-api` |
-| Health URL | `https://api.akanso.in/health` |
+| Health URL | `https://api.akansho.com/health` |
 
 The workflow **does not bake `.env` into the image**. MongoDB, JWT, Twilio, and other secrets stay on the existing ECS task definition (Secrets Manager / SSM / task env), the same way CustomerWeb keeps production `config.json` on S3.
 
@@ -311,7 +311,7 @@ The workflow **does not bake `.env` into the image**. MongoDB, JWT, Twilio, and 
 
 1. Create GitHub OIDC trust on `AkansoApiDeployRole` for `SA-PrivateLimited/homeservices-backend` (same pattern as `AkansoWebDeployRole`).
 2. Grant the role: ECR push, `ecs:Describe*`, `ecs:RegisterTaskDefinition`, `ecs:UpdateService`, `iam:PassRole` for the task execution role.
-3. Create an ECS Fargate cluster `akanso`, service `akanso-api`, ALB + ACM cert for **api.akanso.in**, target group health check `/health` on port `3001`.
+3. Create an ECS Fargate cluster `akanso`, service `akanso-api`, ALB + ACM cert for **api.akansho.com**, target group health check `/health` on port `3001`.
 4. Put production secrets on that first task definition.
 5. Merge to `main` (or run the workflow manually).
 
@@ -460,4 +460,4 @@ curl -sS https://api.example.com/health
 
 ---
 
-*As-implemented: local Node, optional Vercel, and GitHub Actions production deploy to ECR + ECS on merge to `main`. Docker image is in the repo; the ECS cluster/service/ALB for api.akanso.in is one-time AWS bootstrap.*
+*As-implemented: local Node, optional Vercel, and GitHub Actions production deploy to ECR + ECS on merge to `main`. Docker image is in the repo; the ECS cluster/service/ALB for api.akansho.com is one-time AWS bootstrap.*

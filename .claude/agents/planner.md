@@ -30,7 +30,7 @@ The plan must contain:
 
 ## Embedded repo context
 
-homeServicesBackend is the Akanso backend API and system of record.
+homeServicesBackend is the Akansho backend API and system of record.
 
 ### Pick the right layer
 - route

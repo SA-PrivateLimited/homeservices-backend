@@ -1,5 +1,5 @@
 /**
- * Akanso HR Employee — internal staff record (not a login User by default).
+ * Akansho HR Employee — internal staff record (not a login User by default).
  * Salary history is append-only; employeeCode is system-generated and immutable.
  */
 
@@ -153,6 +153,39 @@ const employeeSchema = new mongoose.Schema(
 
     /** Opaque token for ID-card QR verification (no PII in QR payload). */
     verificationToken: {type: String, trim: true, unique: true, sparse: true},
+
+    /**
+     * Employee portal access (separate from Admin).
+     * Activation: invite token → password → TOTP → ACTIVE.
+     */
+    linkedUserId: {type: String, trim: true, default: '', index: true},
+    accountStatus: {
+      type: String,
+      enum: [
+        'none',
+        'invited',
+        'activation_pending',
+        'active',
+        'suspended',
+        'revoked',
+      ],
+      default: 'none',
+      index: true,
+    },
+    profileAccess: {
+      type: String,
+      enum: ['view', 'edit'],
+      default: 'view',
+    },
+    canRaiseRequest: {type: Boolean, default: false},
+    inviteTokenHash: {type: String, trim: true, default: '', index: true},
+    inviteExpiresAt: {type: Date},
+    inviteSentAt: {type: Date},
+    inviteAcceptedAt: {type: Date},
+    /** Email/password + TOTP for employee portal (not Admin). */
+    passwordHash: {type: String, default: ''},
+    totpSecretEncrypted: {type: String, default: ''},
+    totpEnabled: {type: Boolean, default: false},
 
     createdBy: {type: String, trim: true, default: ''},
     updatedBy: {type: String, trim: true, default: ''},

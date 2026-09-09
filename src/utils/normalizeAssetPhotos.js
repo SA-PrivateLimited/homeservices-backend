@@ -16,7 +16,7 @@ const {createHttpError} = require('./assetValidation');
 const MAX_PHOTOS = Number(process.env.MAX_SERVICE_REQUEST_PHOTOS || 3);
 
 function cloudFrontDomain() {
-  return (process.env.AWS_CLOUDFRONT_DOMAIN || 'assets.akanso.in')
+  return (process.env.AWS_CLOUDFRONT_DOMAIN || 'assets.akansho.com')
     .replace(/^https?:\/\//, '')
     .replace(/\/+$/, '');
 }
@@ -46,6 +46,7 @@ function isLoopbackHostname(hostname) {
 function isAcceptedAssetReference(raw) {
   const domain = cloudFrontDomain();
   if (raw.startsWith(`https://${domain}/`)) return true;
+  if (raw.startsWith('https://assets.akanso.in/')) return true;
   if (raw.startsWith('/uploads/')) return true;
   if (!/^https?:\/\//i.test(raw) && !raw.startsWith('/')) {
     // Bare object key — validated later by normalizeObjectKey

@@ -23,7 +23,7 @@ Routes, controllers, models, middleware as listed in the plan. Update `BACKEND_A
 
 ## Embedded repo context
 
-homeServicesBackend is the Akanso backend API and system of record.
+homeServicesBackend is the Akansho backend API and system of record.
 
 ### Main domains
 - auth and role handling

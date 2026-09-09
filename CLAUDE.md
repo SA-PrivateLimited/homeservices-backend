@@ -2,7 +2,7 @@
 
 ## What this repo is
 
-`homeServicesBackend` is the Akanso backend API and system of record.
+`homeServicesBackend` is the Akansho backend API and system of record.
 
 It owns:
 

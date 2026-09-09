@@ -1,5 +1,5 @@
 /**
- * One Akanso user may have a customer photo (User.profileImage) before uploading
+ * One Akansho user may have a customer photo (User.profileImage) before uploading
  * a partner-specific photo (Provider.profileImage). Prefer the partner photo when set.
  */
 function resolvePartnerProfileImage(provider, user) {

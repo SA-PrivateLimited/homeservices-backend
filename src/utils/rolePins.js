@@ -1,5 +1,5 @@
 /**
- * Independent Customer vs Partner PINs on one Akanso User.
+ * Independent Customer vs Partner PINs on one Akansho User.
  *
  * Legacy fields (pinHash / pinKey / encryptedPin) remain the login PIN for
  * the user's primary role. Dual-role users get customerPin* / partnerPin*

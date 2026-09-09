@@ -1,10 +1,10 @@
 # `.claude/agents` — homeServicesBackend Agent Suite
 
-Local personas for the backend repo. Each file is self-sufficient and embeds Akanso backend context.
+Local personas for the backend repo. Each file is self-sufficient and embeds Akansho backend context.
 
 ## Repo context
 
-homeServicesBackend is the Akanso backend API and system of record.
+homeServicesBackend is the Akansho backend API and system of record.
 
 ### Main domains
 - auth and role handling

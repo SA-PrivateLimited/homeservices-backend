@@ -1,6 +1,6 @@
-# Akanso Backend — Asset upload (IAM role + CloudFront)
+# Akansho Backend — Asset upload (IAM role + CloudFront)
 
-How Akanso uploads photos and documents to S3 using an **EC2 instance IAM role**, with a private bucket and canonical CDN URLs on `assets.akanso.in`.
+How Akansho uploads photos and documents to S3 using an **EC2 instance IAM role**, with a private bucket and canonical CDN URLs on `assets.akansho.com`.
 
 ---
 
@@ -12,12 +12,12 @@ How Akanso uploads photos and documents to S3 using an **EC2 instance IAM role**
 | Region | `eu-north-1` |
 | CloudFront distribution | `E358TLQK8ZSI5K` |
 | Distribution hostname | `dpyk9otyl50r.cloudfront.net` |
-| **Canonical CDN** | `assets.akanso.in` → that distribution |
+| **Canonical CDN** | `assets.akansho.com` → that distribution |
 
 App-generated URLs must always be:
 
 ```text
-https://assets.akanso.in/<object-key>
+https://assets.akansho.com/<object-key>
 ```
 
 Never persist raw S3 URLs. Prefer never persisting `*.cloudfront.net` either — use the custom domain only.
@@ -32,7 +32,7 @@ S3 origin access: CloudFront **OAC** (bucket stays private). Do not add `Princip
 |---------|----------|
 | **Runtime credentials** | EC2 **instance IAM role** via SDK default chain (IMDS) |
 | **Primary upload path** | Browser → **presigned S3 PUT** (API only signs the URL) |
-| **Public URLs** | `https://assets.akanso.in/<key>` via `AWS_CLOUDFRONT_DOMAIN` |
+| **Public URLs** | `https://assets.akansho.com/<key>` via `AWS_CLOUDFRONT_DOMAIN` |
 | **Static keys** | **Forbidden in production** (hard error). Env keys override IMDS in the SDK — do not set them. |
 | **Deploy-time IAM** | GitHub OIDC → `AkansoApiDeployRole` (CI only, not uploads) |
 
@@ -62,7 +62,7 @@ Avoid `s3:ListBucket` unless a future feature needs it.
 Browser  --JWT-->  POST /api/assets/upload-url
 API (instance role) signs PutObject
 Browser  --PUT-->  S3 (presigned URL, Content-Type only)
-Browser saves https://assets.akanso.in/<key> on domain APIs
+Browser saves https://assets.akansho.com/<key> on domain APIs
 ```
 
 - TTL default **900s** (clamped 60–3600)
@@ -115,7 +115,7 @@ Ownership: `customers/{uid}/…`, `providers/{uid}/…` (admins: any allowed pre
 
 **API authorization** already strips `documents` from public provider browse payloads (`PUBLIC_PROVIDER_STRIP_FIELDS` in `contactAccess.js`).
 
-**Remaining risk:** KYC / document objects still receive a normal `https://assets.akanso.in/...` URL after upload. Anyone who obtains that URL can fetch the object if CloudFront serves the whole bucket publicly (typical with OAC + open distribution behaviors).
+**Remaining risk:** KYC / document objects still receive a normal `https://assets.akansho.com/...` URL after upload. Anyone who obtains that URL can fetch the object if CloudFront serves the whole bucket publicly (typical with OAC + open distribution behaviors).
 
 | Class | Examples | Current behavior |
 |-------|----------|------------------|
@@ -132,7 +132,7 @@ Helper: `isSensitiveObjectKey()` in `src/utils/s3Keys.js`.
 
 Source: `ops/s3-bucket-cors.json` (applied by deploy workflow).
 
-Includes production origins for `akanso.in`, `customer.akanso.in`, `partner.akanso.in`, `provider.akanso.in`, `admin.akanso.in`, plus local Vite ports. No `AllowOrigin: "*"`.
+Includes production origins for `akansho.com`, `customer.akansho.com`, `partner.akansho.com`, `provider.akansho.com`, `admin.akansho.com`, plus local Vite ports. No `AllowOrigin: "*"`.
 
 Re-apply to the bucket after changing the file (deploy job or console).
 
@@ -158,7 +158,7 @@ Required so browser presigned PUTs are not broken by empty-body CRC signing.
 |----------|------|
 | `AWS_REGION` | `eu-north-1` |
 | `AWS_S3_BUCKET` | `akanso-assets` |
-| `AWS_CLOUDFRONT_DOMAIN` | `assets.akanso.in` (canonical; never `*.cloudfront.net`) |
+| `AWS_CLOUDFRONT_DOMAIN` | `assets.akansho.com` (canonical; never `*.cloudfront.net`) |
 | `AWS_CLOUDFRONT_DISTRIBUTION_HOSTNAME` | Optional; parse legacy distribution URLs only |
 | `AWS_S3_LOCAL_FALLBACK` | Dev-only local disk |
 | `AWS_PROFILE` | Local SSO |
@@ -190,7 +190,7 @@ Required so browser presigned PUTs are not broken by empty-body CRC signing.
 1. EC2 instance profile has S3 permissions on `akanso-assets` only.
 2. No static AWS keys in production env (API fails closed if present).
 3. Bucket private + Block Public Access ON; CloudFront OAC only.
-4. DNS: `assets.akanso.in` → distribution `E358TLQK8ZSI5K`.
-5. `AWS_CLOUDFRONT_DOMAIN=assets.akanso.in`.
+4. DNS: `assets.akansho.com` → distribution `E358TLQK8ZSI5K`.
+5. `AWS_CLOUDFRONT_DOMAIN=assets.akansho.com`.
 6. CORS matches `ops/s3-bucket-cors.json`.
 7. Plan signed/authenticated access for KYC documents (see Sensitive section).

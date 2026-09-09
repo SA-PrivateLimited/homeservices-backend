@@ -1,7 +1,7 @@
 /**
  * Short FCM title/body for the lock-screen banner.
  *
- * iOS appends "from Akanso" (Customer PWA) or "from Akanso Partner".
+ * iOS appends "from Akansho" (Customer PWA) or "from Akansho Partner".
  * Titles must still make sense after that suffix — prefer a status label,
  * not a sentence that "from …" attaches to as the actor.
  */

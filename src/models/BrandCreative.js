@@ -1,5 +1,5 @@
 /**
- * Public Akanso creative images stored on S3/CloudFront.
+ * Public Akansho creative images stored on S3/CloudFront.
  */
 
 const mongoose = require('mongoose');

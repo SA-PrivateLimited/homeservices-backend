@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 
 process.env.AWS_REGION = 'eu-north-1';
 process.env.AWS_S3_BUCKET = 'akanso-assets';
-process.env.AWS_CLOUDFRONT_DOMAIN = 'assets.akanso.in';
+process.env.AWS_CLOUDFRONT_DOMAIN = 'assets.akansho.com';
 process.env.MAX_IMAGE_SIZE_MB = '5';
 
 const {
@@ -104,7 +104,7 @@ describe('s3Keys + CloudFront URL', () => {
     );
     assert.equal(
       url,
-      'https://assets.akanso.in/providers/123/profile/550e8400-e29b-41d4-a716-446655440000.webp',
+      'https://assets.akansho.com/providers/123/profile/550e8400-e29b-41d4-a716-446655440000.webp',
     );
     assert.equal(url.includes('s3.'), false);
     assert.equal(url.includes('akanso-assets'), false);
@@ -164,7 +164,7 @@ describe('s3Keys + CloudFront URL', () => {
 
   it('parses key from CloudFront URL only', () => {
     const key = keyFromUrlOrKey(
-      'https://assets.akanso.in/customers/u1/profile/a.webp',
+      'https://assets.akansho.com/customers/u1/profile/a.webp',
     );
     assert.equal(key, 'customers/u1/profile/a.webp');
     assert.throws(
@@ -209,7 +209,7 @@ describe('s3.service with mocked client', () => {
     );
     assert.equal(
       result.url,
-      'https://assets.akanso.in/providers/123/profile/550e8400-e29b-41d4-a716-446655440000.jpg',
+      'https://assets.akansho.com/providers/123/profile/550e8400-e29b-41d4-a716-446655440000.jpg',
     );
     assert.equal(result.contentType, 'image/jpeg');
     assert.equal(result.size, 200);

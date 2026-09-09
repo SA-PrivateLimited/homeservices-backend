@@ -1,5 +1,5 @@
 /**
- * Multi-role profile checks for the same Akanso User.
+ * Multi-role profile checks for the same Akansho User.
  * Customer access depends on a Customer profile, not on the absence of a Partner profile.
  */
 

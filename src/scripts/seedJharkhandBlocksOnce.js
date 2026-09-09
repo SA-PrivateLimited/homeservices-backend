@@ -2,7 +2,7 @@
  * One-time import: all Jharkhand district blocks into MongoDB.
  *
  * Source: src/data/jharkhand-admin-geography.js (Division → District → Block).
- * Akanso stores District → Block only.
+ * Akansho stores District → Block only.
  *
  * Idempotent — skips blocks that already exist by _id or district+name.
  *

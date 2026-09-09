@@ -1,8 +1,18 @@
 {
   "CORSRules": [
     {
-      "ID": "AkansoBrowserPresignedUploads",
+      "ID": "AkanshoBrowserPresignedUploads",
       "AllowedOrigins": [
+        "https://akansho.com",
+        "https://www.akansho.com",
+        "https://customer.akansho.com",
+        "https://www.customer.akansho.com",
+        "https://partner.akansho.com",
+        "https://www.partner.akansho.com",
+        "https://provider.akansho.com",
+        "https://www.provider.akansho.com",
+        "https://admin.akansho.com",
+        "https://www.admin.akansho.com",
         "https://akanso.in",
         "https://www.akanso.in",
         "https://customer.akanso.in",

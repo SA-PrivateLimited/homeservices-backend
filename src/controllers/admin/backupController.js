@@ -120,7 +120,7 @@ exports.restoreBackup = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: 'Choose an Akanso backup JSON file.',
+        message: 'Choose an Akansho backup JSON file.',
       });
     }
     const payload = parseBackupPayload(file.buffer);

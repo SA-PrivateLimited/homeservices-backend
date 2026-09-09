@@ -29,8 +29,8 @@ describe('mongoBackup helpers', () => {
     assert.equal(indexes[0].unique, true);
   });
 
-  test('rejects files that are not Akanso backups', () => {
-    assert.throws(() => parseBackupPayload('{"hello":true}'), /not an Akanso/);
+  test('rejects files that are not Akansho backups', () => {
+    assert.throws(() => parseBackupPayload('{"hello":true}'), /not an Akansho/);
     assert.throws(() => parseBackupPayload('not-json'), /not valid JSON/);
   });
 

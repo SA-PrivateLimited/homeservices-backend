@@ -1,7 +1,7 @@
 /**
  * Per-service availability and qualification for one Partner profile.
  *
- * One Akanso User → one Partner → multiple professional services.
+ * One Akansho User → one Partner → multiple professional services.
  * inactiveServiceCategories = not accepting NEW work (existing jobs continue).
  * serviceQualifications = per-service verification (independent of account approval).
  */
