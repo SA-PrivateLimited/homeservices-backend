@@ -114,3 +114,32 @@ test('omitted purpose defaults to customer for dual-role users', () => {
   const partnerOnly = {role: 'provider', customerProfileEnabled: false};
   assert.equal(resolvePinPurpose(undefined, partnerOnly), 'partner');
 });
+
+test('resolvePinPurpose maps provider role to partner purpose', () => {
+  const dual = {role: 'provider', customerProfileEnabled: true};
+  assert.equal(resolvePinPurpose('provider', dual), 'partner');
+  assert.equal(resolvePinPurpose('partner', dual), 'partner');
+  assert.equal(resolvePinPurpose('customer', dual), 'customer');
+});
+
+test('isValidPin preserves leading-zero PINs as strings', () => {
+  assert.equal(isValidPin('0123'), true);
+  assert.equal(isValidPin(String(123).padStart(4, '0')), true);
+});
+
+test('customer encrypted PIN does not fall back to partner legacy on dual-role', () => {
+  const {
+    encryptedPinForPurpose,
+  } = require('../src/utils/rolePins');
+  const dual = {
+    role: 'provider',
+    customerProfileEnabled: true,
+    customerEncryptedPin: null,
+    encryptedPin: 'partner-legacy-enc',
+    partnerEncryptedPin: 'partner-enc',
+  };
+  assert.equal(encryptedPinForPurpose(dual, 'customer'), null);
+  assert.equal(encryptedPinForPurpose(dual, 'partner'), 'partner-enc');
+  dual.customerEncryptedPin = 'customer-enc';
+  assert.equal(encryptedPinForPurpose(dual, 'customer'), 'customer-enc');
+});

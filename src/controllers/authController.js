@@ -55,6 +55,7 @@ const {
   applyRolePin,
   snapshotLegacyPins,
   resolvePinPurpose,
+  hashAndEncryptPin,
 } = require('../utils/rolePins');
 const {
   resolveInitialCustomerName,
@@ -1710,7 +1711,10 @@ exports.registerWithOtp = async (req, res, next) => {
 /**
  * POST /api/auth/phone/reset-pin
  * Forgot PIN: verify Firebase idToken, then set a new login PIN.
- * Body: { phoneNumber, pin, idToken }
+ * Body: { phoneNumber, pin, idToken, role?: 'customer'|'provider', purpose?: 'customer'|'partner' }
+ *
+ * role/purpose selects which independent PIN slot is updated (Customer vs Partner).
+ * Dual-role users MUST send role from the app that initiated Forgot PIN.
  */
 exports.resetPin = async (req, res, next) => {
   try {
@@ -1718,6 +1722,7 @@ exports.resetPin = async (req, res, next) => {
       req.body.phoneNumber || req.body.phone,
     );
     const idToken = req.body.idToken || req.body.firebaseIdToken;
+    // Keep as string — never Number(pin) (leading zeros must survive).
     const pin = req.body.pin != null ? String(req.body.pin).trim() : '';
 
     if (!isValidPin(pin)) {
@@ -1751,13 +1756,21 @@ exports.resetPin = async (req, res, next) => {
       });
     }
 
+    const purpose = resolvePinPurpose(
+      req.body.purpose || req.body.role,
+      user,
+    );
+
     const pinKey = await assertPinGloballyUnique(pin, user._id);
-    const pinHash = await bcrypt.hash(pin, SALT_ROUNDS);
-    let encryptedPin = null;
+    let hashed;
     try {
-      encryptedPin = encryptToken(pin);
+      hashed = await hashAndEncryptPin(pin);
     } catch (e) {
-      console.warn('Could not encrypt PIN for admin recovery:', e.message);
+      return res.status(e.statusCode || 500).json({
+        success: false,
+        error: 'Server Error',
+        message: e.message,
+      });
     }
 
     user.phoneNumber = e164;
@@ -1765,12 +1778,55 @@ exports.resetPin = async (req, res, next) => {
     user.phoneVerified = true;
     if (verified.firebaseUid) user.firebaseUid = verified.firebaseUid;
     user.role = user.role || 'customer';
-    const purpose = resolvePinPurpose(req.body.role, user);
-    persistRolePin(user, {pinHash, pinKey, encryptedPin}, purpose);
+    persistRolePin(
+      user,
+      {pinHash: hashed.hash, pinKey, encryptedPin: hashed.encrypted},
+      purpose,
+    );
     user.updatedAt = new Date();
+    // select:false PIN fields must be marked dirty so Mongoose persists them.
+    if (purpose === 'customer') {
+      user.markModified('customerPinHash');
+      user.markModified('customerPinKey');
+      user.markModified('customerEncryptedPin');
+      if (!hasPartnerProfile(user)) {
+        user.markModified('pinHash');
+        user.markModified('pinKey');
+        user.markModified('encryptedPin');
+      }
+    } else if (purpose === 'partner') {
+      user.markModified('partnerPinHash');
+      user.markModified('partnerPinKey');
+      user.markModified('partnerEncryptedPin');
+      user.markModified('pinHash');
+      user.markModified('pinKey');
+      user.markModified('encryptedPin');
+    }
     await user.save();
 
-    const session = await issueSessionForUser(user, {includePin: pin, res, req});
+    // Sanity: login-pin for this role must verify the PIN we just wrote.
+    const verifyRole = purpose === 'partner' ? 'provider' : 'customer';
+    const verifyHash = pinHashForRole(user, verifyRole);
+    const matches = verifyHash ? await bcrypt.compare(pin, verifyHash) : false;
+    if (!matches) {
+      console.error('reset-pin persistence check failed', {
+        userId: String(user._id),
+        purpose,
+        hasHash: Boolean(verifyHash),
+      });
+      return res.status(500).json({
+        success: false,
+        error: 'Server Error',
+        message: 'PIN was not saved correctly. Please try again.',
+      });
+    }
+
+    const activeRole = purpose === 'partner' ? 'provider' : 'customer';
+    const session = await issueSessionForUser(user, {
+      activeRole,
+      res,
+      req,
+    });
     res.json({
       success: true,
       data: session,
