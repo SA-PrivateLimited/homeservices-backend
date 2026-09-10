@@ -10,6 +10,7 @@ const {nextEmployeeCode} = require('../../utils/employeeCode');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 const {localTenDigits, toE164} = require('../../utils/phone');
 const {hasPermission, PERMISSIONS} = require('../../constants/permissions');
+const {isSuperAdminElevated} = require('../../middleware/requirePermission');
 
 function canSeeSalary(req) {
   if (req.isSuperAdmin) return true;
@@ -729,21 +730,47 @@ exports.updateEmployeeStatus = async (req, res, next) => {
       });
     }
 
+    // Former → Active (or any non-former) requires Super Admin elevation.
+    if (
+      employee.status === 'former' &&
+      status !== 'former' &&
+      !isSuperAdminElevated(req)
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Only Super Admin can reinstate a former employee',
+      });
+    }
+
     const prev = employee.status;
     employee.status = status;
     if (status === 'former') {
       employee.leavingDate = req.body.leavingDate
         ? new Date(req.body.leavingDate)
-        : new Date();
+        : employee.leavingDate || new Date();
       if (req.body.leavingReason != null) {
         employee.leavingReason = String(req.body.leavingReason).trim();
+      }
+      // Keep portal account from appearing "Active" after exit.
+      if (employee.accountStatus === 'active') {
+        employee.accountStatus = 'suspended';
+      }
+    } else if (prev === 'former' && status === 'active') {
+      // Reinstate: restore portal account if it was suspended on exit.
+      if (employee.accountStatus === 'suspended' && employee.totpEnabled) {
+        employee.accountStatus = 'active';
       }
     }
     employee.updatedBy = who.id;
     pushActivity(
       employee,
-      'status_changed',
-      'Status changed',
+      status === 'active' && prev === 'former'
+        ? 'employee_reinstated'
+        : 'status_changed',
+      status === 'active' && prev === 'former'
+        ? 'Employee reinstated'
+        : 'Status changed',
       `${prev} → ${status}`,
       who,
     );
@@ -756,7 +783,67 @@ exports.updateEmployeeStatus = async (req, res, next) => {
       message:
         status === 'former'
           ? 'Employee deactivated'
-          : 'Employee status updated',
+          : prev === 'former' && status === 'active'
+            ? 'Employee reinstated successfully'
+            : 'Employee status updated',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/admin/employees/:id/reinstate
+ * Super Admin only — former → active. Preserves employeeCode and history.
+ */
+exports.reinstateEmployee = async (req, res, next) => {
+  try {
+    if (!isSuperAdminElevated(req)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Only Super Admin can reinstate a former employee',
+      });
+    }
+    req.isSuperAdmin = true;
+
+    const who = actor(req);
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not Found',
+        message: 'Employee not found',
+      });
+    }
+
+    if (employee.status !== 'former') {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'Only former employees can be reinstated',
+      });
+    }
+
+    const prev = employee.status;
+    employee.status = 'active';
+    if (employee.accountStatus === 'suspended' && employee.totpEnabled) {
+      employee.accountStatus = 'active';
+    }
+    employee.updatedBy = who.id;
+    pushActivity(
+      employee,
+      'employee_reinstated',
+      'Employee reinstated',
+      `${prev} → active`,
+      who,
+    );
+    await employee.save();
+
+    res.json({
+      success: true,
+      data: sanitizeForClient(employee, {includeSalary: true}),
+      message: 'Employee reinstated successfully',
     });
   } catch (error) {
     next(error);
