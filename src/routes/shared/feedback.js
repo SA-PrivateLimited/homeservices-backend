@@ -27,7 +27,7 @@ router.get(
   '/',
   verifyAuth,
   requireRole('admin'),
-  requirePermission(PERMISSIONS.CONTACTS_VIEW),
+  requirePermission(PERMISSIONS.FEEDBACKS_VIEW),
   logRequest,
   listFeedback,
 );
@@ -39,7 +39,7 @@ router.put(
   '/:id',
   verifyAuth,
   requireRole('admin'),
-  requirePermission(PERMISSIONS.CONTACTS_UPDATE),
+  requirePermission(PERMISSIONS.FEEDBACKS_UPDATE),
   validateObjectId,
   logRequest,
   updateFeedback,

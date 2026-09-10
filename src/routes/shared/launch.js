@@ -1,11 +1,12 @@
 /**
- * CustomerWeb greeting gate — public status/complete; Super Admin configure.
+ * CustomerWeb greeting gate — public status/complete; admin configure via greeting.*
  */
 
 const express = require('express');
 const router = express.Router();
 const {requireRole, optionalAuth} = require('../../middleware/auth');
-const {requireSuperAdmin} = require('../../middleware/requireSuperAdmin');
+const {requirePermission} = require('../../middleware/requirePermission');
+const {PERMISSIONS} = require('../../constants/permissions');
 const {logRequest} = require('../../middleware/logger');
 const {
   getLaunchStatus,
@@ -25,25 +26,25 @@ router.get('/doodle', optionalAuth, logRequest, getDoodleConfig);
 router.post('/complete', optionalAuth, logRequest, completeLaunch);
 
 /**
- * PUT /api/greeting/doodle — Super Admin only
+ * PUT /api/greeting/doodle — greeting.update
  * Show/hide logo doodle, until when, icon, image URL.
  */
 router.put(
   '/doodle',
   requireRole('admin'),
-  requireSuperAdmin,
+  requirePermission(PERMISSIONS.GREETING_UPDATE),
   logRequest,
   updateDoodleConfig,
 );
 
 /**
- * PUT /api/greeting — Super Admin only
+ * PUT /api/greeting — greeting.update
  * Greeting overlay only (not the logo doodle).
  */
 router.put(
   '/',
   requireRole('admin'),
-  requireSuperAdmin,
+  requirePermission(PERMISSIONS.GREETING_UPDATE),
   logRequest,
   updateLaunchConfig,
 );
