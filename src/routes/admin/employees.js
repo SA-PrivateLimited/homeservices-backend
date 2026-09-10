@@ -120,6 +120,14 @@ router.patch(
   ctrl.updateEmployeeStatus,
 );
 router.post(
+  '/:id/reinstate',
+  ...gate,
+  // Super Admin elevation is enforced inside the controller (not a normal Edit permission).
+  requirePermission(PERMISSIONS.EMPLOYEES_VIEW),
+  logRequest,
+  ctrl.reinstateEmployee,
+);
+router.post(
   '/:id/invitation',
   ...gate,
   requirePermission(PERMISSIONS.EMPLOYEES_UPDATE),

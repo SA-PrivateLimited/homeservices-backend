@@ -10,9 +10,12 @@ const {nextEmployeeCode} = require('../../utils/employeeCode');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 const {localTenDigits, toE164} = require('../../utils/phone');
 const {hasPermission, PERMISSIONS} = require('../../constants/permissions');
+const {
+  isSuperAdminElevated,
+} = require('../../middleware/requirePermission');
 
 function canSeeSalary(req) {
-  if (req.isSuperAdmin) return true;
+  if (req.isSuperAdmin || isSuperAdminElevated(req)) return true;
   return hasPermission(req.user, PERMISSIONS.EMPLOYEES_SALARY);
 }
 
@@ -729,6 +732,19 @@ exports.updateEmployeeStatus = async (req, res, next) => {
       });
     }
 
+    // Reinstating a former employee is Super Admin only (use POST /reinstate).
+    if (
+      employee.status === 'former' &&
+      status === 'active' &&
+      !isSuperAdminElevated(req)
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Only Super Admin can reinstate a former employee',
+      });
+    }
+
     const prev = employee.status;
     employee.status = status;
     if (status === 'former') {
@@ -757,6 +773,62 @@ exports.updateEmployeeStatus = async (req, res, next) => {
         status === 'former'
           ? 'Employee deactivated'
           : 'Employee status updated',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/admin/employees/:id/reinstate
+ * Super Admin only — former → active. Preserves employeeCode and history.
+ */
+exports.reinstateEmployee = async (req, res, next) => {
+  try {
+    if (!isSuperAdminElevated(req)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Only Super Admin can reinstate a former employee',
+      });
+    }
+    req.isSuperAdmin = true;
+
+    const who = actor(req);
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not Found',
+        message: 'Employee not found',
+      });
+    }
+
+    if (employee.status !== 'former') {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'Only former employees can be reinstated',
+      });
+    }
+
+    const prev = employee.status;
+    employee.status = 'active';
+    // Keep leavingDate / leavingReason as historical record.
+    employee.updatedBy = who.id;
+    pushActivity(
+      employee,
+      'employee_reinstated',
+      'Employee reinstated',
+      `${prev} → active`,
+      who,
+    );
+    await employee.save();
+
+    res.json({
+      success: true,
+      data: sanitizeForClient(employee, {includeSalary: true}),
+      message: 'Employee reinstated successfully',
     });
   } catch (error) {
     next(error);
