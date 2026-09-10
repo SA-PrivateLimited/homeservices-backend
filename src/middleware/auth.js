@@ -67,10 +67,8 @@ async function verifyAuth(req, res, next) {
       req.user.dbRole = dbRole;
       req.userDoc = userDoc;
       if (dbRole === 'admin') {
-        // Option 1: JWT snapshot wins for enforcement; expose DB copy for UI/me
-        if (!Array.isArray(decoded.permissions)) {
-          req.user.permissions = resolveAdminPermissions(userDoc);
-        }
+        // Live DB permissions — keep UI (/me) and API enforcement aligned
+        req.user.permissions = resolveAdminPermissions(userDoc);
       }
     } else {
       req.user.role = decoded.role || 'customer';
@@ -154,7 +152,7 @@ function requireRole(...allowedRoles) {
       req.user.role = effectiveRole;
       req.user.activeRole = jwtRole;
       req.user.dbRole = userRole;
-      if (userRole === 'admin' && !Array.isArray(decoded.permissions)) {
+      if (userRole === 'admin') {
         req.user.permissions = resolveAdminPermissions(userDoc);
       }
 

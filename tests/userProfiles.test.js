@@ -59,11 +59,11 @@ test('customer and partner access can be deactivated independently', () => {
   assert.equal(isPartnerAccessActive(partnerOff, {isActive: false}), false);
 });
 
-test('isValidPin requires exactly six digits', () => {
-  assert.equal(isValidPin('123456'), true);
+test('isValidPin requires exactly four digits', () => {
+  assert.equal(isValidPin('1234'), true);
+  assert.equal(isValidPin('123'), false);
   assert.equal(isValidPin('12345'), false);
-  assert.equal(isValidPin('1234567'), false);
-  assert.equal(isValidPin('abcdef'), false);
+  assert.equal(isValidPin('abcd'), false);
 });
 
 test('resetting customer PIN leaves partner PIN unchanged', () => {

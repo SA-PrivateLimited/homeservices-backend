@@ -218,7 +218,7 @@ async function issueSessionForUser(
   if (res && req && !skipRefreshSession) {
     const appContext = roleToAppContext(role);
     const {rawToken} = await createRefreshSession(user._id, appContext, req);
-    setRefreshCookie(res, appContext, rawToken);
+    setRefreshCookie(res, appContext, rawToken, req);
   }
 
   return result;
@@ -285,7 +285,7 @@ async function allocateCustomerDisplayId() {
 
 async function generateUniquePin(maxAttempts = 40) {
   for (let i = 0; i < maxAttempts; i++) {
-    const pin = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+    const pin = String(crypto.randomInt(0, 10000)).padStart(4, '0');
     try {
       await assertPinGloballyUnique(pin);
       return pin;
@@ -1056,7 +1056,7 @@ exports.registerPin = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: 'PIN must be exactly 6 digits',
+        message: 'PIN must be exactly 4 digits',
       });
     }
 
@@ -1164,7 +1164,7 @@ exports.loginPin = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: 'PIN must be exactly 6 digits',
+        message: 'PIN must be exactly 4 digits',
       });
     }
 
@@ -1281,7 +1281,7 @@ exports.enableCustomerProfile = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: 'PIN must be exactly 6 digits',
+        message: 'PIN must be exactly 4 digits',
       });
     }
 
@@ -1360,7 +1360,7 @@ exports.enablePartnerProfile = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: 'PIN must be exactly 6 digits',
+        message: 'PIN must be exactly 4 digits',
       });
     }
 
@@ -1490,7 +1490,7 @@ exports.enablePartnerProfile = async (req, res, next) => {
 
 /**
  * POST /api/auth/phone/register-with-otp
- * New number: verify Firebase idToken, then create account with 6-digit PIN.
+ * New number: verify Firebase idToken, then create account with 4-digit PIN.
  * Body: { phoneNumber, pin, idToken, fullName?, role? }
  */
 exports.registerWithOtp = async (req, res, next) => {
@@ -1507,7 +1507,7 @@ exports.registerWithOtp = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: 'PIN must be exactly 6 digits',
+        message: 'PIN must be exactly 4 digits',
       });
     }
 
@@ -1724,7 +1724,7 @@ exports.resetPin = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: 'PIN must be exactly 6 digits',
+        message: 'PIN must be exactly 4 digits',
       });
     }
 
@@ -2084,12 +2084,12 @@ exports.logout = async (req, res) => {
     if (appContext) {
       const raw = readRefreshCookie(req, appContext);
       if (raw) await revokeRefreshSession(raw);
-      clearRefreshCookie(res, appContext);
+      clearRefreshCookie(res, appContext, req);
     } else {
       for (const ctx of ['customer', 'provider', 'admin']) {
         const raw = readRefreshCookie(req, ctx);
         if (raw) await revokeRefreshSession(raw);
-        clearRefreshCookie(res, ctx);
+        clearRefreshCookie(res, ctx, req);
       }
     }
     res.json({
@@ -2123,10 +2123,10 @@ exports.logoutAll = async (req, res, next) => {
     const appContext = resolveAppContextFromRequest(req);
     await revokeAllForUser(userId, appContext || undefined);
     if (appContext) {
-      clearRefreshCookie(res, appContext);
+      clearRefreshCookie(res, appContext, req);
     } else {
       for (const ctx of ['customer', 'provider', 'admin']) {
-        clearRefreshCookie(res, ctx);
+        clearRefreshCookie(res, ctx, req);
       }
     }
     res.json({
@@ -2156,7 +2156,7 @@ exports.refreshToken = async (req, res, next) => {
 
     const raw = readRefreshCookie(req, appContext);
     if (!raw) {
-      clearRefreshCookie(res, appContext);
+      clearRefreshCookie(res, appContext, req);
       return res.status(401).json({
         success: false,
         error: 'Unauthorized',
@@ -2168,7 +2168,7 @@ exports.refreshToken = async (req, res, next) => {
     try {
       rotated = await rotateRefreshSession(raw, req);
     } catch (rotateErr) {
-      clearRefreshCookie(res, appContext);
+      clearRefreshCookie(res, appContext, req);
       return res.status(rotateErr.statusCode || 401).json({
         success: false,
         error: 'Unauthorized',
@@ -2176,12 +2176,12 @@ exports.refreshToken = async (req, res, next) => {
       });
     }
 
-    setRefreshCookie(res, appContext, rotated.rawToken);
+    setRefreshCookie(res, appContext, rotated.rawToken, req);
 
     await connectDB();
     const user = await User.findById(rotated.userId);
     if (!user) {
-      clearRefreshCookie(res, appContext);
+      clearRefreshCookie(res, appContext, req);
       return res.status(401).json({
         success: false,
         error: 'Unauthorized',
@@ -2200,7 +2200,7 @@ exports.refreshToken = async (req, res, next) => {
       await assertRoleAccess(user, activeRole);
     } catch (accessErr) {
       await revokeAllForUser(user._id, appContext);
-      clearRefreshCookie(res, appContext);
+      clearRefreshCookie(res, appContext, req);
       return res.status(accessErr.statusCode || 403).json({
         success: false,
         error: 'Forbidden',

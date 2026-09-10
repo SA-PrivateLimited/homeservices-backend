@@ -983,7 +983,7 @@ exports.setUserPinByAdmin = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: 'PIN must be exactly 6 digits',
+        message: 'PIN must be exactly 4 digits',
       });
     }
 

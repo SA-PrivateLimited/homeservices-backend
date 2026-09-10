@@ -1,5 +1,12 @@
 /**
  * HttpOnly refresh-token cookies — one name per app context.
+ *
+ * Cross-origin frontends (partner.akansho.com → api.akansho.com) need:
+ * - CORS credentials + explicit CORS_ORIGIN (not *)
+ * - AUTH_COOKIE_SAMESITE=none + AUTH_COOKIE_SECURE=true when truly cross-site
+ * - AUTH_COOKIE_DOMAIN matching the API host (e.g. .akansho.com, never a
+ *   retired domain like .akanso.in). Mismatched Domain is rejected by browsers
+ *   and refresh then always fails with "Refresh token missing".
  */
 
 const REFRESH_COOKIE_NAMES = {
@@ -9,6 +16,9 @@ const REFRESH_COOKIE_NAMES = {
 };
 
 const VALID_CONTEXTS = new Set(Object.keys(REFRESH_COOKIE_NAMES));
+
+/** Clear retired + current domains so logout wipes both old and new cookies. */
+const LEGACY_COOKIE_DOMAINS = ['.akanso.in', 'akanso.in', '.akansho.com', 'akansho.com'];
 
 function parseRefreshTtlMs() {
   const raw = String(process.env.REFRESH_TOKEN_EXPIRES_IN || '30d').trim();
@@ -27,7 +37,59 @@ function normalizeAppContext(raw) {
   return 'customer';
 }
 
-function cookieOptions() {
+function requestHostname(req) {
+  const raw = String(req?.hostname || req?.headers?.host || '')
+    .split(':')[0]
+    .trim()
+    .toLowerCase();
+  return raw;
+}
+
+function domainMatchesHost(domain, host) {
+  if (!domain || !host) return false;
+  const bare = String(domain).replace(/^\./, '').toLowerCase();
+  return host === bare || host.endsWith(`.${bare}`);
+}
+
+/**
+ * Resolve cookie Domain for Set-Cookie.
+ * Prefer AUTH_COOKIE_DOMAIN when it matches the request host.
+ * If misconfigured (e.g. retired .akanso.in while API is on akansho.com),
+ * derive `.akansho.com` from the host so refresh cookies actually stick.
+ */
+function resolveCookieDomain(req) {
+  const host = requestHostname(req);
+  if (!host || host === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    return undefined;
+  }
+
+  const configured = String(process.env.AUTH_COOKIE_DOMAIN || '').trim();
+  if (configured && domainMatchesHost(configured, host)) {
+    const bare = configured.replace(/^\./, '');
+    return `.${bare}`;
+  }
+
+  // Live brand domain — never leave cookies on a retired Domain attribute.
+  if (host === 'akansho.com' || host.endsWith('.akansho.com')) {
+    if (configured) {
+      console.warn(
+        `[authCookies] AUTH_COOKIE_DOMAIN=${configured} does not match host ${host}; ` +
+          'using .akansho.com so refresh cookies work. Update production env.',
+      );
+    }
+    return '.akansho.com';
+  }
+
+  if (configured) {
+    console.warn(
+      `[authCookies] AUTH_COOKIE_DOMAIN=${configured} does not match host ${host}; ` +
+        'falling back to host-only cookie',
+    );
+  }
+  return undefined;
+}
+
+function baseCookieOptions(req) {
   const sameSiteRaw = String(process.env.AUTH_COOKIE_SAMESITE || 'lax')
     .trim()
     .toLowerCase();
@@ -48,22 +110,39 @@ function cookieOptions() {
     path: '/api/auth',
     maxAge: parseRefreshTtlMs(),
   };
-  const domain = String(process.env.AUTH_COOKIE_DOMAIN || '').trim();
+  const domain = resolveCookieDomain(req);
   if (domain) opts.domain = domain;
   return opts;
 }
 
-function setRefreshCookie(res, appContext, token) {
-  if (!res || !token) return;
-  const ctx = normalizeAppContext(appContext);
-  res.cookie(REFRESH_COOKIE_NAMES[ctx], token, cookieOptions());
+function clearDomainCandidates(req) {
+  const set = new Set();
+  const configured = String(process.env.AUTH_COOKIE_DOMAIN || '').trim();
+  if (configured) set.add(configured);
+  const resolved = resolveCookieDomain(req);
+  if (resolved) set.add(resolved);
+  for (const d of LEGACY_COOKIE_DOMAINS) set.add(d);
+  // null = host-only clear
+  return [null, ...set];
 }
 
-function clearRefreshCookie(res, appContext) {
+function setRefreshCookie(res, appContext, token, req) {
+  if (!res || !token) return;
+  const ctx = normalizeAppContext(appContext);
+  res.cookie(REFRESH_COOKIE_NAMES[ctx], token, baseCookieOptions(req));
+}
+
+function clearRefreshCookie(res, appContext, req) {
   if (!res) return;
   const ctx = normalizeAppContext(appContext);
-  const opts = {...cookieOptions(), maxAge: 0};
-  res.clearCookie(REFRESH_COOKIE_NAMES[ctx], opts);
+  const name = REFRESH_COOKIE_NAMES[ctx];
+  const base = baseCookieOptions(req);
+  for (const domain of clearDomainCandidates(req)) {
+    const opts = {...base, maxAge: 0};
+    if (domain) opts.domain = domain;
+    else delete opts.domain;
+    res.clearCookie(name, opts);
+  }
 }
 
 function readRefreshCookie(req, appContext) {
@@ -88,4 +167,6 @@ module.exports = {
   readRefreshCookie,
   resolveAppContextFromRequest,
   parseRefreshTtlMs,
+  resolveCookieDomain,
+  domainMatchesHost,
 };

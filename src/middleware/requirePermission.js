@@ -2,8 +2,9 @@
  * Admin RBAC middleware — capability checks after JWT + role.
  * Super Admin elevation (X-Super-Admin-Token) bypasses all permission checks.
  *
- * Option 1: permissions are snapshotted into the JWT at login.
- * Updates take effect on the next login (new JWT). DB is source of truth for storage.
+ * Permissions are resolved from the live admin document (DB) when available so
+ * View/Edit changes apply immediately without waiting for JWT re-issue.
+ * JWT permissions remain a fallback when userDoc is not loaded.
  */
 
 const {verifySuperAdminToken, verifyAccessToken} = require('../utils/jwtAuth');
@@ -38,14 +39,17 @@ function isSuperAdminElevated(req) {
 }
 
 /**
- * Permissions effective for this request (JWT snapshot preferred — Option 1).
+ * Permissions effective for this request — prefer live DB over JWT snapshot.
  */
 function getRequestPermissions(req) {
+  if (req.userDoc) {
+    return resolveAdminPermissions(req.userDoc);
+  }
   if (Array.isArray(req.accessTokenPayload?.permissions)) {
     return req.accessTokenPayload.permissions;
   }
-  if (req.userDoc) {
-    return resolveAdminPermissions(req.userDoc);
+  if (Array.isArray(req.user?.permissions)) {
+    return req.user.permissions;
   }
   return [];
 }
