@@ -72,6 +72,7 @@ async function requireEmployee(req, res, next) {
 
     if (
       employee.status === 'former' ||
+      employee.status === 'inactive' ||
       employee.accountStatus === 'suspended' ||
       employee.accountStatus === 'revoked'
     ) {

@@ -378,7 +378,11 @@ async function beginEmployeeLogin(email, password) {
     err.code = 'EMPLOYEE_PENDING';
     throw err;
   }
-  if (employee.status === 'former' || employee.accountStatus === 'suspended') {
+  if (
+    employee.status === 'former' ||
+    employee.status === 'inactive' ||
+    employee.accountStatus === 'suspended'
+  ) {
     const err = new Error('This employee account cannot sign in.');
     err.statusCode = 403;
     throw err;

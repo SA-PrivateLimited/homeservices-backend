@@ -120,6 +120,13 @@ router.patch(
   ctrl.updateEmployeeStatus,
 );
 router.post(
+  '/:id/reinstate',
+  ...gate,
+  requirePermission(PERMISSIONS.EMPLOYEES_DEACTIVATE),
+  logRequest,
+  ctrl.reinstateEmployee,
+);
+router.post(
   '/:id/invitation',
   ...gate,
   requirePermission(PERMISSIONS.EMPLOYEES_UPDATE),
