@@ -67,8 +67,10 @@ async function generateUniquePin(User, maxAttempts = 40) {
 }
 
 function resolvePinPurpose(raw, user) {
-  const purpose = String(raw || '').toLowerCase();
-  if (purpose === 'customer' || purpose === 'partner') return purpose;
+  const purpose = String(raw || '').trim().toLowerCase();
+  // FE apps send auth role "provider"; PIN storage uses purpose "partner".
+  if (purpose === 'provider' || purpose === 'partner') return 'partner';
+  if (purpose === 'customer') return 'customer';
   if (hasPartnerProfile(user) && !hasCustomerProfile(user)) return 'partner';
   return 'customer';
 }
@@ -124,6 +126,10 @@ function pinHashForRole(user, role) {
 function encryptedPinForPurpose(user, purpose) {
   if (!user) return null;
   if (purpose === 'customer') {
+    // Dual-role: legacy encryptedPin is the Partner slot — do not fall back to it.
+    if (hasPartnerProfile(user)) {
+      return user.customerEncryptedPin || null;
+    }
     return user.customerEncryptedPin || user.encryptedPin || null;
   }
   if (purpose === 'partner') {
@@ -135,10 +141,14 @@ function encryptedPinForPurpose(user, purpose) {
 function hasPinForPurpose(user, purpose) {
   if (!user) return false;
   if (purpose === 'customer') {
+    if (hasPartnerProfile(user)) {
+      return Boolean(user.customerPinHash || user.customerEncryptedPin);
+    }
     return Boolean(
       user.customerPinHash ||
         user.customerEncryptedPin ||
-        (!hasPartnerProfile(user) && (user.pinHash || user.encryptedPin)),
+        user.pinHash ||
+        user.encryptedPin,
     );
   }
   if (purpose === 'partner') {
