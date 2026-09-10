@@ -141,12 +141,28 @@ async function ensureJobCardFromServiceRequest(sr, extras = {}) {
 /**
  * Backfill JobCards for this Partner's accepted/in-progress/completed work
  * that was created before JobCards were always opened on accept.
+ *
+ * Only creates *missing* cards, and is debounced per provider so list/history
+ * endpoints are not blocked by a full sequential sync on every request.
  */
-async function backfillProviderJobCards(providerId) {
-  const ServiceRequest = require('../models/ServiceRequest');
+const BACKFILL_DEBOUNCE_MS = 5 * 60 * 1000;
+/** @type {Map<string, number>} */
+const lastBackfillAt = new Map();
+
+async function backfillProviderJobCards(providerId, opts = {}) {
   const uid = String(providerId || '').trim();
   if (!uid) return 0;
 
+  const force = Boolean(opts.force);
+  const now = Date.now();
+  const previous = lastBackfillAt.get(uid) || 0;
+  if (!force && now - previous < BACKFILL_DEBOUNCE_MS) {
+    return 0;
+  }
+  // Mark early so concurrent list requests do not stampede the same sync.
+  lastBackfillAt.set(uid, now);
+
+  const ServiceRequest = require('../models/ServiceRequest');
   const rows = await ServiceRequest.find({
     providerId: uid,
     status: {$in: ['accepted', 'in-progress', 'completed']},
@@ -156,11 +172,44 @@ async function backfillProviderJobCards(providerId) {
     )
     .lean();
 
+  if (!rows.length) return 0;
+
+  const srIds = rows.map((sr) => srKey(sr)).filter(Boolean);
+  const existing = await JobCard.find({
+    providerId: uid,
+    $or: [
+      {_id: {$in: srIds}},
+      {bookingId: {$in: srIds}},
+      {serviceRequestId: {$in: srIds}},
+    ],
+  })
+    .select('_id bookingId serviceRequestId')
+    .lean();
+
+  const have = new Set();
+  for (const job of existing) {
+    if (job._id) have.add(String(job._id));
+    if (job.bookingId) have.add(String(job.bookingId));
+    if (job.serviceRequestId) have.add(String(job.serviceRequestId));
+  }
+
   let synced = 0;
-  for (const sr of rows) {
+  const missing = rows.filter((sr) => {
     const id = srKey(sr);
-    await ensureJobCardFromServiceRequest(sr);
-    synced += 1;
+    return Boolean(id) && !have.has(id);
+  });
+  // Small parallel batches — avoid long sequential awaits when many are missing.
+  const BATCH = 5;
+  for (let i = 0; i < missing.length; i += BATCH) {
+    const chunk = missing.slice(i, i + BATCH);
+    await Promise.all(
+      chunk.map(async (sr) => {
+        const id = srKey(sr);
+        await ensureJobCardFromServiceRequest(sr);
+        have.add(id);
+        synced += 1;
+      }),
+    );
   }
   return synced;
 }
