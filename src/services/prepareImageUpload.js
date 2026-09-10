@@ -10,25 +10,30 @@ const IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 /**
  * @param {Buffer} buffer
  * @param {string} claimedMime
- * @param {{ purpose?: string, allowSvg?: boolean }} [options]
+ * @param {{ purpose?: string, allowSvg?: boolean, kind?: string }} [options]
  */
 async function prepareOptimizedImageUpload(buffer, claimedMime, options = {}) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    throw createHttpError(400, 'Image buffer is required', 'Bad Request');
+  }
+
   const validated = validateImageBuffer(buffer, claimedMime);
   if (!options.allowSvg && validated.contentType === 'image/svg+xml') {
     throw createHttpError(400, 'SVG is not allowed for this upload', 'Bad Request');
   }
   if (!isOptimizableImageMime(validated.contentType)) {
     return {
-      buffer: validated.buffer,
+      buffer,
       contentType: validated.contentType,
       extension: validated.extension,
-      originalBytes: validated.buffer.length,
-      optimizedBytes: validated.buffer.length,
+      originalBytes: buffer.length,
+      optimizedBytes: buffer.length,
       skipped: true,
     };
   }
 
-  const optimized = await optimizeImageBuffer(validated.buffer, {
+  // validateImageBuffer returns metadata only — optimize the original buffer.
+  const optimized = await optimizeImageBuffer(buffer, {
     purpose: options.purpose,
     kind: options.kind,
     contentType: validated.contentType,
