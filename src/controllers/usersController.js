@@ -45,7 +45,10 @@ const {
   PERMISSIONS,
   hasPermission,
 } = require('../constants/permissions');
-const {isSuperAdminElevated} = require('../middleware/requirePermission');
+const {
+  isSuperAdminElevated,
+  getRequestPermissions,
+} = require('../middleware/requirePermission');
 const ADMIN_LIST_SORT = require('../utils/adminListSort');
 const {parseAdminOnboardingSource} = require('../utils/onboardingSource');
 
@@ -1116,6 +1119,27 @@ exports.createUserByAdmin = async (req, res, next) => {
           error: e.statusCode === 401 ? 'Unauthorized' : 'Forbidden',
           message: e.message,
         });
+      }
+    }
+
+    // Partner bulk onboarding uses onboardingSource=admin_bulk and its own
+    // module Edit permission (generic registry — not a special-case bypass).
+    if (role === 'provider' && !isSuperAdminElevated(req)) {
+      const onboardingSource = parseAdminOnboardingSource(
+        req.body.onboardingSource,
+      );
+      if (onboardingSource === 'admin_bulk') {
+        const perms = getRequestPermissions(req);
+        if (
+          !hasPermission(perms, PERMISSIONS.PARTNER_BULK_ONBOARDING_UPDATE)
+        ) {
+          return res.status(403).json({
+            success: false,
+            error: 'Forbidden',
+            message: `Missing permission: ${PERMISSIONS.PARTNER_BULK_ONBOARDING_UPDATE}`,
+            required: [PERMISSIONS.PARTNER_BULK_ONBOARDING_UPDATE],
+          });
+        }
       }
     }
 

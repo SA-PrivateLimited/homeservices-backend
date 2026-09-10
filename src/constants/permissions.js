@@ -11,6 +11,10 @@ const PERMISSIONS = Object.freeze({
   PROVIDERS_UPDATE: 'providers.update',
   PROVIDERS_DELETE: 'providers.delete',
 
+  /** Dedicated Partner bulk onboarding module (Excel paste → insert). */
+  PARTNER_BULK_ONBOARDING_VIEW: 'partner-bulk-onboarding.view',
+  PARTNER_BULK_ONBOARDING_UPDATE: 'partner-bulk-onboarding.update',
+
   CUSTOMERS_VIEW: 'customers.view',
   CUSTOMERS_CREATE: 'customers.create',
   CUSTOMERS_UPDATE: 'customers.update',
@@ -73,6 +77,14 @@ const PERMISSION_MODULES = Object.freeze([
       PERMISSIONS.PROVIDERS_CREATE,
       PERMISSIONS.PROVIDERS_UPDATE,
       PERMISSIONS.PROVIDERS_DELETE,
+    ],
+  },
+  {
+    id: 'partner-bulk-onboarding',
+    label: 'Partner bulk onboarding',
+    permissions: [
+      PERMISSIONS.PARTNER_BULK_ONBOARDING_VIEW,
+      PERMISSIONS.PARTNER_BULK_ONBOARDING_UPDATE,
     ],
   },
   {
