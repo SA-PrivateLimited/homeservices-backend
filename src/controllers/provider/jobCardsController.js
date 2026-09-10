@@ -40,14 +40,20 @@ function sanitizeJobCardForProvider(job, viewer, settings) {
 exports.getMyJobCards = async (req, res, next) => {
   try {
     const {status, limit = 50, offset = 0} = req.query;
+    const statusKey = String(status || '').toLowerCase();
+    // Cancelled history is not produced by SR→JobCard backfill; skip the sync.
+    const skipBackfill =
+      statusKey === 'cancelled' || statusKey === 'canceled';
 
-    try {
-      await backfillProviderJobCards(req.user.uid);
-    } catch (backfillErr) {
-      console.warn(
-        '⚠️ [getMyJobCards] Could not backfill missing job cards:',
-        backfillErr.message,
-      );
+    if (!skipBackfill) {
+      try {
+        await backfillProviderJobCards(req.user.uid);
+      } catch (backfillErr) {
+        console.warn(
+          '⚠️ [getMyJobCards] Could not backfill missing job cards:',
+          backfillErr.message,
+        );
+      }
     }
 
     const query = {providerId: req.user.uid};
