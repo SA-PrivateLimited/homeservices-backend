@@ -908,6 +908,7 @@ exports.addDocument = async (req, res, next) => {
     employee.documents.push({
       type,
       label: String(req.body.label || '').trim(),
+      fileKey: key,
       fileUrl: uploaded.url,
       fileName: req.file.originalname || '',
       contentType,
@@ -1066,6 +1067,7 @@ exports.uploadPhoto = async (req, res, next) => {
 /**
  * POST /api/admin/employees/:id/id-card
  * Ensures verification token + returns print payload + QR data URL.
+ * QR encodes only a public HTTPS verification page URL (never employee JSON).
  */
 exports.generateIdCard = async (req, res, next) => {
   try {
@@ -1083,11 +1085,28 @@ exports.generateIdCard = async (req, res, next) => {
       employee.verificationToken = crypto.randomBytes(24).toString('hex');
     }
 
-    const base =
-      process.env.PUBLIC_API_BASE_URL ||
-      process.env.API_PUBLIC_URL ||
-      `${req.protocol}://${req.get('host')}`;
-    const verifyUrl = `${String(base).replace(/\/$/, '')}/api/employees/verify/${employee.verificationToken}`;
+    const webBase = String(
+      process.env.EMPLOYEE_PUBLIC_URL ||
+        process.env.ADMIN_PUBLIC_URL ||
+        req.get('origin') ||
+        '',
+    ).trim();
+    let pageOrigin = '';
+    if (webBase) {
+      try {
+        pageOrigin = new URL(webBase).origin;
+      } catch {
+        pageOrigin = '';
+      }
+    }
+    if (!pageOrigin && process.env.NODE_ENV === 'production') {
+      pageOrigin = 'https://admin.akansho.com';
+    }
+    if (!pageOrigin) {
+      pageOrigin = 'http://localhost:5173';
+    }
+
+    const verificationUrl = `${pageOrigin}/employee/verify/${employee.verificationToken}`;
 
     const addr = employee.address || {};
     const locationParts = [
@@ -1099,32 +1118,15 @@ exports.generateIdCard = async (req, res, next) => {
     const location =
       locationParts.join(', ') || employee.workLocation || '';
 
-    /** Identity payload for scanners — no salary, bank, or private documents. */
-    const identityPayload = {
-      org: 'Akansho',
-      type: 'employee_identity',
-      verify: verifyUrl,
-      employeeCode: employee.employeeCode,
-      fullName: employee.fullName,
-      profession: employee.profession || '',
-      designation: employee.designation || '',
-      department: employee.department || '',
-      employmentType: employee.employmentType || '',
-      phone: employee.phone || '',
-      email: employee.email || '',
-      experienceYears: employee.professionalExperienceYears || 0,
-      workLocation: employee.workLocation || '',
-      location,
-      joiningDate: employee.joiningDate
-        ? new Date(employee.joiningDate).toISOString().slice(0, 10)
-        : '',
-      status: employee.status,
-      reportingManager: employee.reportingManagerName || '',
-    };
+    employee.idCardStatus = employee.idCardStatus || 'valid';
+    if (employee.idCardStatus === 'expired') {
+      employee.idCardStatus = 'valid';
+    }
+    employee.idCardIssuedAt = new Date();
 
-    const qrDataUrl = await QRCode.toDataURL(JSON.stringify(identityPayload), {
-      margin: 1,
-      width: 280,
+    const qrDataUrl = await QRCode.toDataURL(verificationUrl, {
+      margin: 2,
+      width: 320,
       errorCorrectionLevel: 'M',
     });
 
@@ -1141,9 +1143,28 @@ exports.generateIdCard = async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        ...identityPayload,
+        org: 'Akansho',
+        type: 'employee_identity',
+        employeeCode: employee.employeeCode,
+        fullName: employee.fullName,
+        profession: employee.profession || '',
+        designation: employee.designation || '',
+        department: employee.department || '',
+        employmentType: employee.employmentType || '',
+        phone: employee.phone || '',
+        email: employee.email || '',
+        experienceYears: employee.professionalExperienceYears || 0,
+        workLocation: employee.workLocation || '',
+        location,
+        joiningDate: employee.joiningDate
+          ? new Date(employee.joiningDate).toISOString().slice(0, 10)
+          : '',
+        status: employee.status,
+        reportingManager: employee.reportingManagerName || '',
         photoUrl: employee.photoUrl || '',
-        verificationUrl: verifyUrl,
+        verificationUrl,
+        qrVerificationEnabled: true,
+        idCardStatus: employee.idCardStatus,
         qrDataUrl,
         generatedAt: new Date().toISOString(),
       },
@@ -1178,7 +1199,8 @@ exports.deleteEmployee = async (req, res, next) => {
 };
 
 /**
- * GET /api/employees/verify/:token — public identity (no salary / documents)
+ * GET /api/employees/verify/:token — public identity for QR verification page.
+ * Minimal safe fields only (no phone, email, salary, documents, tokens).
  */
 exports.verifyEmployeePublic = async (req, res, next) => {
   try {
@@ -1187,52 +1209,91 @@ exports.verifyEmployeePublic = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: 'Invalid verification reference',
+        message: 'This ID card could not be verified.',
+        data: {
+          verified: false,
+          verificationState: 'invalid',
+          supportEmail:
+            String(process.env.SUPPORT_EMAIL || '').trim() ||
+            'support@akansho.com',
+        },
       });
     }
+
     const employee = await Employee.findOne({verificationToken: token})
       .select(
-        'employeeCode fullName profession designation department employmentType phone email photoUrl status workLocation address professionalExperienceYears joiningDate reportingManagerName reportingManagerCode',
+        'employeeCode fullName profession designation department photoUrl status workLocation idCardStatus idCardIssuedAt idCardExpiresAt',
       )
       .lean();
+
+    const support =
+      String(process.env.SUPPORT_EMAIL || '').trim() || 'support@akansho.com';
+
     if (!employee) {
       return res.status(404).json({
         success: false,
         error: 'Not Found',
-        message: 'Employee verification not found',
+        message: 'This ID card could not be verified.',
+        data: {
+          verified: false,
+          verificationState: 'invalid',
+          supportEmail: support,
+        },
       });
     }
-    const addr = employee.address || {};
-    const location = [
-      employee.workLocation,
-      addr.city,
-      addr.district,
-      addr.state,
-    ]
-      .filter(Boolean)
-      .join(', ');
+
+    const now = Date.now();
+    let idCardStatus = employee.idCardStatus || 'valid';
+    if (
+      idCardStatus !== 'revoked' &&
+      employee.idCardExpiresAt &&
+      new Date(employee.idCardExpiresAt).getTime() < now
+    ) {
+      idCardStatus = 'expired';
+    }
+
+    let verificationState = 'valid';
+    let verified = true;
+    let message = 'This employee ID card is valid.';
+
+    if (idCardStatus === 'revoked') {
+      verificationState = 'revoked';
+      verified = false;
+      message = 'This ID card is no longer valid.';
+    } else if (idCardStatus === 'expired') {
+      verificationState = 'expired';
+      verified = false;
+      message = 'This ID card has expired.';
+    } else if (employee.status === 'former') {
+      verificationState = 'former';
+      verified = true;
+      message =
+        'The employee is no longer currently employed by the organization.';
+    } else if (employee.status === 'inactive') {
+      verificationState = 'inactive';
+      verified = true;
+      message = 'This employee ID card is recognized, but employment is inactive.';
+    }
 
     res.json({
       success: true,
       data: {
+        verified,
+        verificationState,
+        message,
         organization: 'Akansho',
-        type: 'employee_identity',
-        employeeCode: employee.employeeCode,
-        fullName: employee.fullName,
-        profession: employee.profession || '',
-        designation: employee.designation || '',
-        department: employee.department || '',
-        employmentType: employee.employmentType || '',
-        phone: employee.phone || '',
-        email: employee.email || '',
-        photoUrl: employee.photoUrl || '',
-        status: employee.status,
-        workLocation: employee.workLocation || '',
-        location,
-        experienceYears: employee.professionalExperienceYears || 0,
-        joiningDate: employee.joiningDate || null,
-        reportingManager: employee.reportingManagerName || '',
-        reportingManagerCode: employee.reportingManagerCode || '',
+        employee: {
+          name: employee.fullName,
+          employeeId: employee.employeeCode,
+          designation: employee.designation || employee.profession || '',
+          department: employee.department || '',
+          workLocation: employee.workLocation || '',
+          photoUrl: employee.photoUrl || '',
+        },
+        employmentStatus: employee.status,
+        idCardStatus,
+        verifiedAt: new Date().toISOString(),
+        supportEmail: support,
       },
     });
   } catch (error) {
