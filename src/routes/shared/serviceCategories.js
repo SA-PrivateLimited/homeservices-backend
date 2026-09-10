@@ -40,7 +40,7 @@ router.get('/sections', optionalAuth, logRequest, getCategorySections);
 router.post(
   '/sections',
   requireRole('admin'),
-  requirePermission(PERMISSIONS.CATEGORIES_CREATE),
+  requirePermission(PERMISSIONS.CATEGORY_SECTIONS_CREATE),
   logRequest,
   createCategorySection,
 );
@@ -52,7 +52,7 @@ router.post(
 router.put(
   '/sections/:sectionKey',
   requireRole('admin'),
-  requirePermission(PERMISSIONS.CATEGORIES_UPDATE),
+  requirePermission(PERMISSIONS.CATEGORY_SECTIONS_UPDATE),
   validateObjectId,
   logRequest,
   updateCategorySection,
@@ -65,7 +65,7 @@ router.put(
 router.delete(
   '/sections/:sectionKey',
   requireRole('admin'),
-  requirePermission(PERMISSIONS.CATEGORIES_DELETE),
+  requirePermission(PERMISSIONS.CATEGORY_SECTIONS_DELETE),
   validateObjectId,
   logRequest,
   deleteCategorySection,

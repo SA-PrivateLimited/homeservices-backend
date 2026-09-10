@@ -30,16 +30,31 @@ const PERMISSIONS = Object.freeze({
   CATEGORIES_UPDATE: 'categories.update',
   CATEGORIES_DELETE: 'categories.delete',
 
+  CATEGORY_SECTIONS_VIEW: 'category-sections.view',
+  CATEGORY_SECTIONS_CREATE: 'category-sections.create',
+  CATEGORY_SECTIONS_UPDATE: 'category-sections.update',
+  CATEGORY_SECTIONS_DELETE: 'category-sections.delete',
+
   GEOGRAPHY_VIEW: 'geography.view',
   GEOGRAPHY_UPDATE: 'geography.update',
 
   CONTACTS_VIEW: 'contacts.view',
   CONTACTS_UPDATE: 'contacts.update',
 
+  FEEDBACKS_VIEW: 'feedbacks.view',
+  FEEDBACKS_UPDATE: 'feedbacks.update',
+
+  /** Admin settings hub (sidebar: Permissions). */
+  SETTINGS_VIEW: 'settings.view',
+  SETTINGS_UPDATE: 'settings.update',
+
   CLIENTS_VIEW: 'clients.view',
   CLIENTS_CREATE: 'clients.create',
   CLIENTS_UPDATE: 'clients.update',
   CLIENTS_DELETE: 'clients.delete',
+
+  GREETING_VIEW: 'greeting.view',
+  GREETING_UPDATE: 'greeting.update',
 
   /** Manage other admin accounts (invite / permissions). Super Admin elevation still required. */
   ADMINS_VIEW: 'admins.view',
@@ -118,6 +133,16 @@ const PERMISSION_MODULES = Object.freeze([
     ],
   },
   {
+    id: 'category-sections',
+    label: 'Category sections',
+    permissions: [
+      PERMISSIONS.CATEGORY_SECTIONS_VIEW,
+      PERMISSIONS.CATEGORY_SECTIONS_CREATE,
+      PERMISSIONS.CATEGORY_SECTIONS_UPDATE,
+      PERMISSIONS.CATEGORY_SECTIONS_DELETE,
+    ],
+  },
+  {
     id: 'geography',
     label: 'Geography',
     permissions: [PERMISSIONS.GEOGRAPHY_VIEW, PERMISSIONS.GEOGRAPHY_UPDATE],
@@ -128,6 +153,16 @@ const PERMISSION_MODULES = Object.freeze([
     permissions: [PERMISSIONS.CONTACTS_VIEW, PERMISSIONS.CONTACTS_UPDATE],
   },
   {
+    id: 'feedbacks',
+    label: 'Feedbacks',
+    permissions: [PERMISSIONS.FEEDBACKS_VIEW, PERMISSIONS.FEEDBACKS_UPDATE],
+  },
+  {
+    id: 'settings',
+    label: 'Permissions',
+    permissions: [PERMISSIONS.SETTINGS_VIEW, PERMISSIONS.SETTINGS_UPDATE],
+  },
+  {
     id: 'clients',
     label: 'Clients',
     permissions: [
@@ -136,6 +171,11 @@ const PERMISSION_MODULES = Object.freeze([
       PERMISSIONS.CLIENTS_UPDATE,
       PERMISSIONS.CLIENTS_DELETE,
     ],
+  },
+  {
+    id: 'greeting',
+    label: 'Greeting',
+    permissions: [PERMISSIONS.GREETING_VIEW, PERMISSIONS.GREETING_UPDATE],
   },
   {
     id: 'employees',
