@@ -171,6 +171,18 @@ function normalizePermissions(permissions) {
       }
     }
   }
+
+  // Edit without View is invalid — promote View whenever any mutation
+  // permission for that module is present.
+  for (const mod of PERMISSION_MODULES) {
+    const view = mod.permissions.find((p) => p.endsWith('.view'));
+    const edits = mod.permissions.filter((p) => !p.endsWith('.view'));
+    if (!view || !edits.length) continue;
+    if (edits.some((p) => seen.has(p)) && !seen.has(view)) {
+      seen.add(view);
+      out.push(view);
+    }
+  }
   return out;
 }
 

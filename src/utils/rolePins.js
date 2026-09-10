@@ -4,6 +4,8 @@
  * Legacy fields (pinHash / pinKey / encryptedPin) remain the login PIN for
  * the user's primary role. Dual-role users get customerPin* / partnerPin*
  * so resetting one PIN never changes the other.
+ *
+ * Login PIN policy: exactly 4 numeric digits (Customer and Partner).
  */
 
 const crypto = require('crypto');
@@ -12,11 +14,12 @@ const {encryptToken} = require('./tokenEncryption');
 const {hasCustomerProfile, hasPartnerProfile} = require('./userProfiles');
 
 const PIN_SALT_ROUNDS = 12;
+const PIN_LENGTH = 4;
 const PIN_SELECT =
   '+pinHash +pinKey +encryptedPin +customerPinHash +customerPinKey +customerEncryptedPin +partnerPinHash +partnerPinKey +partnerEncryptedPin';
 
 function isValidPin(pin) {
-  return typeof pin === 'string' && /^\d{6}$/.test(pin);
+  return typeof pin === 'string' && new RegExp(`^\\d{${PIN_LENGTH}}$`).test(pin);
 }
 
 function pinHmacKey(pin) {
@@ -39,7 +42,7 @@ async function assertPinGloballyUnique(User, pin, excludeUserId) {
     .lean();
   if (existing) {
     const err = new Error(
-      'This PIN is already in use. Choose a different 6-digit PIN.',
+      'This PIN is already in use. Choose a different 4-digit PIN.',
     );
     err.statusCode = 409;
     throw err;
@@ -48,8 +51,9 @@ async function assertPinGloballyUnique(User, pin, excludeUserId) {
 }
 
 async function generateUniquePin(User, maxAttempts = 40) {
+  const max = 10 ** PIN_LENGTH;
   for (let i = 0; i < maxAttempts; i++) {
-    const pin = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+    const pin = String(crypto.randomInt(0, max)).padStart(PIN_LENGTH, '0');
     try {
       await assertPinGloballyUnique(User, pin);
       return pin;
@@ -162,6 +166,7 @@ async function hashAndEncryptPin(pin) {
 }
 
 module.exports = {
+  PIN_LENGTH,
   PIN_SELECT,
   PIN_SALT_ROUNDS,
   isValidPin,
