@@ -51,6 +51,9 @@ const documentSchema = new mongoose.Schema(
   {
     type: {type: String, enum: DOCUMENT_TYPES, required: true},
     label: {type: String, trim: true, default: ''},
+    /** Canonical storage object key (preferred). */
+    fileKey: {type: String, trim: true, default: ''},
+    /** CDN/public URL for admin convenience (not a portal auth substitute). */
     fileUrl: {type: String, trim: true, required: true},
     fileName: {type: String, trim: true, default: ''},
     contentType: {type: String, trim: true, default: ''},
@@ -153,6 +156,13 @@ const employeeSchema = new mongoose.Schema(
 
     /** Opaque token for ID-card QR verification (no PII in QR payload). */
     verificationToken: {type: String, trim: true, unique: true, sparse: true},
+    idCardStatus: {
+      type: String,
+      enum: ['valid', 'revoked', 'expired'],
+      default: 'valid',
+    },
+    idCardIssuedAt: {type: Date},
+    idCardExpiresAt: {type: Date},
 
     /**
      * Employee portal access (separate from Admin).

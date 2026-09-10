@@ -553,6 +553,46 @@ async function headObject(key, {userId} = {}) {
   }
 }
 
+/**
+ * Time-limited GET URL for private document access.
+ */
+async function createPresignedGetUrl({key, expiresIn = 300, userId} = {}) {
+  const normalizedKey = normalizeObjectKey(key);
+  const ttl = Math.min(Math.max(Number(expiresIn) || 300, 60), 900);
+
+  if (localDiskAllowed()) {
+    throw createHttpError(
+      500,
+      'Presigned GET is not used for local disk mode',
+      'Storage Configuration',
+    );
+  }
+
+  try {
+    const command = new GetObjectCommand({
+      Bucket: getBucket(),
+      Key: normalizedKey,
+    });
+    const url = await getSignedUrl(getS3Client(), command, {expiresIn: ttl});
+    logS3('createPresignedGetUrl', {
+      key: normalizedKey,
+      userId,
+      expiresIn: ttl,
+      success: true,
+    });
+    return url;
+  } catch (err) {
+    if (err.statusCode) throw err;
+    logS3('createPresignedGetUrl', {
+      key: normalizedKey,
+      userId,
+      success: false,
+      error: err.name || 'Error',
+    });
+    throw mapAwsError(err);
+  }
+}
+
 module.exports = {
   getS3Client,
   setS3ClientForTests,
@@ -563,6 +603,7 @@ module.exports = {
   deleteObject,
   headObject,
   createPresignedPutUrl,
+  createPresignedGetUrl,
   shouldUseS3Presign,
   localDiskAllowed,
   getCredentialResolutionInfo,
