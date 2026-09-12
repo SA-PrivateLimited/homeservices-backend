@@ -26,7 +26,7 @@ const districtSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-    /** Default / HQ pincode for the district (auto-fill on provider forms) */
+    /** Legacy district HQ pincode (metadata only). Do not copy onto addresses. */
     pincode: {
       type: String,
       trim: true,

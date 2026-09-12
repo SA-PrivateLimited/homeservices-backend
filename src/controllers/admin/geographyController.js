@@ -357,7 +357,6 @@ exports.addProviderToDistrict = async (req, res, next) => {
     };
 
     const districtAddress = [district.name, stateName].filter(Boolean).join(', ');
-    const districtPincode = String(district.pincode || '').trim() || undefined;
 
     // Assign existing
     if (req.body.providerId) {
@@ -374,11 +373,12 @@ exports.addProviderToDistrict = async (req, res, next) => {
       const bodyAddress = String(req.body.address || '').trim();
       const bodyPincode = String(req.body.pincode || '').trim();
 
-      // Replace location with this district (do not keep the previous address/city/pin)
+      // Replace location with this district. PIN only if admin supplied one —
+      // never copy District HQ pincode onto the partner address.
       provider.location = {
         ...locationPatch,
         address: bodyAddress || districtAddress,
-        pincode: bodyPincode || districtPincode,
+        pincode: bodyPincode || undefined,
         country: 'IN',
       };
       provider.updatedAt = new Date();
@@ -435,10 +435,7 @@ exports.addProviderToDistrict = async (req, res, next) => {
     const location = {
       ...locationPatch,
       address: (req.body.address || '').trim() || undefined,
-      pincode:
-        String(req.body.pincode || '').trim() ||
-        district.pincode ||
-        undefined,
+      pincode: String(req.body.pincode || '').trim() || undefined,
       country: 'IN',
     };
 
