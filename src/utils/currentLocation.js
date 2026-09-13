@@ -50,6 +50,10 @@ function parseCurrentLocationInput(raw, now = new Date()) {
     latitude,
     longitude,
     updatedAt: now,
+    point: {
+      type: 'Point',
+      coordinates: [longitude, latitude],
+    },
   };
   const address = optionalText(raw.address);
   const city = optionalText(raw.city);
@@ -86,6 +90,7 @@ function buildProviderStatusUpdate(body, now = new Date()) {
 }
 
 module.exports = {
+  parseCoord,
   parseCurrentLocationInput,
   buildProviderStatusUpdate,
 };

@@ -10,6 +10,15 @@ const ServiceCategory = require('../../models/ServiceCategory');
 const {connectDB} = require('../../config/database');
 const {buildProviderStatusUpdate} = require('../../utils/currentLocation');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
+const {
+  parseDiscoveryOrigin,
+  applyRadialEligibility,
+  radialCountQuery,
+  buildRadialGeoNearStage,
+  excludeSelectToProject,
+  sanitizeRadialDocument,
+  discoveryModeForOrigin,
+} = require('../../utils/providerRadialDiscovery');
 const {toPublicProviderForSettings} = require('../../utils/contactAccess');
 const {
   partnerNamePatch,
@@ -135,6 +144,16 @@ function publicProviderRow(provider, settings, serviceQuery) {
  * Get all providers (public, but admins can see all statuses)
  */
 exports.getProviders = async (req, res, next) => {
+  const originParsed = parseDiscoveryOrigin(req.query);
+  if (!originParsed.ok) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation Error',
+      message: originParsed.message,
+    });
+  }
+  const discoveryOrigin = originParsed.origin;
+
   try {
     await connectDB();
 
@@ -276,6 +295,11 @@ exports.getProviders = async (req, res, next) => {
       Object.assign(query, excludeSelfProviderClause(viewerId));
     }
 
+    // Radial eligibility only here; $geoNear supplies the 10 km filter + distance.
+    if (discoveryOrigin) {
+      applyRadialEligibility(query);
+    }
+
     if (andClauses.length === 1) {
       Object.assign(query, andClauses[0]);
     } else if (andClauses.length > 1) {
@@ -286,21 +310,40 @@ exports.getProviders = async (req, res, next) => {
     const off = Math.max(parseInt(offset, 10) || 0, 0);
 
     const CUSTOMER_LIST_EXCLUDE =
-      '-documents -bankAccount -bankDetails -encryptedPin -pinHash -fcmToken -aadharNumber -aadhaarNumber -panNumber -gstNumber -rejectionReason -addedByAdminId';
+      '-documents -bankAccount -bankDetails -encryptedPin -pinHash -fcmToken -aadharNumber -aadhaarNumber -panNumber -gstNumber -rejectionReason -addedByAdminId -currentLocation';
 
     const fetchLim = isAdmin ? lim : Math.min(100, Math.max(lim * 2, lim));
-    let listQuery = Provider.find(query)
-      .sort(ADMIN_LIST_SORT)
-      .limit(fetchLim)
-      .skip(off);
-    if (!isAdmin) {
-      listQuery = listQuery.select(CUSTOMER_LIST_EXCLUDE);
+    const countQuery = discoveryOrigin
+      ? radialCountQuery(query, discoveryOrigin)
+      : query;
+    let providers;
+    if (discoveryOrigin) {
+      const pipeline = [
+        buildRadialGeoNearStage(discoveryOrigin, query),
+        {$skip: off},
+        {$limit: fetchLim},
+      ];
+      if (!isAdmin) {
+        pipeline.push({
+          $project: excludeSelectToProject(CUSTOMER_LIST_EXCLUDE),
+        });
+      }
+      providers = await Provider.aggregate(pipeline);
+      providers = providers.map(sanitizeRadialDocument);
+    } else {
+      let listQuery = Provider.find(query)
+        .sort(ADMIN_LIST_SORT)
+        .limit(fetchLim)
+        .skip(off);
+      if (!isAdmin) {
+        listQuery = listQuery.select(CUSTOMER_LIST_EXCLUDE);
+      }
+      providers = await listQuery.lean();
     }
-    const providers = await listQuery.lean();
 
     let total;
     try {
-      total = await Provider.countDocuments(query).maxTimeMS(2500);
+      total = await Provider.countDocuments(countQuery).maxTimeMS(2500);
     } catch {
       total = off + providers.length + (providers.length >= lim ? lim : 0);
     }
@@ -369,8 +412,23 @@ exports.getProviders = async (req, res, next) => {
       total,
       limit: lim,
       offset: off,
+      discoveryMode: discoveryModeForOrigin(discoveryOrigin),
     });
   } catch (error) {
+    const msg = error?.message || String(error);
+    if (
+      discoveryOrigin &&
+      /2dsphere|geo(spatial|near)?|\$near|\$geoWithin|unable to find index/i.test(
+        msg,
+      )
+    ) {
+      console.warn('Radial discovery query failed:', msg);
+      return res.status(503).json({
+        success: false,
+        error: 'Service Unavailable',
+        message: 'Nearby search is temporarily unavailable.',
+      });
+    }
     next(error);
   }
 };

@@ -41,6 +41,31 @@ describe('parseCurrentLocationInput', () => {
     assert.equal(parsed.value.latitude, 24.123);
     assert.equal(parsed.value.longitude, 83.456);
     assert.equal(parsed.value.updatedAt.toISOString(), now.toISOString());
+    assert.equal(parsed.value.point.type, 'Point');
+    assert.deepEqual(parsed.value.point.coordinates, [83.456, 24.123]);
+  });
+
+  it('writes GeoJSON Point as [longitude, latitude] from live GPS only', () => {
+    const now = new Date('2026-09-13T01:00:00.000Z');
+    const parsed = parseCurrentLocationInput(
+      {
+        latitude: 24.1551,
+        longitude: 83.8072,
+        point: {type: 'Point', coordinates: [0, 0]},
+      },
+      now,
+    );
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.value.point.type, 'Point');
+    assert.equal(parsed.value.point.coordinates[0], 83.8072);
+    assert.equal(parsed.value.point.coordinates[1], 24.1551);
+    assert.notDeepEqual(parsed.value.point.coordinates, [24.1551, 83.8072]);
+  });
+
+  it('does not produce a Point when coordinates are invalid', () => {
+    const parsed = parseCurrentLocationInput({latitude: 91, longitude: 83.456});
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.value, undefined);
   });
 });
 
@@ -62,6 +87,7 @@ describe('buildProviderStatusUpdate', () => {
     assert.equal(result.ok, true);
     assert.equal(result.updateData.isOnline, false);
     assert.equal('currentLocation' in result.updateData, false);
+    assert.equal('$unset' in result.updateData, false);
   });
 
   it('persists live coordinates with a server timestamp', () => {
@@ -77,6 +103,10 @@ describe('buildProviderStatusUpdate', () => {
       latitude: 24.123,
       longitude: 83.456,
       updatedAt: now,
+      point: {
+        type: 'Point',
+        coordinates: [83.456, 24.123],
+      },
     });
     assert.equal(result.updateData.isOnline, true);
     assert.equal(result.updateData.lastUpdated, now);
@@ -91,6 +121,7 @@ describe('buildProviderStatusUpdate', () => {
       now,
     );
     assert.equal(result.ok, false);
+    assert.equal(result.updateData, undefined);
   });
 
   it('location-only updates do not change isOnline', () => {
@@ -102,6 +133,11 @@ describe('buildProviderStatusUpdate', () => {
     assert.equal('isOnline' in result.updateData, false);
     assert.equal('isAvailable' in result.updateData, false);
     assert.equal(result.updateData.currentLocation.latitude, 24.123);
+    assert.equal(result.updateData.currentLocation.longitude, 83.456);
+    assert.deepEqual(result.updateData.currentLocation.point.coordinates, [
+      83.456,
+      24.123,
+    ]);
   });
 
   it('does not copy profile location/address into currentLocation', () => {

@@ -27,6 +27,10 @@ const FIXTURE = {
     latitude: 24.124,
     longitude: 83.457,
     updatedAt: '2026-09-13T02:06:05.178Z',
+    point: {
+      type: 'Point',
+      coordinates: [83.457, 24.124],
+    },
   },
   address: {
     type: 'home',
@@ -61,6 +65,7 @@ describe('toPublicProvider location privacy', () => {
     assert.equal('latitude' in pub.location, false);
     assert.equal('longitude' in pub.location, false);
     assert.equal('currentLocation' in pub, false);
+    assert.equal('point' in pub, false);
     assert.equal('latitude' in (pub.address || {}), false);
     assert.equal('longitude' in (pub.address || {}), false);
 
@@ -92,6 +97,7 @@ describe('toPublicProvider location privacy', () => {
     assert.equal('latitude' in (pub.location || {}), false);
     assert.equal('longitude' in (pub.location || {}), false);
     assert.equal('currentLocation' in pub, false);
+    assert.equal('point' in pub, false);
   });
 
   it('does not mutate the source provider document', () => {
@@ -104,5 +110,9 @@ describe('toPublicProvider location privacy', () => {
     assert.equal(src.location.latitude, 24.123);
     assert.equal(src.currentLocation.latitude, 24.124);
     assert.equal(src.currentLocation.updatedAt, '2026-09-13T02:06:05.178Z');
+    assert.deepEqual(src.currentLocation.point, {
+      type: 'Point',
+      coordinates: [83.457, 24.124],
+    });
   });
 });
