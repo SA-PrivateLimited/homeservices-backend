@@ -46,7 +46,7 @@ function mockReq() {
   };
 }
 
-test('create → rotate invalidates old token', dbOpts, async () => {
+test('create → rotate then immediate retry returns the same successor', dbOpts, async () => {
   const userId = crypto.randomUUID();
   createdUserIds.push(userId);
   const {rawToken} = await createRefreshSession(userId, 'customer', mockReq());
@@ -54,6 +54,22 @@ test('create → rotate invalidates old token', dbOpts, async () => {
 
   assert.ok(rotated.rawToken);
   assert.notEqual(rotated.rawToken, rawToken);
+
+  const replayed = await rotateRefreshSession(rawToken, mockReq());
+  assert.equal(replayed.rawToken, rotated.rawToken);
+});
+
+test('reuse after grace is treated as theft', dbOpts, async () => {
+  const userId = crypto.randomUUID();
+  createdUserIds.push(userId);
+  const {rawToken} = await createRefreshSession(userId, 'customer', mockReq());
+  const rotated = await rotateRefreshSession(rawToken, mockReq());
+  assert.ok(rotated.rawToken);
+
+  await RefreshSession.updateOne(
+    {tokenHash: hashToken(rawToken)},
+    {$set: {graceUntil: new Date(Date.now() - 1000)}},
+  );
 
   await assert.rejects(
     () => rotateRefreshSession(rawToken, mockReq()),

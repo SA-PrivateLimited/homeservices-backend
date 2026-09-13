@@ -66,6 +66,18 @@ async function findSessionByRawToken(rawToken) {
   return RefreshSession.findOne({tokenHash: hashToken(token)});
 }
 
+const ROTATE_GRACE_MS = 15_000;
+
+function sessionStillInRotateGrace(session) {
+  if (!session?.graceSuccessorRaw) return false;
+  const until = session.graceUntil
+    ? new Date(session.graceUntil).getTime()
+    : session.revokedAt
+      ? new Date(session.revokedAt).getTime() + ROTATE_GRACE_MS
+      : 0;
+  return until > Date.now();
+}
+
 async function rotateRefreshSession(rawToken, req) {
   const token = String(rawToken || '').trim();
   if (!token) throw authError('Refresh token missing');
@@ -74,23 +86,39 @@ async function rotateRefreshSession(rawToken, req) {
   if (!session) throw authError('Invalid refresh token');
 
   if (session.revokedAt) {
+    if (sessionStillInRotateGrace(session)) {
+      const successor = await findSessionByRawToken(session.graceSuccessorRaw);
+      if (successor && !successor.revokedAt) {
+        return {
+          rawToken: session.graceSuccessorRaw,
+          userId: session.userId,
+          appContext: session.appContext,
+          familyId: session.familyId,
+          expiresAt: successor.expiresAt || session.expiresAt,
+        };
+      }
+    }
     await revokeFamily(session.familyId);
     throw authError('Refresh token reuse detected');
   }
 
   if (session.expiresAt && session.expiresAt.getTime() <= Date.now()) {
     session.revokedAt = new Date();
+    session.graceSuccessorRaw = null;
+    session.graceUntil = null;
     await session.save();
     throw authError('Refresh token expired');
   }
 
-  session.revokedAt = new Date();
-  session.lastUsedAt = new Date();
-  await session.save();
-
   const newRaw = generateRawToken();
   const meta = requestMeta(req);
   const expiresAt = new Date(Date.now() + parseRefreshTtlMs());
+
+  session.revokedAt = new Date();
+  session.lastUsedAt = new Date();
+  session.graceSuccessorRaw = newRaw;
+  session.graceUntil = new Date(Date.now() + ROTATE_GRACE_MS);
+  await session.save();
 
   await RefreshSession.create({
     userId: session.userId,
@@ -114,9 +142,14 @@ async function revokeRefreshSession(rawToken) {
   const token = String(rawToken || '').trim();
   if (!token) return false;
   const session = await findSessionByRawToken(token);
-  if (!session || session.revokedAt) return false;
-  session.revokedAt = new Date();
+  if (!session) return false;
+  session.graceSuccessorRaw = null;
+  session.graceUntil = null;
+  if (!session.revokedAt) {
+    session.revokedAt = new Date();
+  }
   await session.save();
+  await revokeFamily(session.familyId);
   return true;
 }
 
