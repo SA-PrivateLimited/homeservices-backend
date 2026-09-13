@@ -8,8 +8,6 @@ const QRCode = require('qrcode');
 const {encryptToken, decryptToken} = require('./tokenEncryption');
 
 const ISSUER_ADMIN = process.env.MFA_ISSUER || 'Akansho Admin';
-const ISSUER_EMPLOYEE =
-  process.env.MFA_ISSUER_EMPLOYEE || process.env.MFA_ISSUER || 'Akansho Employee';
 
 function generateTotpSecret() {
   return generateSecret();
@@ -65,7 +63,6 @@ function verifyTotpCode(secret, code) {
 module.exports = {
   ISSUER: ISSUER_ADMIN,
   ISSUER_ADMIN,
-  ISSUER_EMPLOYEE,
   generateTotpSecret,
   buildOtpauthUrl,
   buildQrDataUrl,

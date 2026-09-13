@@ -16,7 +16,6 @@ require('dotenv').config();
 const mongoose = require('mongoose');
 const Provider = require('../src/models/Provider');
 const User = require('../src/models/User');
-const Employee = require('../src/models/Employee');
 const ServiceRequest = require('../src/models/ServiceRequest');
 const Client = require('../src/models/Client');
 const BrandCreative = require('../src/models/BrandCreative');
@@ -80,15 +79,6 @@ async function gatherKeys(only) {
     }
   }
 
-  if (!only || only === 'employee-photo') {
-    const employees = await Employee.find({photoUrl: {$nin: [null, '']}})
-      .select('photoUrl')
-      .lean();
-    for (const e of employees) {
-      collectUrl(e.photoUrl, keys, 'employee-photo');
-    }
-  }
-
   if (!only || only === 'service-request-photo') {
     const requests = await ServiceRequest.find({})
       .select('photos completionPhotos')
@@ -133,7 +123,6 @@ async function gatherKeys(only) {
 const SOURCE_KIND = {
   'provider-profile': 'profile',
   'customer-profile': 'profile',
-  'employee-photo': 'profile',
   'provider-showcase': 'photo',
   'service-request-photo': 'photo',
   'client-logo': 'logo',
