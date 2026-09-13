@@ -184,9 +184,11 @@ function toPublicProvider(provider, {revealPhone = false, policy} = {}) {
       blockId: out.location.blockId,
       block: out.location.block,
       pincode: out.location.pincode,
-      latitude: out.location.latitude,
-      longitude: out.location.longitude,
     };
+  }
+  // Live GPS is never public — keep it on Mongo / self / admin payloads only.
+  if ('currentLocation' in out) {
+    delete out.currentLocation;
   }
   if (out.address && typeof out.address === 'object') {
     out.address = {

@@ -206,6 +206,16 @@ const providerSchema = new mongoose.Schema({
     state: String,
     pincode: String,
     updatedAt: Date,
+    /** Additive GeoJSON Point [longitude, latitude]. Optional on older documents. */
+    point: {
+      type: {
+        type: String,
+        enum: ['Point'],
+      },
+      coordinates: {
+        type: [Number],
+      },
+    },
   },
   lastSeen: Date,
   fcmToken: String,
@@ -284,6 +294,7 @@ providerSchema.index({onboardingSource: 1, createdAt: -1});
 providerSchema.index({showRequestService: 1, approvalStatus: 1, isActive: 1});
 providerSchema.index({updatedAt: -1, createdAt: -1});
 providerSchema.index({isOnline: -1, rating: -1, updatedAt: -1});
+providerSchema.index({'currentLocation.point': '2dsphere'});
 
 const Provider = mongoose.model('Provider', providerSchema, 'providers');
 
