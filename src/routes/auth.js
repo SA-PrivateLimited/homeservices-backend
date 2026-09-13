@@ -33,13 +33,6 @@ const {
   activationSetPassword,
   activationVerifyMfa,
 } = require('../controllers/adminActivationController');
-const {
-  validateEmployeeActivation,
-  employeeActivationSetPassword,
-  employeeActivationVerifyMfa,
-  employeeLogin,
-  employeeLoginMfa,
-} = require('../controllers/employeeAuthController');
 const {optionalAuth, verifyAuth} = require('../middleware/auth');
 const {logRequest} = require('../middleware/logger');
 
@@ -85,21 +78,6 @@ router.post('/mfa/reset', resetMfa);
 router.get('/activate', logRequest, validateActivation);
 router.post('/activate/password', logRequest, activationSetPassword);
 router.post('/activate/mfa', logRequest, activationVerifyMfa);
-
-// Employee invitation activation + login (TOTP — separate from Admin)
-router.get('/employee/activate', logRequest, validateEmployeeActivation);
-router.post(
-  '/employee/activate/password',
-  logRequest,
-  employeeActivationSetPassword,
-);
-router.post(
-  '/employee/activate/mfa',
-  logRequest,
-  employeeActivationVerifyMfa,
-);
-router.post('/employee/login', logRequest, employeeLogin);
-router.post('/employee/login/mfa', logRequest, employeeLoginMfa);
 
 // Primary customer auth (PIN)
 router.post('/phone/lookup', lookupPhone);

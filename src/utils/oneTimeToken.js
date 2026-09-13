@@ -1,6 +1,6 @@
 /**
  * Secure one-time invite tokens (shared primitive).
- * Used by Admin activation and Employee invitation — keep purpose separate at call sites.
+ * Used by Admin invitation activation.
  */
 
 const crypto = require('crypto');
