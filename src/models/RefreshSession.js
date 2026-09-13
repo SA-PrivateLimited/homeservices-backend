@@ -39,6 +39,15 @@ const refreshSessionSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    /** Brief window so two tabs rotating the same cookie do not look like theft. */
+    graceUntil: {
+      type: Date,
+      default: null,
+    },
+    graceSuccessorRaw: {
+      type: String,
+      default: null,
+    },
     userAgent: String,
     ip: String,
     createdAt: {

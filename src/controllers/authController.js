@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const {connectDB} = require('../config/database');
-const {signAccessToken, signMfaToken, verifyMfaToken} = require('../utils/jwtAuth');
+const {signAccessToken, signMfaToken, verifyMfaToken, verifyAccessToken} = require('../utils/jwtAuth');
 const {encryptToken} = require('../utils/tokenEncryption');
 const {createRefreshSession, rotateRefreshSession, revokeRefreshSession, revokeAllForUser} = require('../utils/refreshTokenService');
 const {
@@ -2195,6 +2195,38 @@ exports.logoutAll = async (req, res, next) => {
   }
 };
 
+function accessTokenRoleMatchesContext(role, appContext) {
+  if (appContext === 'provider') return role === 'provider';
+  if (appContext === 'admin') return role === 'admin';
+  return role === 'customer';
+}
+
+function decodeAccessTokenForRefresh(req, appContext) {
+  const header = String(req?.headers?.authorization || '');
+  if (!header.startsWith('Bearer ')) return null;
+  try {
+    const decoded = verifyAccessToken(header.slice('Bearer '.length).trim());
+    if (!decoded?.sub) return null;
+    if (!accessTokenRoleMatchesContext(decoded.role, appContext)) return null;
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+async function recoverRefreshFromAccessToken(req, appContext) {
+  const decoded = decodeAccessTokenForRefresh(req, appContext);
+  if (!decoded) return null;
+  const created = await createRefreshSession(decoded.sub, appContext, req);
+  return {
+    rawToken: created.rawToken,
+    userId: decoded.sub,
+    appContext,
+    familyId: created.familyId,
+    expiresAt: created.expiresAt,
+  };
+}
+
 /**
  * POST /api/auth/refresh
  * Rotate refresh cookie and issue a new access JWT.
@@ -2211,25 +2243,31 @@ exports.refreshToken = async (req, res, next) => {
     }
 
     const raw = readRefreshCookie(req, appContext);
-    if (!raw) {
-      clearRefreshCookie(res, appContext, req);
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: 'Refresh token missing',
-      });
-    }
-
     let rotated;
-    try {
-      rotated = await rotateRefreshSession(raw, req);
-    } catch (rotateErr) {
-      clearRefreshCookie(res, appContext, req);
-      return res.status(rotateErr.statusCode || 401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: rotateErr.message || 'Invalid refresh token',
-      });
+    if (raw) {
+      try {
+        rotated = await rotateRefreshSession(raw, req);
+      } catch (rotateErr) {
+        rotated = await recoverRefreshFromAccessToken(req, appContext);
+        if (!rotated) {
+          clearRefreshCookie(res, appContext, req);
+          return res.status(rotateErr.statusCode || 401).json({
+            success: false,
+            error: 'Unauthorized',
+            message: rotateErr.message || 'Invalid refresh token',
+          });
+        }
+      }
+    } else {
+      rotated = await recoverRefreshFromAccessToken(req, appContext);
+      if (!rotated) {
+        clearRefreshCookie(res, appContext, req);
+        return res.status(401).json({
+          success: false,
+          error: 'Unauthorized',
+          message: 'Refresh token missing',
+        });
+      }
     }
 
     setRefreshCookie(res, appContext, rotated.rawToken, req);
