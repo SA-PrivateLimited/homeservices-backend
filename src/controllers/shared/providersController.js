@@ -8,6 +8,7 @@ const {normalizePhotoReferences} = require('../../utils/normalizeAssetPhotos');
 const User = require('../../models/User');
 const ServiceCategory = require('../../models/ServiceCategory');
 const {connectDB} = require('../../config/database');
+const {buildProviderStatusUpdate} = require('../../utils/currentLocation');
 const ADMIN_LIST_SORT = require('../../utils/adminListSort');
 const {toPublicProviderForSettings} = require('../../utils/contactAccess');
 const {
@@ -1390,22 +1391,16 @@ exports.updateMyShowRequestService = async (req, res, next) => {
  */
 exports.updateMyStatus = async (req, res, next) => {
   try {
-    const {isOnline, isAvailable, currentLocation} = req.body;
-
-    const updateData = {
-      updatedAt: new Date(),
-    };
-
-    if (typeof isOnline === 'boolean') {
-      updateData.isOnline = isOnline;
+    const now = new Date();
+    const built = buildProviderStatusUpdate(req.body, now);
+    if (!built.ok) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: built.message,
+      });
     }
-    if (typeof isAvailable === 'boolean') {
-      updateData.isAvailable = isAvailable;
-    }
-    if (currentLocation) {
-      updateData.currentLocation = currentLocation;
-      updateData.lastUpdated = new Date();
-    }
+    const updateData = built.updateData;
 
     // Update providers collection
     try {
@@ -1422,9 +1417,9 @@ exports.updateMyStatus = async (req, res, next) => {
         );
       // Location-only pings are best-effort; don't fail the app hard on DB blips
       const locationOnly =
-        currentLocation &&
-        typeof isOnline !== 'boolean' &&
-        typeof isAvailable !== 'boolean';
+        Boolean(updateData.currentLocation) &&
+        typeof updateData.isOnline !== 'boolean' &&
+        typeof updateData.isAvailable !== 'boolean';
       if (isTransient && locationOnly) {
         console.warn(
           '⚠️ Location update skipped (transient Mongo issue):',
