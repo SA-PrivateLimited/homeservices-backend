@@ -1,6 +1,9 @@
 const {describe, it} = require('node:test');
 const assert = require('node:assert/strict');
-const {toPublicProvider} = require('../src/utils/contactAccess');
+const {
+  toPublicProvider,
+  toPublicProviderForSettings,
+} = require('../src/utils/contactAccess');
 
 const FIXTURE = {
   _id: 'prov_public_loc',
@@ -66,6 +69,29 @@ describe('toPublicProvider location privacy', () => {
     assert.equal(containsExact(pub, 24.124), false);
     assert.equal(containsExact(pub, 83.457), false);
     assert.equal(containsExact(pub, '2026-09-13T02:06:05.178Z'), false);
+
+    for (const key of [
+      'lat',
+      'lng',
+      'latitude',
+      'longitude',
+      'currentLat',
+      'currentLng',
+      'liveLatitude',
+      'liveLongitude',
+    ]) {
+      assert.equal(key in pub, false, key);
+    }
+  });
+
+  it('denies exact coordinates for the customer discovery serializer', () => {
+    const pub = toPublicProviderForSettings(FIXTURE, {
+      providerContactPolicy: 'ACCEPTED_ONLY',
+    });
+    assert.equal(pub.name, 'Test Electrician');
+    assert.equal('latitude' in (pub.location || {}), false);
+    assert.equal('longitude' in (pub.location || {}), false);
+    assert.equal('currentLocation' in pub, false);
   });
 
   it('does not mutate the source provider document', () => {
