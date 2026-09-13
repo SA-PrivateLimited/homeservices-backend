@@ -22,17 +22,42 @@ const {
 const {
   resolveGeographyFromCoords,
 } = require('../../utils/resolveGeographyFromCoords');
+const {
+  parseIncludeBlocks,
+  createGeographyMetaStore,
+} = require('../../utils/geographyMeta');
 
 const PASSWORD_SALT_ROUNDS = 10;
 
-/** In-memory snapshot for GET meta — invalidated via invalidateGeographyMetaCache() */
-let metaCache = null;
+/** States+districts snapshot for GET meta — invalidated via invalidateGeographyMetaCache() */
+const geographyMetaStore = createGeographyMetaStore();
 
 function invalidateGeographyMetaCache() {
-  metaCache = null;
+  geographyMetaStore.invalidate();
 }
 
 exports.invalidateGeographyMetaCache = invalidateGeographyMetaCache;
+
+async function fetchGeographyStatesDistricts() {
+  const states = await State.find({isActive: {$ne: false}})
+    .sort({name: 1})
+    .select('_id name code')
+    .lean();
+  const districts = await District.find({isActive: {$ne: false}})
+    .sort({stateName: 1, name: 1})
+    .select('_id name stateId stateName pincode')
+    .lean();
+  return {states, districts};
+}
+
+async function fetchGeographyBlocks() {
+  // Blocks are ops-seeded; refresh on each full meta read so a running server
+  // picks up new blocks without restart.
+  return Block.find({isActive: {$ne: false}})
+    .sort({stateName: 1, districtName: 1, name: 1})
+    .select('_id name districtId districtName stateId stateName')
+    .lean();
+}
 
 function emptyJobStats() {
   return {
@@ -517,43 +542,22 @@ exports.addProviderToDistrict = async (req, res, next) => {
 };
 
 /**
- * GET /api/admin/geography/meta — flat lists for dropdowns
+ * GET /api/geography/meta and GET /api/admin/geography/meta — flat lists
+ * Default: states + districts + blocks.
+ * ?includeBlocks=0|false: states + districts only (no Block query).
  */
 exports.getGeographyMeta = async (req, res, next) => {
   try {
     await ensureGeographySeeded();
-    // Rebuild when cache predates blocks support or was populated before block seed.
-    if (metaCache && !Array.isArray(metaCache.blocks)) {
-      metaCache = null;
-    }
-    if (metaCache) {
-      // Blocks are ops-seeded; refresh on each meta read so a running server
-      // picks up new blocks without restart.
-      metaCache.blocks = await Block.find({isActive: {$ne: false}})
-        .sort({stateName: 1, districtName: 1, name: 1})
-        .select('_id name districtId districtName stateId stateName')
-        .lean();
-      return res.json({
-        success: true,
-        data: metaCache,
-      });
-    }
-    const states = await State.find({isActive: {$ne: false}})
-      .sort({name: 1})
-      .select('_id name code')
-      .lean();
-    const districts = await District.find({isActive: {$ne: false}})
-      .sort({stateName: 1, name: 1})
-      .select('_id name stateId stateName pincode')
-      .lean();
-    const blocks = await Block.find({isActive: {$ne: false}})
-      .sort({stateName: 1, districtName: 1, name: 1})
-      .select('_id name districtId districtName stateId stateName')
-      .lean();
-    metaCache = {states, districts, blocks};
+    const includeBlocks = parseIncludeBlocks(req.query.includeBlocks);
+    const data = await geographyMetaStore.load({
+      includeBlocks,
+      fetchStatesDistricts: fetchGeographyStatesDistricts,
+      fetchBlocks: fetchGeographyBlocks,
+    });
     res.json({
       success: true,
-      data: metaCache,
+      data,
     });
   } catch (error) {
     next(error);
