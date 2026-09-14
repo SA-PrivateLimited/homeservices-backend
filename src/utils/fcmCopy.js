@@ -56,37 +56,42 @@ function customerRequestSent({serviceType} = {}) {
   const service = clip(serviceType, 40);
   return {
     title: service ? `${service} request sent` : 'Service request sent',
-    body: 'Your request is waiting for a professional to accept it.',
+    body: service
+      ? `Your ${service} request is waiting for a professional to accept it.`
+      : 'Your request is waiting for a professional to accept it.',
   };
 }
 
 function customerPartnerAccepted({providerName, serviceType} = {}) {
   const who = firstName(providerName);
+  const service = clip(serviceType, 40) || 'service';
   return {
     title: 'Request accepted',
     body: who
-      ? `${who} has accepted your service request.`
-      : 'Your service request has been accepted.',
+      ? `${who} has accepted your ${service} request.`
+      : `Your ${service} request has been accepted.`,
   };
 }
 
 function customerWorkStarted({providerName, serviceType, pin} = {}) {
   const who = firstName(providerName);
+  const service = clip(serviceType, 40) || 'service';
   return {
     title: 'Service in progress',
     body: who
-      ? `Your service with ${who} is now in progress.`
-      : 'Your service is now in progress.',
+      ? `${who} has started your ${service} job.`
+      : `Your ${service} job is now in progress.`,
   };
 }
 
 function customerJobCompleted({providerName, serviceType} = {}) {
   const who = firstName(providerName);
+  const service = clip(serviceType, 40) || 'service';
   return {
     title: 'Service completed',
     body: who
-      ? `Your service with ${who} has been completed. Tap to view details.`
-      : 'Your service has been completed. Tap to view details.',
+      ? `${who} has completed your ${service} job. Tap to view details.`
+      : `Your ${service} job has been completed. Tap to view details.`,
   };
 }
 

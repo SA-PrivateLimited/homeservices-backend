@@ -11,32 +11,41 @@ describe('fcmCopy customer status messages', () => {
     expect(firstName('Sandeep K Gupta')).toBe('Sandeep');
   });
 
-  it('builds waiting / accepted / in-progress / completed copy', () => {
+  it('builds waiting / accepted / in-progress / completed copy with service', () => {
     expect(customerRequestSent({serviceType: 'Cleaning'})).toEqual({
       title: 'Cleaning request sent',
-      body: 'Your request is waiting for a professional to accept it.',
+      body: 'Your Cleaning request is waiting for a professional to accept it.',
     });
     expect(
-      customerPartnerAccepted({providerName: 'Sandeep K Gupta'}),
+      customerPartnerAccepted({
+        providerName: 'Sandeep K Gupta',
+        serviceType: 'Electrician',
+      }),
     ).toEqual({
       title: 'Request accepted',
-      body: 'Sandeep has accepted your service request.',
+      body: 'Sandeep has accepted your Electrician request.',
     });
     expect(customerPartnerAccepted({})).toEqual({
       title: 'Request accepted',
       body: 'Your service request has been accepted.',
     });
     expect(
-      customerWorkStarted({providerName: 'Sandeep K Gupta'}),
+      customerWorkStarted({
+        providerName: 'Sandeep K Gupta',
+        serviceType: 'Electrician',
+      }),
     ).toEqual({
       title: 'Service in progress',
-      body: 'Your service with Sandeep is now in progress.',
+      body: 'Sandeep has started your Electrician job.',
     });
     expect(
-      customerJobCompleted({providerName: 'Sandeep K Gupta'}),
+      customerJobCompleted({
+        providerName: 'Sandeep K Gupta',
+        serviceType: 'Electrician',
+      }),
     ).toEqual({
       title: 'Service completed',
-      body: 'Your service with Sandeep has been completed. Tap to view details.',
+      body: 'Sandeep has completed your Electrician job. Tap to view details.',
     });
   });
 });
