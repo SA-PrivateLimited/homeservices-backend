@@ -155,6 +155,20 @@ async function registerDeviceToken(userId, fcmToken, {role} = {}) {
     throw err;
   }
 
+  // Device ownership: same physical token must not stay on another account.
+  try {
+    await User.updateMany(
+      {_id: {$ne: userId}, fcmToken: token},
+      {$unset: {fcmToken: 1}, $set: {updatedAt: new Date()}},
+    );
+    await Provider.updateMany(
+      {_id: {$ne: userId}, fcmToken: token},
+      {$unset: {fcmToken: 1}, $set: {updatedAt: new Date()}},
+    );
+  } catch (clearErr) {
+    console.warn('FCM token ownership clear failed:', clearErr.message);
+  }
+
   const effectiveRole = role || user.role || 'customer';
 
   if (effectiveRole === 'provider') {
@@ -188,6 +202,50 @@ async function registerDeviceToken(userId, fcmToken, {role} = {}) {
   };
 }
 
+/**
+ * Unlink this device token from the user (logout / switch account).
+ * Only clears when the stored token matches the provided device token
+ * (or when deviceToken is omitted — clear whatever is stored).
+ */
+async function clearDeviceToken(userId, deviceToken) {
+  const User = require('../models/User');
+  const Provider = require('../models/Provider');
+  if (!userId) {
+    const err = new Error('userId is required');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const user = await User.findById(userId).select('fcmToken role').lean();
+  if (!user) {
+    const err = new Error('User not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const stored = String(user.fcmToken || '').trim();
+  const device = String(deviceToken || '').trim();
+  if (device && stored && stored !== device) {
+    return {cleared: false, reason: 'token_mismatch'};
+  }
+  if (!stored && !device) {
+    return {cleared: false, reason: 'no_token'};
+  }
+
+  await User.findByIdAndUpdate(userId, {
+    $unset: {fcmToken: 1},
+    $set: {updatedAt: new Date()},
+  });
+  if (user.role === 'provider' || device) {
+    await Provider.findByIdAndUpdate(userId, {
+      $unset: {fcmToken: 1},
+      $set: {updatedAt: new Date()},
+    }).catch(() => {});
+  }
+
+  return {cleared: true};
+}
+
 async function notifyTopic(topic, payload) {
   if (!firebaseService.isReady()) {
     return {sent: false, reason: 'firebase_not_configured'};
@@ -202,6 +260,7 @@ module.exports = {
   notifyProvidersMulticast,
   notifyAdmins,
   registerDeviceToken,
+  clearDeviceToken,
   notifyTopic,
   /** @deprecated alias */
   sendFcm: sendToToken,

@@ -304,14 +304,20 @@ exports.updateJobCardStatus = async (req, res, next) => {
       }
     }
 
+    const previousStatus = String(jobCard.status || '');
+
     const updatedJobCard = await JobCard.findByIdAndUpdate(
       jobCardId,
       {$set: update},
       {new: true},
     );
 
-    // Notify customer via Mongo FCM token when service starts
-    if (status === 'in-progress' && updatedJobCard?.customerId) {
+    // Notify customer via Mongo FCM token when service starts (transition only)
+    if (
+      status === 'in-progress' &&
+      previousStatus !== 'in-progress' &&
+      updatedJobCard?.customerId
+    ) {
       try {
         const {notifyUser} = require('../../utils/notify');
         const pin = String(update.taskPIN || updatedJobCard.taskPIN || '');
@@ -357,6 +363,7 @@ exports.updateJobCardStatus = async (req, res, next) => {
             $or: [{_id: srKey}, {consultationId: srKey}],
           });
           if (sr && String(sr.customerId) === String(updatedJobCard.customerId)) {
+            const previousSrStatus = String(sr.status || '');
             const next =
               status === 'in-progress'
                 ? 'in-progress'
@@ -398,7 +405,7 @@ exports.updateJobCardStatus = async (req, res, next) => {
               }
             }
 
-            if (next === 'cancelled') {
+            if (next === 'cancelled' && previousSrStatus !== 'cancelled') {
               try {
                 const {notifyUser} = require('../../utils/notify');
                 const srId = String(sr._id);
@@ -435,7 +442,7 @@ exports.updateJobCardStatus = async (req, res, next) => {
               }
             }
 
-            if (status === 'completed') {
+            if (status === 'completed' && previousSrStatus !== 'completed') {
               try {
                 const {notifyUser} = require('../../utils/notify');
                 const {notifyServiceCompleted} = require('../../realtime/socket');
