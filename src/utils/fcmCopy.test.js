@@ -33,6 +33,16 @@ describe('fcmCopy customer status messages', () => {
       customerWorkStarted({
         providerName: 'Sandeep K Gupta',
         serviceType: 'Electrician',
+        pin: '4821',
+      }),
+    ).toEqual({
+      title: 'Service in progress',
+      body: 'Sandeep has started your Electrician job. PIN: 4821',
+    });
+    expect(
+      customerWorkStarted({
+        providerName: 'Sandeep K Gupta',
+        serviceType: 'Electrician',
       }),
     ).toEqual({
       title: 'Service in progress',

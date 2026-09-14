@@ -76,11 +76,13 @@ function customerPartnerAccepted({providerName, serviceType} = {}) {
 function customerWorkStarted({providerName, serviceType, pin} = {}) {
   const who = firstName(providerName);
   const service = clip(serviceType, 40) || 'service';
+  const pinText = clip(pin, 12);
+  const base = who
+    ? `${who} has started your ${service} job.`
+    : `Your ${service} job is now in progress.`;
   return {
     title: 'Service in progress',
-    body: who
-      ? `${who} has started your ${service} job.`
-      : `Your ${service} job is now in progress.`,
+    body: pinText ? `${base} PIN: ${pinText}` : base,
   };
 }
 
