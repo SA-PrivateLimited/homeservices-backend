@@ -423,6 +423,41 @@ exports.updateFcmToken = async (req, res, next) => {
 };
 
 /**
+ * DELETE /api/users/:userId/fcmToken
+ * Unlink this device from the authenticated user's push association (logout).
+ */
+exports.clearFcmToken = async (req, res, next) => {
+  try {
+    const {userId} = req.params;
+    if (userId !== req.user.uid) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'You can only clear your own FCM token',
+      });
+    }
+    const deviceToken =
+      req.body?.fcmToken || req.query?.fcmToken || req.body?.token || '';
+    const {clearDeviceToken} = require('../services/notificationService');
+    const result = await clearDeviceToken(userId, deviceToken);
+    res.json({
+      success: true,
+      message: 'FCM token cleared',
+      data: result,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        error: error.statusCode === 404 ? 'Not Found' : 'Bad Request',
+        message: error.message,
+      });
+    }
+    next(error);
+  }
+};
+
+/**
  * Create or update current user (upsert)
  * Used during signup/login to ensure user exists in database
  */

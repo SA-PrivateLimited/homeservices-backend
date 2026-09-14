@@ -12,6 +12,7 @@ const {
   getUserById,
   updateMe,
   updateFcmToken,
+  clearFcmToken,
   updateUserByAdmin,
   setUserPasswordByAdmin,
   setUserPinByAdmin,
@@ -127,6 +128,18 @@ router.put(
   validateObjectId,
   logRequest,
   updateFcmToken,
+);
+
+/**
+ * DELETE /api/users/:userId/fcmToken
+ * Clear FCM token association for this user (logout / switch account).
+ */
+router.delete(
+  '/:userId/fcmToken',
+  verifyAuth,
+  validateObjectId,
+  logRequest,
+  clearFcmToken,
 );
 
 /**

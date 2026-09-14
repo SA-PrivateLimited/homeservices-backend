@@ -13,6 +13,16 @@ function clip(text, max = 80) {
   return `${value.slice(0, max - 1)}…`;
 }
 
+function firstName(fullName) {
+  const raw = String(fullName || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  const token = raw.split(' ')[0] || '';
+  return token.replace(
+    /^[^A-Za-z0-9\u0900-\u097F]+|[^A-Za-z0-9\u0900-\u097F]+$/g,
+    '',
+  );
+}
+
 function partnerNewJob({customerName, serviceType} = {}) {
   const service = clip(serviceType, 40) || 'help';
   return {
@@ -41,38 +51,47 @@ function partnerJobCancelled({customerName, serviceType, reason} = {}) {
   };
 }
 
-function customerPartnerAccepted({providerName, serviceType} = {}) {
-  const who = clip(providerName, 40) || 'A partner';
-  const service = clip(serviceType, 40) || 'service';
+/** Customer: request created / waiting for provider (pending). */
+function customerRequestSent({serviceType} = {}) {
+  const service = clip(serviceType, 40);
   return {
-    title: 'Job accepted update',
-    body: `${who} accepted your ${service} job.`,
+    title: service ? `${service} request sent` : 'Service request sent',
+    body: 'Your request is waiting for a professional to accept it.',
+  };
+}
+
+function customerPartnerAccepted({providerName, serviceType} = {}) {
+  const who = firstName(providerName);
+  return {
+    title: 'Request accepted',
+    body: who
+      ? `${who} has accepted your service request.`
+      : 'Your service request has been accepted.',
   };
 }
 
 function customerWorkStarted({providerName, serviceType, pin} = {}) {
-  const who = clip(providerName, 40) || 'Your partner';
-  const service = clip(serviceType, 40) || 'service';
-  const pinText = clip(pin, 12);
+  const who = firstName(providerName);
   return {
-    title: 'Work started update',
-    body: pinText
-      ? `${who} started your ${service} job. PIN: ${pinText}`
-      : `${who} started your ${service} job.`,
+    title: 'Service in progress',
+    body: who
+      ? `Your service with ${who} is now in progress.`
+      : 'Your service is now in progress.',
   };
 }
 
 function customerJobCompleted({providerName, serviceType} = {}) {
-  const who = clip(providerName, 40) || 'Your partner';
-  const service = clip(serviceType, 40) || 'service';
+  const who = firstName(providerName);
   return {
-    title: 'Job completed update',
-    body: `${who} completed your ${service} job.`,
+    title: 'Service completed',
+    body: who
+      ? `Your service with ${who} has been completed. Tap to view details.`
+      : 'Your service has been completed. Tap to view details.',
   };
 }
 
 function customerJobCancelled({providerName, serviceType, reason} = {}) {
-  const who = clip(providerName, 40) || 'Your partner';
+  const who = firstName(providerName) || clip(providerName, 40) || 'Your partner';
   const service = clip(serviceType, 40) || 'service';
   const reasonText = clip(reason, 70);
   return {
@@ -91,9 +110,11 @@ function customerPartnerDeclined({reason} = {}) {
 }
 
 module.exports = {
+  firstName,
   partnerNewJob,
   partnerJobUpdated,
   partnerJobCancelled,
+  customerRequestSent,
   customerPartnerAccepted,
   customerWorkStarted,
   customerJobCompleted,

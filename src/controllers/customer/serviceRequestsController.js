@@ -13,7 +13,7 @@ const mongoose = require('mongoose');
 const {notifyBooking, notifyAdminsRealtime} = require('../../realtime/socket');
 const {findProvidersInArea} = require('../../utils/findProvidersInArea');
 const {isShowRequestServiceEnabled} = require('../../utils/showRequestService');
-const {notifyAdmins, notifyProvider} = require('../../utils/notify');
+const {notifyAdmins, notifyProvider, notifyUser} = require('../../utils/notify');
 const {
   notifyMatchedProviders,
   notifyStoredProviderIds,
@@ -22,6 +22,7 @@ const {
   partnerNewJob,
   partnerJobUpdated,
   partnerJobCancelled,
+  customerRequestSent,
 } = require('../../utils/fcmCopy');
 const {
   findActiveServiceRequest,
@@ -557,6 +558,25 @@ exports.createServiceRequest = async (req, res, next) => {
       console.warn(
         '⚠️ [Notify] Failed to emit service request notification:',
         websocketError.message,
+      );
+    }
+
+    // Customer FCM: waiting-for-provider (pending). Transition = create only.
+    try {
+      await notifyUser(userId, {
+        ...customerRequestSent({serviceType}),
+        data: {
+          type: 'service',
+          status: 'pending',
+          serviceRequestId: String(serviceRequest._id),
+          consultationId: String(serviceRequest._id),
+          serviceType: String(serviceType || ''),
+        },
+      });
+    } catch (customerFcmErr) {
+      console.warn(
+        '⚠️ [createServiceRequest] Customer waiting FCM failed:',
+        customerFcmErr?.message || customerFcmErr,
       );
     }
 
