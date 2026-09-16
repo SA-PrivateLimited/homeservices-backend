@@ -109,7 +109,7 @@ router.put(
 
 /**
  * DELETE /api/users/me
- * Permanently delete the authenticated customer/partner account.
+ * Legacy alias for DELETE /api/customer/account-deletion.
  */
 router.delete(
   '/me',
