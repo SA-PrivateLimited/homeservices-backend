@@ -5,12 +5,12 @@
  */
 
 const express = require('express');
-const {requireRole} = require('../../middleware/auth');
-const {logRequest} = require('../../middleware/logger');
+const {requireRole} = require('../middleware/auth');
+const {logRequest} = require('../middleware/logger');
 const {
   deletePartnerAccount,
   deleteCustomerAccount,
-} = require('../../controllers/accountDeletionController');
+} = require('../controllers/accountDeletionController');
 
 function accountDeletionRouter(role, handler) {
   const router = express.Router();
