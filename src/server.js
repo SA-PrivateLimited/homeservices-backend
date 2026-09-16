@@ -115,6 +115,13 @@ app.use('/api/provider/jobCards', providerJobCardsRoutes);
 app.use('/api/provider/serviceRequests', providerServiceRequestsRoutes);
 app.use('/api/provider', providerCollaborationRoutes);
 
+const {
+  partnerAccountDeletionApi,
+  customerAccountDeletionApi,
+} = require('./routes/accountDeletion');
+app.use('/api/partner', partnerAccountDeletionApi);
+app.use('/api/customer', customerAccountDeletionApi);
+
 // Admin app routes
 app.use('/api/admin/jobCards', adminJobCardsRoutes);
 app.use('/api/admin/clients', adminClientsRoutes);
@@ -137,6 +144,18 @@ app.use('/api/admins', require('./routes/admin/admins'));
 app.use('/api/admin/area-provider-demands', require('./routes/admin/areaProviderDemands'));
 app.use('/api/admin/backups', require('./routes/admin/backups'));
 app.use('/api/admin/creatives', require('./routes/admin/creatives'));
+
+// Public Play Console pages — no login
+const {
+  getPartnerAccountDeletionPage,
+  getCustomerAccountDeletionPage,
+} = require('./controllers/accountDeletionController');
+app.get('/partner/account-deletion', getPartnerAccountDeletionPage);
+app.get('/customer/account-deletion', getCustomerAccountDeletionPage);
+app.get('/account-deletion', (req, res) => {
+  const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  res.redirect(301, `/partner/account-deletion${query}`);
+});
 
 // Realtime HTTP emit (compat with mobile clients; same host as API)
 mountEmitHttpRoutes(app);
@@ -183,6 +202,8 @@ async function startServer() {
 🔌 MongoDB: Connected
 📍 API Base URL: http://localhost:${PORT}/api
 📚 Health Check: http://localhost:${PORT}/health
+🧾 Account deletion: http://localhost:${PORT}/partner/account-deletion
+                    http://localhost:${PORT}/customer/account-deletion
 🔌 Socket.IO:   http://localhost:${PORT} (path /socket.io/)
 🔐 Auth: GET  http://localhost:${PORT}/api/auth/health  (verify auth routes loaded)
    POST http://localhost:${PORT}/api/auth/register

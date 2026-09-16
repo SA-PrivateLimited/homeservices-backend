@@ -37,6 +37,34 @@ async function main() {
   const h = await request('GET', '/health');
   ok('GET /health', h.status === 200, `status ${h.status}`);
 
+  const del = await request('GET', '/partner/account-deletion');
+  ok(
+    'GET /partner/account-deletion (public Partner HTML)',
+    del.status === 200 && /Akansho Partner/i.test(del.body),
+    `status ${del.status}`,
+  );
+
+  const custPage = await request('GET', '/customer/account-deletion');
+  ok(
+    'GET /customer/account-deletion (public Customer HTML)',
+    custPage.status === 200 && /Akansho Customer/i.test(custPage.body),
+    `status ${custPage.status}`,
+  );
+
+  const delPartner = await request('DELETE', '/api/partner/account-deletion');
+  ok(
+    'DELETE /api/partner/account-deletion without token → 401',
+    delPartner.status === 401,
+    `status ${delPartner.status}`,
+  );
+
+  const delCustomer = await request('DELETE', '/api/customer/account-deletion');
+  ok(
+    'DELETE /api/customer/account-deletion without token → 401',
+    delCustomer.status === 401,
+    `status ${delCustomer.status}`,
+  );
+
   const p = await request('GET', '/api/providers?limit=1&offset=0');
   ok('GET /api/providers (public)', p.status === 200, `status ${p.status}`);
 

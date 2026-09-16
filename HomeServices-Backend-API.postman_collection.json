@@ -22,6 +22,34 @@
             "description": "Check if the API server is running"
           },
           "response": []
+        },
+        {
+          "name": "Partner account deletion page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/partner/account-deletion",
+              "host": ["{{base_url}}"],
+              "path": ["partner", "account-deletion"]
+            },
+            "description": "Public Partner HTML for Play Console. No login. Use ?lang=hi for Hindi."
+          },
+          "response": []
+        },
+        {
+          "name": "Customer account deletion page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/customer/account-deletion",
+              "host": ["{{base_url}}"],
+              "path": ["customer", "account-deletion"]
+            },
+            "description": "Public Customer HTML for Play Console. No login. Use ?lang=hi for Hindi."
+          },
+          "response": []
         }
       ]
     },
@@ -170,6 +198,66 @@
               "path": ["api", "users", "me"]
             },
             "description": "Update current user profile"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Current User",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/users/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users", "me"]
+            },
+            "description": "Legacy alias of DELETE /api/customer/account-deletion."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Customer Account",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/customer/account-deletion",
+              "host": ["{{base_url}}"],
+              "path": ["api", "customer", "account-deletion"]
+            },
+            "description": "Customer app in-app account deletion."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Partner Account",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/partner/account-deletion",
+              "host": ["{{base_url}}"],
+              "path": ["api", "partner", "account-deletion"]
+            },
+            "description": "Partner app in-app account deletion."
           },
           "response": []
         },

@@ -247,11 +247,16 @@ Use the returned JWT as `Authorization: Bearer <token>` on all other routes that
 
 ---
 
-### 5.1 Health
+### 5.1 Health and public legal
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `GET` | `/health` | None | Liveness; returns `success`, `message`, `timestamp` |
+| `GET` | `/partner/account-deletion` | None | Partner Play Console HTML. Hindi via `?lang=hi`. Production: `https://api.akansho.com/partner/account-deletion` |
+| `GET` | `/customer/account-deletion` | None | Customer Play Console HTML. Hindi via `?lang=hi`. Production: `https://api.akansho.com/customer/account-deletion` |
+| `DELETE` | `/api/partner/account-deletion` | JWT + **provider** | Partner app deletes the signed-in account |
+| `DELETE` | `/api/customer/account-deletion` | JWT + **customer** | Customer app deletes the signed-in account |
+| `GET` | `/account-deletion` | None | 301 redirect to `/partner/account-deletion` |
 
 ---
 
@@ -262,6 +267,7 @@ Use the returned JWT as `Authorization: Bearer <token>` on all other routes that
 | `GET` | `/api/users/me` | JWT | Current user profile |
 | `POST` | `/api/users/me` | JWT | Create or update current user (upsert) |
 | `PUT` | `/api/users/me` | JWT | Update current user profile |
+| `DELETE` | `/api/users/me` | JWT | Legacy alias of `DELETE /api/customer/account-deletion` |
 | `GET` | `/api/users/:userId` | JWT | User by ID (limited fields for non-admin) |
 | `PUT` | `/api/users/:userId/fcmToken` | JWT | Update FCM push token |
 | `GET` | `/api/users` | JWT + **admin** | List all users (paginated) |
