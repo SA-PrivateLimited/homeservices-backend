@@ -45,8 +45,8 @@ test('customer accepted copy names the partner and service', () => {
     providerName: 'Ramesh',
     serviceType: 'Electrician',
   });
-  assert.equal(copy.title, 'Job accepted update');
-  assert.equal(copy.body, 'Ramesh accepted your Electrician job.');
+  assert.equal(copy.title, 'Request accepted');
+  assert.equal(copy.body, 'Ramesh has accepted your Electrician request.');
 });
 
 test('customer cancel copy includes partner, service, and reason', () => {
@@ -68,6 +68,9 @@ test('customer in-progress copy includes PIN when present', () => {
     serviceType: 'Electrician',
     pin: '4821',
   });
-  assert.equal(copy.title, 'Work started update');
-  assert.equal(copy.body, 'Ramesh started your Electrician job. PIN: 4821');
+  assert.equal(copy.title, 'Service in progress');
+  assert.equal(
+    copy.body,
+    'Ramesh has started your Electrician job. PIN: 4821',
+  );
 });
