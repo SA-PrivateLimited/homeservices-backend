@@ -284,19 +284,8 @@ async function allocateCustomerDisplayId() {
   return generateCustomerDisplayId(User);
 }
 
-async function generateUniquePin(maxAttempts = 40) {
-  for (let i = 0; i < maxAttempts; i++) {
-    const pin = String(crypto.randomInt(0, 10000)).padStart(4, '0');
-    try {
-      await assertPinGloballyUnique(pin);
-      return pin;
-    } catch (e) {
-      if (e.statusCode !== 409) throw e;
-    }
-  }
-  const err = new Error('Could not allocate a unique PIN. Please try again.');
-  err.statusCode = 503;
-  throw err;
+async function generateUniquePin() {
+  return String(crypto.randomInt(0, 10000)).padStart(4, '0');
 }
 
 async function assertRoleAccess(user, requestedRole) {

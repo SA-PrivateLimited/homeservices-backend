@@ -267,8 +267,8 @@ Realtime updates use **Socket.IO** (`/socket.io/`) and optional FCM push, not Gr
 | **Authorization** | None |
 | **Request** | **Required:** phone. **Optional:** `pin` (6 digits; auto-generated if omitted), `fullName`/`name` |
 | **Response** | `201` session (+ one-time `pin` in data) |
-| **Possible errors** | `400` PIN format; `409` PIN already set / global PIN clash; `503` allocate failure |
-| **Business logic** | Create/update customer with unique global PIN (`pinHash` + `pinKey`); issue JWT |
+| **Possible errors** | `400` PIN format; `409` PIN already set for this number |
+| **Business logic** | Create/update customer with a PIN for this mobile number (`pinHash` + `pinKey`); issue JWT. PINs are not globally unique. |
 | **Execution flow** | validate → bcrypt/HMAC PIN → User → `issueSessionForUser` |
 | **Dependencies** | `User`, `jwtAuth`, crypto/HMAC secret |
 
@@ -467,7 +467,7 @@ Realtime updates use **Socket.IO** (`/socket.io/`) and optional FCM push, not Gr
 | **Authorization** | Bearer JWT + admin (+ Super Admin for admin targets) |
 | **Request** | Optional `pin` (auto-generate if omitted) |
 | **Response** | `{ success, data: { _id, loginPin, hasPin, role, phone }, message }` |
-| **Possible errors** | `400` admin MFA accounts; `409` PIN clash; `503` |
+| **Possible errors** | `400` admin MFA accounts |
 | **Business logic** | Admin set/reset login PIN |
 | **Execution flow** | admin auth → update pinHash/pinKey/encryptedPin |
 | **Dependencies** | `User`, crypto helpers |

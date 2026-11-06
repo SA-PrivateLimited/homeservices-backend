@@ -55,12 +55,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     select: false,
   },
-  /** Deterministic HMAC of PIN for global uniqueness (not for auth) */
+  /** HMAC of PIN for storage/lookup — not unique; PINs are per mobile number */
   pinKey: {
     type: String,
     select: false,
-    sparse: true,
-    unique: true,
   },
   /** AES-encrypted login PIN for admin recovery/view only */
   encryptedPin: {
@@ -76,8 +74,6 @@ const userSchema = new mongoose.Schema({
   customerPinKey: {
     type: String,
     select: false,
-    sparse: true,
-    unique: true,
   },
   customerEncryptedPin: {
     type: String,
@@ -92,8 +88,6 @@ const userSchema = new mongoose.Schema({
   partnerPinKey: {
     type: String,
     select: false,
-    sparse: true,
-    unique: true,
   },
   partnerEncryptedPin: {
     type: String,

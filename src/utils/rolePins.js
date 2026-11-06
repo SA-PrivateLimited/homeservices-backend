@@ -35,35 +35,17 @@ function pinClashQuery(key, excludeUserId) {
   return query;
 }
 
-async function assertPinGloballyUnique(User, pin, excludeUserId) {
-  const key = pinHmacKey(pin);
-  const existing = await User.findOne(pinClashQuery(key, excludeUserId))
-    .select('_id')
-    .lean();
-  if (existing) {
-    const err = new Error(
-      'This PIN is already in use. Choose a different 4-digit PIN.',
-    );
-    err.statusCode = 409;
-    throw err;
-  }
-  return key;
+/**
+ * Storage HMAC for a PIN. PINs are per mobile number (and per role on that
+ * user), not globally unique — two different numbers may share the same PIN.
+ */
+async function assertPinGloballyUnique(_User, pin, _excludeUserId) {
+  return pinHmacKey(pin);
 }
 
-async function generateUniquePin(User, maxAttempts = 40) {
+async function generateUniquePin(_User) {
   const max = 10 ** PIN_LENGTH;
-  for (let i = 0; i < maxAttempts; i++) {
-    const pin = String(crypto.randomInt(0, max)).padStart(PIN_LENGTH, '0');
-    try {
-      await assertPinGloballyUnique(User, pin);
-      return pin;
-    } catch (e) {
-      if (e.statusCode !== 409) throw e;
-    }
-  }
-  const err = new Error('Could not allocate a unique PIN. Please try again.');
-  err.statusCode = 503;
-  throw err;
+  return String(crypto.randomInt(0, max)).padStart(PIN_LENGTH, '0');
 }
 
 function resolvePinPurpose(raw, user) {

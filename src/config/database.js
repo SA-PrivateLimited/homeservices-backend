@@ -54,6 +54,7 @@ async function connectDB() {
     });
 
     console.log('✅ Connected to MongoDB Atlas via Mongoose');
+    await dropLegacyGlobalPinUniqueIndexes();
 
     return mongoose.connection.db;
   } catch (error) {
@@ -73,6 +74,30 @@ async function connectDB() {
       );
     }
     throw error;
+  }
+}
+
+/**
+ * Login PINs are per mobile number (and per role on that user). Legacy unique
+ * indexes on pinKey / customerPinKey / partnerPinKey blocked two users from
+ * choosing the same 4-digit PIN.
+ */
+async function dropLegacyGlobalPinUniqueIndexes() {
+  try {
+    const col = mongoose.connection.collection('users');
+    const indexes = await col.indexes();
+    const names = ['pinKey_1', 'customerPinKey_1', 'partnerPinKey_1'];
+    for (const name of names) {
+      const existing = indexes.find((idx) => idx.name === name);
+      if (!existing || !existing.unique) continue;
+      await col.dropIndex(name);
+      console.log(`Dropped unique index ${name} (PINs are per mobile number)`);
+    }
+  } catch (error) {
+    console.warn(
+      'Could not drop legacy unique PIN indexes:',
+      error.message || error,
+    );
   }
 }
 
