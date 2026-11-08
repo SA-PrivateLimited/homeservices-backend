@@ -140,6 +140,15 @@ const providerSchema = new mongoose.Schema({
     default: true,
     index: true,
   },
+  /**
+   * Partner may add work-showcase photos on Profile.
+   * Admin-gated. Default off — missing on older rows is treated as hidden.
+   */
+  showWorkShowcase: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
   addedByAdminId: {
     type: String,
     trim: true,
@@ -227,6 +236,12 @@ const providerSchema = new mongoose.Schema({
     idProof: String,
     addressProof: String,
     certificate: String,
+    idProofNumber: String,
+    addressProofNumber: String,
+    certificateNumber: String,
+    idProofType: String,
+    addressProofType: String,
+    certificateType: String,
     idProofVerified: {
       type: Boolean,
       default: false,

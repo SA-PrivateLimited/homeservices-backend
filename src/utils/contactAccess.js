@@ -14,6 +14,7 @@ const {
 } = require('./providerContactPolicy');
 const {getContactSettingsSync} = require('../services/contactPolicyService');
 const {isShowContactToUserEnabled} = require('./showContactToUser');
+const {isShowWorkShowcaseEnabled} = require('./showWorkShowcase');
 const {rewriteStoredAssetFields} = require('./resolvePartnerProfileImage');
 
 const CONTACT_ALLOWED_STATUSES = new Set([
@@ -216,6 +217,10 @@ function toPublicProvider(provider, {revealPhone = false, policy} = {}) {
     out.providerContactPolicy = policy;
   }
   out.showContactToUser = isShowContactToUserEnabled(raw);
+  out.showWorkShowcase = isShowWorkShowcaseEnabled(raw);
+  if (!out.showWorkShowcase) {
+    out.photos = [];
+  }
   const publicName = resolveProviderPublicName(out);
   if (publicName) {
     out.name = publicName;

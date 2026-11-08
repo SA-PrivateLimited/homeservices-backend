@@ -1437,6 +1437,7 @@ exports.createUserByAdmin = async (req, res, next) => {
               req.body.onboardingSource,
             ),
             showRequestService: false,
+            showWorkShowcase: false,
             addedByAdminId: req.user?.uid || undefined,
             createdAt: new Date(),
             updatedAt: new Date(),

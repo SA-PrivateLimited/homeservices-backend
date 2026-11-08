@@ -256,6 +256,7 @@ async function ensureProviderProfile(user, fullName) {
     isAvailable: true,
     onboardingSource: 'self',
     showRequestService: true,
+    showWorkShowcase: false,
     createdAt: new Date(),
     updatedAt: new Date(),
   });

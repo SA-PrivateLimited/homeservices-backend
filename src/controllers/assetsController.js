@@ -40,6 +40,7 @@ const {
 } = require('../services/prepareImageUpload');
 const {optimizeStoredImage} = require('../services/optimizeStoredImage');
 const {isOptimizableImageMime} = require('../services/imageOptimize');
+const {isShowWorkShowcaseEnabled} = require('../utils/showWorkShowcase');
 
 const UPLOAD_PURPOSES = new Set([
   'service-request-photo',
@@ -258,6 +259,19 @@ exports.createUploadUrl = async (req, res, next) => {
 
     if (purpose === 'job-completion-photo') {
       await assertProviderOwnsJobCard(req.user.uid, jobCardId);
+    }
+
+    if (purpose === 'provider-showcase' && req.user.role !== 'admin') {
+      const provider = await Provider.findById(req.user.uid)
+        .select('showWorkShowcase')
+        .lean();
+      if (!isShowWorkShowcaseEnabled(provider)) {
+        throw createHttpError(
+          403,
+          'Work photos are not enabled for this profile.',
+          'Forbidden',
+        );
+      }
     }
 
     // Optional: customer binding request id must belong to them if provided
