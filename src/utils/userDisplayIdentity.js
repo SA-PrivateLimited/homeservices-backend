@@ -64,6 +64,33 @@ function hasRealCustomerName(name) {
   return !isPlaceholderDisplayName(name);
 }
 
+/**
+ * Persist the name collected at signup. Real full names replace Customer /
+ * Provider placeholders; an existing real name is never overwritten.
+ */
+function applySignupName(user, {requestedName, role, displayId} = {}) {
+  if (!user) return '';
+  const resolver =
+    role === 'provider' ? resolveInitialProviderName : resolveInitialCustomerName;
+  if (hasRealCustomerName(requestedName)) {
+    const resolved = resolver({
+      requestedName,
+      existingName: user.name || user.displayName,
+      displayId,
+    });
+    user.name = resolved;
+    user.displayName = resolved;
+    return resolved;
+  }
+  if (!user.name && !user.displayName) {
+    const resolved = resolver({requestedName, displayId});
+    user.name = resolved;
+    user.displayName = resolved;
+    return resolved;
+  }
+  return user.name || user.displayName || '';
+}
+
 /** Unique 4-digit id (0–9999). Shown as User-XXXX with zero-padding. */
 async function generateCustomerDisplayId(User, maxAttempts = 50) {
   for (let i = 0; i < maxAttempts; i++) {
@@ -82,5 +109,6 @@ module.exports = {
   resolveInitialCustomerName,
   resolveInitialProviderName,
   hasRealCustomerName,
+  applySignupName,
   generateCustomerDisplayId,
 };

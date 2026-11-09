@@ -60,6 +60,7 @@ const {
 const {
   resolveInitialCustomerName,
   resolveInitialProviderName,
+  applySignupName,
   hasRealCustomerName,
   generateCustomerDisplayId,
 } = require('../utils/userDisplayIdentity');
@@ -940,14 +941,11 @@ exports.verifyPhoneOtp = async (req, res, next) => {
       if (!user.customerDisplayId) {
         user.customerDisplayId = await allocateCustomerDisplayId();
       }
-      if (!user.name && !user.displayName) {
-        const fullName = resolveInitialCustomerName({
-          requestedName,
-          displayId: user.customerDisplayId,
-        });
-        user.name = fullName;
-        user.displayName = fullName;
-      }
+      applySignupName(user, {
+        requestedName,
+        role: 'customer',
+        displayId: user.customerDisplayId,
+      });
       user.updatedAt = new Date();
       await user.save();
     }
@@ -1106,14 +1104,11 @@ exports.registerPin = async (req, res, next) => {
       if (!user.customerDisplayId) {
         user.customerDisplayId = await allocateCustomerDisplayId();
       }
-      if (!user.name) {
-        const fullName = resolveInitialCustomerName({
-          requestedName,
-          displayId: user.customerDisplayId,
-        });
-        user.name = fullName;
-        user.displayName = fullName;
-      }
+      applySignupName(user, {
+        requestedName,
+        role: 'customer',
+        displayId: user.customerDisplayId,
+      });
       user.updatedAt = new Date();
     }
     persistRolePin(user, {pinHash, pinKey, encryptedPin}, 'customer');
@@ -1640,23 +1635,11 @@ exports.registerWithOtp = async (req, res, next) => {
       if (!user.customerDisplayId) {
         user.customerDisplayId = await allocateCustomerDisplayId();
       }
-      // Do not overwrite existing names (including legacy "Customer" / "Provider").
-      if (!user.name && !user.displayName) {
-        resolvedName =
-          requestedRole === 'provider'
-            ? resolveInitialProviderName({
-                requestedName,
-                displayId: user.customerDisplayId,
-              })
-            : resolveInitialCustomerName({
-                requestedName,
-                displayId: user.customerDisplayId,
-              });
-        user.name = resolvedName;
-        user.displayName = resolvedName;
-      } else {
-        resolvedName = user.name || user.displayName || '';
-      }
+      resolvedName = applySignupName(user, {
+        requestedName,
+        role: requestedRole,
+        displayId: user.customerDisplayId,
+      });
       user.updatedAt = new Date();
     }
     persistRolePin(
