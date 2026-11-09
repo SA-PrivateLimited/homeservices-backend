@@ -60,6 +60,7 @@ const {
 const {
   resolveInitialCustomerName,
   resolveInitialProviderName,
+  applySignupName,
   hasRealCustomerName,
   generateCustomerDisplayId,
 } = require('../utils/userDisplayIdentity');
@@ -256,6 +257,7 @@ async function ensureProviderProfile(user, fullName) {
     isAvailable: true,
     onboardingSource: 'self',
     showRequestService: true,
+    showWorkShowcase: false,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -284,19 +286,8 @@ async function allocateCustomerDisplayId() {
   return generateCustomerDisplayId(User);
 }
 
-async function generateUniquePin(maxAttempts = 40) {
-  for (let i = 0; i < maxAttempts; i++) {
-    const pin = String(crypto.randomInt(0, 10000)).padStart(4, '0');
-    try {
-      await assertPinGloballyUnique(pin);
-      return pin;
-    } catch (e) {
-      if (e.statusCode !== 409) throw e;
-    }
-  }
-  const err = new Error('Could not allocate a unique PIN. Please try again.');
-  err.statusCode = 503;
-  throw err;
+async function generateUniquePin() {
+  return String(crypto.randomInt(0, 10000)).padStart(4, '0');
 }
 
 async function assertRoleAccess(user, requestedRole) {
@@ -950,14 +941,11 @@ exports.verifyPhoneOtp = async (req, res, next) => {
       if (!user.customerDisplayId) {
         user.customerDisplayId = await allocateCustomerDisplayId();
       }
-      if (!user.name && !user.displayName) {
-        const fullName = resolveInitialCustomerName({
-          requestedName,
-          displayId: user.customerDisplayId,
-        });
-        user.name = fullName;
-        user.displayName = fullName;
-      }
+      applySignupName(user, {
+        requestedName,
+        role: 'customer',
+        displayId: user.customerDisplayId,
+      });
       user.updatedAt = new Date();
       await user.save();
     }
@@ -1116,14 +1104,11 @@ exports.registerPin = async (req, res, next) => {
       if (!user.customerDisplayId) {
         user.customerDisplayId = await allocateCustomerDisplayId();
       }
-      if (!user.name) {
-        const fullName = resolveInitialCustomerName({
-          requestedName,
-          displayId: user.customerDisplayId,
-        });
-        user.name = fullName;
-        user.displayName = fullName;
-      }
+      applySignupName(user, {
+        requestedName,
+        role: 'customer',
+        displayId: user.customerDisplayId,
+      });
       user.updatedAt = new Date();
     }
     persistRolePin(user, {pinHash, pinKey, encryptedPin}, 'customer');
@@ -1650,23 +1635,11 @@ exports.registerWithOtp = async (req, res, next) => {
       if (!user.customerDisplayId) {
         user.customerDisplayId = await allocateCustomerDisplayId();
       }
-      // Do not overwrite existing names (including legacy "Customer" / "Provider").
-      if (!user.name && !user.displayName) {
-        resolvedName =
-          requestedRole === 'provider'
-            ? resolveInitialProviderName({
-                requestedName,
-                displayId: user.customerDisplayId,
-              })
-            : resolveInitialCustomerName({
-                requestedName,
-                displayId: user.customerDisplayId,
-              });
-        user.name = resolvedName;
-        user.displayName = resolvedName;
-      } else {
-        resolvedName = user.name || user.displayName || '';
-      }
+      resolvedName = applySignupName(user, {
+        requestedName,
+        role: requestedRole,
+        displayId: user.customerDisplayId,
+      });
       user.updatedAt = new Date();
     }
     persistRolePin(

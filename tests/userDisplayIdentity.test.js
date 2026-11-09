@@ -4,6 +4,7 @@ const {
   formatDefaultProviderName,
   resolveInitialProviderName,
   isPlaceholderDisplayName,
+  applySignupName,
 } = require('../src/utils/userDisplayIdentity');
 
 test('formats Partner default names like Customer User-XXXX', () => {
@@ -35,4 +36,31 @@ test('keeps a real Partner name', () => {
 test('Provider-XXXX is a placeholder, not a real name', () => {
   assert.equal(isPlaceholderDisplayName('Provider-0042'), true);
   assert.equal(isPlaceholderDisplayName('Ram Kumar'), false);
+});
+
+test('signup full name replaces Customer / Provider placeholders', () => {
+  const user = {name: 'Customer', displayName: 'Customer'};
+  assert.equal(
+    applySignupName(user, {
+      requestedName: 'Sandeep Gupta',
+      role: 'customer',
+      displayId: 12,
+    }),
+    'Sandeep Gupta',
+  );
+  assert.equal(user.name, 'Sandeep Gupta');
+  assert.equal(user.displayName, 'Sandeep Gupta');
+});
+
+test('signup full name does not overwrite an existing real name', () => {
+  const user = {name: 'Ram Kumar', displayName: 'Ram Kumar'};
+  assert.equal(
+    applySignupName(user, {
+      requestedName: 'Someone Else',
+      role: 'provider',
+      displayId: 12,
+    }),
+    'Ram Kumar',
+  );
+  assert.equal(user.name, 'Ram Kumar');
 });

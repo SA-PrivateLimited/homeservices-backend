@@ -1006,15 +1006,7 @@ exports.setUserPinByAdmin = async (req, res, next) => {
     const purpose = resolvePinPurpose(req.body.purpose || req.query.purpose, user);
 
     if (!pin) {
-      try {
-        pin = await generateUniquePin(User);
-      } catch (e) {
-        return res.status(e.statusCode || 503).json({
-          success: false,
-          error: 'Service Unavailable',
-          message: e.message || 'Could not allocate a unique PIN',
-        });
-      }
+      pin = await generateUniquePin(User);
     }
 
     if (!isValidPin(pin)) {
@@ -1025,16 +1017,7 @@ exports.setUserPinByAdmin = async (req, res, next) => {
       });
     }
 
-    let pinKey;
-    try {
-      pinKey = await assertPinGloballyUnique(User, pin, userId);
-    } catch (e) {
-      return res.status(e.statusCode || 409).json({
-        success: false,
-        error: e.statusCode === 409 ? 'Conflict' : 'Bad Request',
-        message: e.message,
-      });
-    }
+    const pinKey = await assertPinGloballyUnique(User, pin, userId);
 
     let hashed;
     try {
@@ -1454,6 +1437,7 @@ exports.createUserByAdmin = async (req, res, next) => {
               req.body.onboardingSource,
             ),
             showRequestService: false,
+            showWorkShowcase: false,
             addedByAdminId: req.user?.uid || undefined,
             createdAt: new Date(),
             updatedAt: new Date(),

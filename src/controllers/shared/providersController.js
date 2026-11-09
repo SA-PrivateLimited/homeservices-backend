@@ -70,6 +70,11 @@ const {
   applyShowContactToUser,
   parseShowContactToUser,
 } = require('../../utils/showContactToUser');
+const {
+  applyShowWorkShowcase,
+  parseShowWorkShowcase,
+  isShowWorkShowcaseEnabled,
+} = require('../../utils/showWorkShowcase');
 
 async function providerPayloadWithPolicy(provider) {
   if (!provider) return provider;
@@ -80,6 +85,7 @@ async function providerPayloadWithPolicy(provider) {
   const raw = provider.toObject ? provider.toObject() : {...provider};
   applyShowRequestService(raw);
   applyShowContactToUser(raw);
+  applyShowWorkShowcase(raw);
   return {...raw, partnerVerificationMode: mode, allowOfflineProviderOpenRequests};
 }
 
@@ -361,6 +367,7 @@ exports.getProviders = async (req, res, next) => {
           const flags = adminProfileFlags(u || {role: 'provider'}, p);
           applyShowRequestService(p);
           applyShowContactToUser(p);
+          applyShowWorkShowcase(p);
           return {
             ...p,
             phone: p.phone || p.phoneNumber || u?.phone || u?.phoneNumber,
@@ -391,7 +398,9 @@ exports.getProviders = async (req, res, next) => {
         )
         .map((p) =>
           publicProviderRow(
-            applyShowContactToUser(applyShowRequestService(p)),
+            applyShowWorkShowcase(
+              applyShowContactToUser(applyShowRequestService(p)),
+            ),
             settings,
             serviceQuery,
           ),
@@ -523,6 +532,7 @@ exports.getProviderById = async (req, res, next) => {
 
     applyShowRequestService(providerData);
     applyShowContactToUser(providerData);
+    applyShowWorkShowcase(providerData);
 
     const isAdmin = req.user && req.user.role === 'admin';
     const isSelfProvider =
@@ -614,6 +624,7 @@ exports.updateMyProfile = async (req, res, next) => {
     delete updateData.inactiveServiceCategories;
     delete updateData.showRequestService;
     delete updateData.showContactToUser;
+    delete updateData.showWorkShowcase;
     delete updateData.onboardingSource;
     delete updateData.addedByAdminId;
 
@@ -688,6 +699,16 @@ exports.updateMyProfile = async (req, res, next) => {
     }
 
     if (Object.prototype.hasOwnProperty.call(updateData, 'photos')) {
+      const existingForPhotos = await Provider.findById(req.user.uid).select(
+        'showWorkShowcase',
+      );
+      if (!isShowWorkShowcaseEnabled(existingForPhotos)) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden',
+          message: 'Work photos are not enabled for this profile.',
+        });
+      }
       try {
         updateData.photos = normalizePhotoReferences(updateData.photos, req.user, {
           max: 3,
@@ -719,9 +740,12 @@ exports.updateMyProfile = async (req, res, next) => {
         provider.serviceType = existing;
         provider.specialization = existing;
         await provider.save();
-      } else if (!known.length) {
-        const canonical = (await resolveActiveCategoryName(requestedPrimary)) || requestedPrimary;
+      } else {
+        const canonical =
+          (await resolveActiveCategoryName(requestedPrimary)) || requestedPrimary;
         addServiceToProvider(provider, canonical, {source: 'self'});
+        provider.serviceType = canonical;
+        provider.specialization = canonical;
         await provider.save();
       }
     }
@@ -1547,6 +1571,15 @@ exports.updateProvider = async (req, res, next) => {
         delete updateData.showContactToUser;
       } else {
         updateData.showContactToUser = parsed;
+      }
+    }
+
+    if (updateData.showWorkShowcase !== undefined) {
+      const parsed = parseShowWorkShowcase(updateData.showWorkShowcase);
+      if (parsed === null) {
+        delete updateData.showWorkShowcase;
+      } else {
+        updateData.showWorkShowcase = parsed;
       }
     }
 
